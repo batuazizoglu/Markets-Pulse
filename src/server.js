@@ -5,6 +5,7 @@ import zlib from 'zlib';
 import { fileURLToPath } from 'url';
 import { initDb, pool } from './db.js';
 import { scanAll } from './scanner.js';
+import { buildMarketPulse } from './intelligence.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -18,7 +19,7 @@ function auth(req,res,next){
     const [u,p]=Buffer.from(hdr.slice(6),'base64').toString().split(':');
     if (u===user && p===pass) return next();
   }
-  res.set('WWW-Authenticate','Basic realm="Telsim Tarife Watch"');
+  res.set('WWW-Authenticate','Basic realm="Market Pulse"');
   return res.status(401).send('Authentication required');
 }
 app.use(auth);
@@ -29,6 +30,11 @@ app.get('/api/health', async (req,res)=>{
   try { await pool.query('SELECT 1'); res.json({ok:true,now:new Date().toISOString()}); }
   catch(e){ res.status(500).json({ok:false,error:e.message}); }
 });
+
+app.get('/api/market-pulse', async (req,res,next)=>{try{
+  const days=Math.max(1,Math.min(180,parseInt(req.query.days||'30',10)||30));
+  res.json(await buildMarketPulse(pool,days));
+}catch(e){next(e)}});
 
 app.get('/api/summary', async (req,res,next)=>{try{
   const src=await pool.query(`SELECT s.*,
@@ -181,7 +187,7 @@ app.use((err,req,res,next)=>{console.error(err);res.status(500).json({error:err?
 
 const port=Number(process.env.PORT||3000);
 await initDb();
-app.listen(port,()=>console.log(`Telsim Tarife Watch listening on ${port}`));
+app.listen(port,()=>console.log(`Market Pulse / Telsim Watch listening on ${port}`));
 
 const schedule=process.env.SCAN_CRON || '0 * * * *';
 cron.schedule(schedule,()=>scanAll().catch(e=>console.error('scheduled scan failed',e)),{timezone:process.env.TZ||'Asia/Famagusta'});
