@@ -12,7 +12,11 @@ export async function scanAll() {
   try {
     const { rows } = await pool.query('SELECT * FROM sources WHERE enabled=TRUE ORDER BY id');
     const results = [];
-    for (const source of rows) results.push(await scanSource(source));
+    for (const source of rows) {
+      const result = await scanSource(source);
+      results.push(result);
+      console.log('[scan]', source.slug, JSON.stringify(result));
+    }
     return { ok: results.every(x => x.ok), scanned_at: new Date().toISOString(), sources: results };
   } finally {
     scanRunning = false;
@@ -22,6 +26,9 @@ export async function scanAll() {
 async function scanSource(source) {
   const started = new Date();
   const t0 = Date.now();
+  let responseStatus = null;
+  let parsedCount = 0;
+  let pageHash = null;
   const prior = await pool.query("SELECT COUNT(*)::int AS c FROM scans WHERE source_id=$1 AND status='ok'", [source.id]);
   const baseline = (prior.rows[0]?.c || 0) === 0;
   const ins = await pool.query("INSERT INTO scans(source_id,started_at,status) VALUES($1,$2,'running') RETURNING id", [source.id, started]);
@@ -30,16 +37,21 @@ async function scanSource(source) {
   try {
     const response = await fetch(source.url, {
       headers: {
-        'user-agent': 'Mozilla/5.0 (compatible; TelsimTarifeMonitor/2.0; competitive-intelligence)',
-        'accept': 'text/html,application/xhtml+xml'
+        'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36',
+        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'accept-language': 'tr-TR,tr;q=0.9,en;q=0.7',
+        'cache-control': 'no-cache',
+        'pragma': 'no-cache'
       },
       redirect: 'follow',
       signal: AbortSignal.timeout(30000)
     });
+    responseStatus = response.status;
     const html = await response.text();
     const relevantText = extractRelevantText(html, source.name);
-    const pageHash = sha256(relevantText);
+    pageHash = sha256(relevantText);
     const cards = parseCards(relevantText);
+    parsedCount = cards.length;
 
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     if (cards.length === 0) throw new Error('Parser returned 0 tariff cards; source layout may have changed.');
@@ -48,8 +60,8 @@ async function scanSource(source) {
     const removedCount = await processMissing(source, scanId, cards, baseline, started);
     const meaningfulChanges = changeCount + removedCount;
 
-    await pool.query(`UPDATE scans SET finished_at=NOW(), status='ok', http_status=$1, response_ms=$2, page_hash=$3, parsed_count=$4 WHERE id=$5`,
-      [response.status, Date.now()-t0, pageHash, cards.length, scanId]);
+    await pool.query(`UPDATE scans SET finished_at=NOW(), status='ok', http_status=$1, response_ms=$2, page_hash=$3, parsed_count=$4, error=NULL WHERE id=$5`,
+      [responseStatus, Date.now()-t0, pageHash, parsedCount, scanId]);
 
     if (baseline || meaningfulChanges > 0) {
       await pool.query(`INSERT INTO snapshots(source_id,scan_id,captured_at,kind,page_hash,html_gzip,extracted_json)
@@ -57,11 +69,11 @@ async function scanSource(source) {
         [source.id, scanId, started, baseline ? 'baseline' : 'change', pageHash, zlib.gzipSync(Buffer.from(html)), JSON.stringify(cards)]);
     }
 
-    return { ok:true, source:source.slug, http_status:response.status, response_ms:Date.now()-t0, parsed_count:cards.length, baseline, changes:meaningfulChanges };
+    return { ok:true, source:source.slug, http_status:responseStatus, response_ms:Date.now()-t0, parsed_count:parsedCount, baseline, changes:meaningfulChanges };
   } catch (error) {
-    await pool.query(`UPDATE scans SET finished_at=NOW(), status='error', response_ms=$1, error=$2 WHERE id=$3`,
-      [Date.now()-t0, error?.message || String(error), scanId]);
-    return { ok:false, source:source.slug, error:error?.message || String(error) };
+    await pool.query(`UPDATE scans SET finished_at=NOW(), status='error', http_status=$1, response_ms=$2, page_hash=$3, parsed_count=$4, error=$5 WHERE id=$6`,
+      [responseStatus, Date.now()-t0, pageHash, parsedCount, error?.message || String(error), scanId]);
+    return { ok:false, source:source.slug, http_status:responseStatus, response_ms:Date.now()-t0, parsed_count:parsedCount, error:error?.message || String(error) };
   }
 }
 
