@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import { initDb, pool } from './db.js';
 import { scanAll } from './scanner.js';
 import { buildMarketPulse } from './intelligence.js';
+import { getKktcellCatalog, buildBenchmark } from './kktcell-benchmark.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -25,6 +26,11 @@ function auth(req,res,next){
 app.use(auth);
 
 const localMidnightSql = `(date_trunc('day', NOW() AT TIME ZONE 'Asia/Famagusta') AT TIME ZONE 'Asia/Famagusta')`;
+const latestPackagesSql = `SELECT p.id,p.identity_base,p.current_name,p.first_seen_at,p.last_seen_at,p.active,p.missing_count,p.last_position,
+  s.slug source_slug,s.name source_name,s.url source_url,
+  v.captured_at,v.name,v.data_gb,v.bonus_data_gb,v.local_tr_minutes,v.international_minutes,v.sms,v.validity_days,v.red_passport_days,v.price_try,v.extras_json
+  FROM products p JOIN sources s ON s.id=p.source_id
+  LEFT JOIN LATERAL (SELECT * FROM product_versions v2 WHERE v2.product_id=p.id ORDER BY v2.captured_at DESC,v2.id DESC LIMIT 1) v ON TRUE`;
 
 app.get('/api/health', async (req,res)=>{
   try { await pool.query('SELECT 1'); res.json({ok:true,now:new Date().toISOString()}); }
@@ -34,6 +40,22 @@ app.get('/api/health', async (req,res)=>{
 app.get('/api/market-pulse', async (req,res,next)=>{try{
   const days=Math.max(1,Math.min(180,parseInt(req.query.days||'30',10)||30));
   res.json(await buildMarketPulse(pool,days));
+}catch(e){next(e)}});
+
+app.get('/api/kktcell-catalog', async (req,res,next)=>{try{
+  const force=req.query.refresh==='1';
+  const catalog=await getKktcellCatalog(force);
+  res.json({generated_at:new Date(catalog.at).toISOString(),sources:catalog.sources,error:catalog.error,products:catalog.rows});
+}catch(e){next(e)}});
+
+app.get('/api/benchmark', async (req,res,next)=>{try{
+  const force=req.query.refresh==='1';
+  const [telsim,catalog]=await Promise.all([
+    pool.query(`${latestPackagesSql} WHERE p.active=TRUE ORDER BY s.id,v.price_try ASC NULLS LAST,p.current_name`),
+    getKktcellCatalog(force)
+  ]);
+  const benchmark=buildBenchmark(telsim.rows,catalog.rows);
+  res.json({...benchmark,kktcell_sources:catalog.sources,kktcell_catalog_count:catalog.rows.length,kktcell_core_count:catalog.rows.filter(x=>x.is_core).length,kktcell_error:catalog.error});
 }catch(e){next(e)}});
 
 app.get('/api/summary', async (req,res,next)=>{try{
@@ -56,13 +78,7 @@ app.get('/api/summary', async (req,res,next)=>{try{
 app.get('/api/packages', async (req,res,next)=>{try{
   const params=[]; let where='';
   if(req.query.source){params.push(req.query.source);where='WHERE s.slug=$1'}
-  const q=`SELECT p.id,p.identity_base,p.current_name,p.first_seen_at,p.last_seen_at,p.active,p.missing_count,p.last_position,
-    s.slug source_slug,s.name source_name,s.url source_url,
-    v.captured_at,v.name,v.data_gb,v.bonus_data_gb,v.local_tr_minutes,v.international_minutes,v.sms,v.validity_days,v.red_passport_days,v.price_try,v.extras_json
-    FROM products p JOIN sources s ON s.id=p.source_id
-    LEFT JOIN LATERAL (SELECT * FROM product_versions v2 WHERE v2.product_id=p.id ORDER BY v2.captured_at DESC,v2.id DESC LIMIT 1) v ON TRUE
-    ${where} ORDER BY s.id,p.active DESC,v.price_try ASC NULLS LAST,p.current_name`;
-  res.json((await pool.query(q,params)).rows);
+  res.json((await pool.query(`${latestPackagesSql} ${where} ORDER BY s.id,p.active DESC,v.price_try ASC NULLS LAST,p.current_name`,params)).rows);
 }catch(e){next(e)}});
 
 app.get('/api/comparison', async (req,res,next)=>{try{
@@ -130,16 +146,13 @@ app.get('/api/scans', async (req,res,next)=>{try{
 }catch(e){next(e)}});
 
 app.get('/api/product/:id/history', async (req,res,next)=>{try{
-  const r=await pool.query(`SELECT * FROM product_versions WHERE product_id=$1 ORDER BY captured_at DESC,id DESC LIMIT 200`,[req.params.id]);
-  res.json(r.rows);
+  res.json((await pool.query(`SELECT * FROM product_versions WHERE product_id=$1 ORDER BY captured_at DESC,id DESC LIMIT 200`,[req.params.id])).rows);
 }catch(e){next(e)}});
 
 app.get('/api/snapshots', async (req,res,next)=>{try{
   const r=await pool.query(`SELECT sn.id,sn.captured_at,sn.kind,sn.page_hash,sn.screenshot_error,sn.focused_screenshot_error,sn.screenshot_meta,
-    (sn.screenshot_png IS NOT NULL) has_screenshot,
-    (sn.focused_screenshot_png IS NOT NULL) has_focus,
-    (sn.html_gzip IS NOT NULL) has_html,
-    (sn.extracted_json IS NOT NULL) has_json,
+    (sn.screenshot_png IS NOT NULL) has_screenshot,(sn.focused_screenshot_png IS NOT NULL) has_focus,
+    (sn.html_gzip IS NOT NULL) has_html,(sn.extracted_json IS NOT NULL) has_json,
     s.slug source_slug,s.name source_name,s.url source_url,sc.parsed_count
     FROM snapshots sn JOIN sources s ON s.id=sn.source_id JOIN scans sc ON sc.id=sn.scan_id
     ORDER BY sn.captured_at DESC LIMIT 100`);
@@ -149,26 +162,20 @@ app.get('/api/snapshots', async (req,res,next)=>{try{
 app.get('/api/snapshots/:id/image', async (req,res,next)=>{try{
   const r=await pool.query('SELECT screenshot_png FROM snapshots WHERE id=$1',[req.params.id]);
   if(!r.rows.length || !r.rows[0].screenshot_png) return res.status(404).send('Screenshot not available');
-  res.set('Content-Type','image/png');
-  res.set('Cache-Control','private, max-age=3600');
-  res.send(r.rows[0].screenshot_png);
+  res.set('Content-Type','image/png');res.set('Cache-Control','private, max-age=3600');res.send(r.rows[0].screenshot_png);
 }catch(e){next(e)}});
 
 app.get('/api/snapshots/:id/focus', async (req,res,next)=>{try{
   const r=await pool.query('SELECT focused_screenshot_png FROM snapshots WHERE id=$1',[req.params.id]);
   if(!r.rows.length || !r.rows[0].focused_screenshot_png) return res.status(404).send('Focused screenshot not available');
-  res.set('Content-Type','image/png');
-  res.set('Cache-Control','private, max-age=3600');
-  res.send(r.rows[0].focused_screenshot_png);
+  res.set('Content-Type','image/png');res.set('Cache-Control','private, max-age=3600');res.send(r.rows[0].focused_screenshot_png);
 }catch(e){next(e)}});
 
 app.get('/api/snapshots/:id/html', async (req,res,next)=>{try{
   const r=await pool.query('SELECT html_gzip FROM snapshots WHERE id=$1',[req.params.id]);
   if(!r.rows.length || !r.rows[0].html_gzip) return res.status(404).send('HTML not available');
   const html=zlib.gunzipSync(r.rows[0].html_gzip).toString('utf8');
-  res.set('Content-Type','text/plain; charset=utf-8');
-  res.set('Content-Disposition',`inline; filename="snapshot-${req.params.id}.html.txt"`);
-  res.send(html);
+  res.set('Content-Type','text/plain; charset=utf-8');res.set('Content-Disposition',`inline; filename="snapshot-${req.params.id}.html.txt"`);res.send(html);
 }catch(e){next(e)}});
 
 app.get('/api/snapshots/:id/json', async (req,res,next)=>{try{
@@ -182,13 +189,11 @@ app.post('/api/scan', async (req,res,next)=>{try{res.json(await scanAll())}catch
 app.use('/api',(req,res)=>res.status(404).json({error:'Not found'}));
 app.use(express.static(path.join(__dirname,'..','public')));
 app.get('*',(req,res)=>res.sendFile(path.join(__dirname,'..','public','index.html')));
-
 app.use((err,req,res,next)=>{console.error(err);res.status(500).json({error:err?.message||String(err)})});
 
 const port=Number(process.env.PORT||3000);
 await initDb();
 app.listen(port,()=>console.log(`Market Pulse / Telsim Watch listening on ${port}`));
-
 const schedule=process.env.SCAN_CRON || '0 * * * *';
 cron.schedule(schedule,()=>scanAll().catch(e=>console.error('scheduled scan failed',e)),{timezone:process.env.TZ||'Asia/Famagusta'});
 setTimeout(()=>scanAll().catch(e=>console.error('startup scan failed',e)),5000);
