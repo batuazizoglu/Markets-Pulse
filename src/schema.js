@@ -81,7 +81,11 @@ CREATE TABLE IF NOT EXISTS snapshots (
   kind TEXT NOT NULL,
   page_hash TEXT,
   html_gzip BYTEA,
-  extracted_json JSONB
+  extracted_json JSONB,
+  screenshot_png BYTEA,
+  screenshot_error TEXT
 );
+ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS screenshot_png BYTEA;
+ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS screenshot_error TEXT;
 CREATE INDEX IF NOT EXISTS idx_snapshots_source_time ON snapshots(source_id, captured_at DESC);
 `;
