@@ -31,3 +31,4 @@ function openEvidenceMode(id,name,time,mode='focus'){
 function openEvidence(id,name,time){openEvidenceMode(id,name,time,'focus')}
 
 import('/market-pulse.js').catch(err=>console.error('Market Pulse module load failed',err));
+import('/benchmark.js').catch(err=>console.error('Benchmark module load failed',err));
