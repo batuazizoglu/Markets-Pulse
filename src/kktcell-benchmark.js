@@ -24,7 +24,7 @@ function normalizeLines(html){
 }
 
 function likelyProductName(line,type){
-  if(!line || line.length<4 || line.length>150) return false;
+  if(!line || line.length<4 || line.length>180) return false;
   const suffix=type==='prepaid'?'Faturasız':'Faturalı';
   if(!new RegExp(`${suffix}$`,'i').test(line)) return false;
   if(new RegExp(`^${suffix}$`,'i').test(line)) return false;
@@ -37,25 +37,38 @@ function parseCatalog(html,source){
   const starts=[];
   for(let i=0;i<lines.length;i++) if(likelyProductName(lines[i],source.type)) starts.push(i);
   const rows=[];
+
   for(let i=0;i<starts.length;i++){
     const start=starts[i];
-    const end=i+1<starts.length?starts[i+1]:Math.min(lines.length,start+45);
+    const end=i+1<starts.length?starts[i+1]:Math.min(lines.length,start+55);
     const chunk=lines.slice(start,end);
-    const raw=chunk.join(' | ');
+    const rawDisplay=chunk.join(' | ');
+    // KKTCELL cards render numeric values and units in separate nested spans.
+    // Joining with spaces reconstructs semantic phrases such as "40 GB" and
+    // "489 TL/7 GÜN", while rawDisplay remains useful for diagnostics.
+    const raw=chunk.join(' ').replace(/\s+/g,' ').trim();
     const name=chunk[0].replace(/\s+/g,' ').trim();
 
-    const gbMatches=[...raw.matchAll(/(\d+(?:[.,]\d+)?)\s*GB\b/ig)].map(m=>({v:cleanNumber(m[1]),idx:m.index||0}));
-    let dataGb=null, bonusGb=0;
-    for(const g of gbMatches){
-      const nearby=raw.slice(g.idx,Math.min(raw.length,g.idx+90)).toLocaleLowerCase('tr-TR');
-      if(/sosyal medya|tv\+|uygulama/.test(nearby)) bonusGb += g.v||0;
-      else if(dataGb==null) dataGb=g.v;
-      else bonusGb += g.v||0;
+    const allowances=[];
+    for(const m of raw.matchAll(/(\d+(?:[.,]\d+)?)\s*(GB|MB)\b/ig)){
+      let v=cleanNumber(m[1]);
+      if(String(m[2]).toUpperCase()==='MB') v=v==null?null:v/1024;
+      allowances.push({v,idx:m.index||0,unit:String(m[2]).toUpperCase()});
     }
-    if(dataGb==null && gbMatches.length) dataGb=gbMatches[0].v;
+
+    let dataGb=null, bonusGb=0;
+    for(const g of allowances){
+      if(g.v==null) continue;
+      const nearby=raw.slice(g.idx,Math.min(raw.length,g.idx+110)).toLocaleLowerCase('tr-TR');
+      if(/sosyal medya|tv\+|uygulama|dijital bonus|hediye/.test(nearby)) bonusGb += g.v;
+      else if(dataGb==null) dataGb=g.v;
+      else bonusGb += g.v;
+    }
+    if(dataGb==null && allowances.length) dataGb=allowances[0].v;
 
     let price=null;
-    const pm=raw.match(/(\d[\d.]*(?:,\d+)?)\s*TL\s*\/(?:AY|HAFTA|\d+\s*GÜN|\d+\s*AY)/i) || raw.match(/(\d[\d.]*(?:,\d+)?)\s*TL\b/i);
+    const pm=raw.match(/(\d[\d.]*(?:,\d+)?)\s*TL\s*\/\s*(?:AY|HAFTA|GÜN|\d+\s*GÜN|\d+\s*AY)/i)
+      || raw.match(/(\d[\d.]*(?:,\d+)?)\s*TL\b/i);
     if(pm) price=cleanNumber(pm[1]);
 
     const minm=raw.match(/(\d[\d.]*)\s*(?:DK|MIN)\b/i);
@@ -73,9 +86,10 @@ function parseCatalog(html,source){
       type:source.type, name, data_gb:dataGb, bonus_data_gb:bonusGb||0,
       effective_data_gb:(dataGb||0)+(bonusGb||0), local_tr_minutes:mins,
       international_minutes:intl, sms, validity_days:validityDays, price_try:price,
-      segment, is_core:isCore, raw_text:raw
+      segment, is_core:isCore, raw_text:rawDisplay
     });
   }
+
   const unique=new Map();
   for(const r of rows){
     const key=[r.type,r.name,r.data_gb,r.bonus_data_gb,r.price_try,r.validity_days].join('|');
@@ -103,7 +117,7 @@ export async function getKktcellCatalog(force=false){
   for(const source of KKTCELL_SOURCES){
     const t0=Date.now();
     try{
-      const res=await fetch(source.url,{headers:{'user-agent':'Mozilla/5.0 Chrome/152 Safari/537.36','accept-language':'tr-TR,tr;q=0.9'},signal:AbortSignal.timeout(30000)});
+      const res=await fetch(source.url,{headers:{'user-agent':'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/152 Safari/537.36','accept':'text/html,application/xhtml+xml','accept-language':'tr-TR,tr;q=0.9'},signal:AbortSignal.timeout(30000)});
       const html=await res.text();
       if(!res.ok) throw new Error(`HTTP ${res.status}`);
       const rows=parseCatalog(html,source);
