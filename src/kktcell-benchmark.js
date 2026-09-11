@@ -43,9 +43,6 @@ function parseCatalog(html,source){
     const end=i+1<starts.length?starts[i+1]:Math.min(lines.length,start+55);
     const chunk=lines.slice(start,end);
     const rawDisplay=chunk.join(' | ');
-    // KKTCELL cards render numeric values and units in separate nested spans.
-    // Joining with spaces reconstructs semantic phrases such as "40 GB" and
-    // "489 TL/7 GÜN", while rawDisplay remains useful for diagnostics.
     const raw=chunk.join(' ').replace(/\s+/g,' ').trim();
     const name=chunk[0].replace(/\s+/g,' ').trim();
 
@@ -213,3 +210,16 @@ function recommend(position,x){
   }
   return 'Manuel ürün eşleştirmesi kontrolü gerekli.';
 }
+
+// Warm the live KKTCELL catalog once on process start. Besides making the
+// first dashboard request fast, this emits a concise production diagnostic
+// so we can distinguish source failures from parser/matching failures.
+setTimeout(() => {
+  getKktcellCatalog(true).then(c => {
+    console.log('[kktcell-catalog]', JSON.stringify({
+      total:c.rows.length,
+      core:c.rows.filter(x=>x.is_core).length,
+      sources:c.sources.map(s=>({slug:s.slug,ok:s.ok,http_status:s.http_status,parsed_count:s.parsed_count,core_count:s.core_count,response_ms:s.response_ms,error:s.error||null}))
+    }));
+  }).catch(e => console.error('[kktcell-catalog]', e?.message || String(e)));
+}, 1500);
