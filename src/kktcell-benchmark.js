@@ -15,37 +15,46 @@ function cleanNumber(v){
   return m?Number(m[0]):null;
 }
 
-function normalizeLines(html){
-  const $=cheerio.load(html);
-  $('script,style,noscript,svg').remove();
-  $('br').replaceWith('\n');
-  $('div,section,article,li,p,h1,h2,h3,h4,h5,h6,button,a,span,td,th,tr').each((_,el)=>$(el).append('\n'));
-  return $('body').text().replace(/\u00a0/g,' ').split(/\r?\n/).map(x=>x.replace(/\s+/g,' ').trim()).filter(Boolean);
+function normalizeText(v){
+  return String(v||'').replace(/\u00a0/g,' ').replace(/\s+/g,' ').trim();
 }
 
-function likelyProductName(line,type){
-  if(!line || line.length<4 || line.length>180) return false;
-  const suffix=type==='prepaid'?'Faturasız':'Faturalı';
-  if(!new RegExp(`${suffix}$`,'i').test(line)) return false;
-  if(new RegExp(`^${suffix}$`,'i').test(line)) return false;
-  if(/^(Faturalı Paketler|Faturasız Paketler|Paketler|İnternet|Filtrele)/i.test(line)) return false;
-  return /[A-Za-zÇĞİÖŞÜçğıöşü]/.test(line);
+function extractProductCards(html,source){
+  const $=cheerio.load(html);
+  $('script,style,noscript,svg').remove();
+  const suffix=source.type==='prepaid'?'Faturasız':'Faturalı';
+  const suffixRe=new RegExp(`\\b${suffix}\\b`,'i');
+  const candidates=[];
+
+  $('a').each((_,el)=>{
+    const raw=normalizeText($(el).text());
+    if(!raw || raw.length<8 || raw.length>1200) return;
+    const m=raw.match(suffixRe);
+    if(!m || m.index==null || m.index<2) return;
+    const after=raw.slice(m.index+m[0].length);
+    if(!/(?:\d+(?:[.,]\d+)?\s*(?:GB|MB|DK|SMS)|\d[\d.]*(?:,\d+)?\s*TL|ÜCRETSİZ)/i.test(after)) return;
+
+    const name=normalizeText(raw.slice(0,m.index+m[0].length));
+    if(!name || /^(?:Faturalı|Faturasız)(?:\s+4\.5G)?$/i.test(name)) return;
+    if(/^(?:Paketler|Tüm Paketler|Faturalı Hatta Geçiş|Yeni Faturasız Hat Al)/i.test(name)) return;
+
+    candidates.push({name,raw,href:$(el).attr('href')||null});
+  });
+
+  const unique=new Map();
+  for(const c of candidates){
+    const key=`${source.type}|${c.name}|${c.raw}`;
+    if(!unique.has(key)) unique.set(key,c);
+  }
+  return [...unique.values()];
 }
 
 function parseCatalog(html,source){
-  const lines=normalizeLines(html);
-  const starts=[];
-  for(let i=0;i<lines.length;i++) if(likelyProductName(lines[i],source.type)) starts.push(i);
+  const cards=extractProductCards(html,source);
   const rows=[];
 
-  for(let i=0;i<starts.length;i++){
-    const start=starts[i];
-    const end=i+1<starts.length?starts[i+1]:Math.min(lines.length,start+55);
-    const chunk=lines.slice(start,end);
-    const rawDisplay=chunk.join(' | ');
-    const raw=chunk.join(' ').replace(/\s+/g,' ').trim();
-    const name=chunk[0].replace(/\s+/g,' ').trim();
-
+  for(const card of cards){
+    const {name,raw}=card;
     const allowances=[];
     for(const m of raw.matchAll(/(\d+(?:[.,]\d+)?)\s*(GB|MB)\b/ig)){
       let v=cleanNumber(m[1]);
@@ -56,8 +65,8 @@ function parseCatalog(html,source){
     let dataGb=null, bonusGb=0;
     for(const g of allowances){
       if(g.v==null) continue;
-      const nearby=raw.slice(g.idx,Math.min(raw.length,g.idx+110)).toLocaleLowerCase('tr-TR');
-      if(/sosyal medya|tv\+|uygulama|dijital bonus|hediye/.test(nearby)) bonusGb += g.v;
+      const around=raw.slice(Math.max(0,g.idx-20),Math.min(raw.length,g.idx+100)).toLocaleLowerCase('tr-TR');
+      if(/sosyal medya|tv\+|uygulama|dijital bonus|hediye/.test(around)) bonusGb += g.v;
       else if(dataGb==null) dataGb=g.v;
       else bonusGb += g.v;
     }
@@ -68,22 +77,23 @@ function parseCatalog(html,source){
       || raw.match(/(\d[\d.]*(?:,\d+)?)\s*TL\b/i);
     if(pm) price=cleanNumber(pm[1]);
 
-    const minm=raw.match(/(\d[\d.]*)\s*(?:DK|MIN)\b/i);
-    const mins=minm?parseInt(minm[1].replace(/\./g,''),10):null;
+    const minuteMatches=[...raw.matchAll(/(\d[\d.]*)\s*(?:DK|MIN)\b/ig)].map(m=>parseInt(m[1].replace(/\./g,''),10));
+    const mins=minuteMatches.length?minuteMatches[0]:null;
     const sm=raw.match(/(\d[\d.]*)\s*SMS\b/i);
     const sms=sm?parseInt(sm[1].replace(/\./g,''),10):null;
     const daym=raw.match(/TL\s*\/\s*(\d+)\s*GÜN/i) || raw.match(/(\d+)\s*GÜN\b/i);
-    const validityDays=daym?Number(daym[1]):(/TL\s*\/\s*AY|AYLIK ABONELİK/i.test(raw)?30:null);
-    const intl=/YURT DIŞI|INT\.?\s*LINES|INTERNATIONAL/i.test(raw)?mins:null;
+    const validityDays=daym?Number(daym[1]):(/TL\s*\/\s*AY|AYLIK ABONELİK|KONTRATLI ABONELİK/i.test(raw)?30:null);
     const segment=classifySegment(name,raw,source.type);
-    const isCore=price!=null && dataGb!=null && !/ek\s|100sms|1000 sms|10\.000 sms|tek numara|aşım|devir|favorim|türkiye \d+dk|tv\+/i.test(name.toLocaleLowerCase('tr-TR'));
+    const lowName=name.toLocaleLowerCase('tr-TR');
+    const isAddon=/\bek\b|\b100\s*sms\b|\b1\.000\s*sms\b|\b10\.000\s*sms\b|tek numara|aşım|devir|favorim|türkiye \d+\s*dk|tv\+|dakika faturasız|platinum'a ek/i.test(lowName);
+    const isCore=price!=null && dataGb!=null && !isAddon;
 
     rows.push({
       provider:'KKTCELL', source_slug:source.slug, source_name:source.name, source_url:source.url,
       type:source.type, name, data_gb:dataGb, bonus_data_gb:bonusGb||0,
       effective_data_gb:(dataGb||0)+(bonusGb||0), local_tr_minutes:mins,
-      international_minutes:intl, sms, validity_days:validityDays, price_try:price,
-      segment, is_core:isCore, raw_text:rawDisplay
+      international_minutes:null, sms, validity_days:validityDays, price_try:price,
+      segment, is_core:isCore, raw_text:raw, product_url:card.href
     });
   }
 
@@ -98,7 +108,7 @@ function parseCatalog(html,source){
 function classifySegment(name,raw,type){
   const t=`${name} ${raw}`.toLocaleLowerCase('tr-TR');
   if(/turist|tourist|ercan|havaalan|airport|e\s*sim/.test(t)) return 'Tourist / Airport';
-  if(/mnp|numara taşı|taşıma/.test(t)) return 'MNP';
+  if(/mnp|numara taşı|taşıma|hoş geldin/.test(t)) return 'MNP';
   if(/gnç|genç|öğrenci|student|freezone/.test(t)) return 'Youth / Student';
   if(/asker/.test(t)) return 'Military';
   if(/kamu/.test(t)) return 'Public Sector';
@@ -134,7 +144,7 @@ function competitorType(p){
 function competitorSegment(p){
   const t=`${p.current_name||p.name||''} ${JSON.stringify(p.extras_json||[])}`.toLocaleLowerCase('tr-TR');
   if(/turist|tourist|ercan|havaalan|airport|e[- ]?sim/.test(t)) return 'Tourist / Airport';
-  if(/mnp|numara taşı|taşıma/.test(t)) return 'MNP';
+  if(/mnp|numara taşı|taşıma|hoş geldin/.test(t)) return 'MNP';
   if(/freezone|genç|young|öğrenci|student/.test(t)) return 'Youth / Student';
   if(/asker/.test(t)) return 'Military';
   if(/kamu/.test(t)) return 'Public Sector';
@@ -159,6 +169,7 @@ function similarity(t,k){
   if(k.type===tt) s+=45; else return -999;
   if(k.segment===ts) s+=30;
   else if(['Prepaid','Postpaid'].includes(k.segment)&&['Prepaid','Postpaid'].includes(ts)) s+=12;
+  else if(ts==='MNP' && k.type===tt) s+=8;
   const td=(Number(t.data_gb)||0)+(Number(t.bonus_data_gb)||0), kd=Number(k.effective_data_gb)||0;
   if(td>0&&kd>0){const ratio=Math.min(td,kd)/Math.max(td,kd);s+=ratio*18;}
   if(t.validity_days&&k.validity_days){const d=Math.abs(Number(t.validity_days)-Number(k.validity_days));s+=Math.max(0,10-d/3);}
@@ -186,7 +197,7 @@ export function buildBenchmark(telsimRows,kktcellRows){
     matches.push({
       match_score:Math.round(best.score), segment:competitorSegment(t), type:competitorType(t), position,
       telsim:{id:t.id,name:t.name||t.current_name,data_gb:Number(t.data_gb)||0,bonus_data_gb:Number(t.bonus_data_gb)||0,effective_data_gb:tEff,minutes:t.local_tr_minutes,validity_days:t.validity_days,price_try:Number(t.price_try),gb_per_100tl:tValue},
-      kktcell:{name:k.name,data_gb:k.data_gb,bonus_data_gb:k.bonus_data_gb,effective_data_gb:kEff,minutes:k.local_tr_minutes,validity_days:k.validity_days,price_try:k.price_try,gb_per_100tl:kValue,source_url:k.source_url},
+      kktcell:{name:k.name,data_gb:k.data_gb,bonus_data_gb:k.bonus_data_gb,effective_data_gb:kEff,minutes:k.local_tr_minutes,validity_days:k.validity_days,price_try:k.price_try,gb_per_100tl:kValue,source_url:k.source_url,product_url:k.product_url},
       gaps:{price_try:priceGap,data_gb:dataGap,value_gb_per_100tl:valueGap,price_pct:pctGap(k.price_try,t.price_try),data_pct:pctGap(kEff,tEff)},
       recommendation:recommend(position,{priceGap,dataGap,valueGap,segment:competitorSegment(t),t,k})
     });
@@ -211,9 +222,6 @@ function recommend(position,x){
   return 'Manuel ürün eşleştirmesi kontrolü gerekli.';
 }
 
-// Warm the live KKTCELL catalog once on process start. Besides making the
-// first dashboard request fast, this emits a concise production diagnostic
-// so we can distinguish source failures from parser/matching failures.
 setTimeout(() => {
   getKktcellCatalog(true).then(c => {
     console.log('[kktcell-catalog]', JSON.stringify({
