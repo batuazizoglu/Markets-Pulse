@@ -14,10 +14,10 @@
 
 <section id="historySection" class="section"><article class="panel"><div class="panel-head"><strong>Ürün Geçmişi</strong><span class="muted" id="historyTitle">Bir pakete dokunun</span></div><div id="historyBox" class="history-box"><div class="table-wrap"><table class="data-table"><thead><tr><th>Tarih</th><th>Paket</th><th>Data</th><th>Bonus</th><th>Dakika</th><th>Ulus.</th><th>SMS</th><th>Süre</th><th>Fiyat</th></tr></thead><tbody id="historyRows"></tbody></table></div></div></article></section>
 
-<section id="evidence-section" class="section"><div class="section-title"><div><h2>Kanıt Arşivi</h2><p>Full-page PNG, ham HTML ve ayrıştırılmış JSON birlikte saklanır</p></div></div><div class="evidence-grid" id="evidenceGrid"></div></section>
+<section id="evidence-section" class="section"><div class="section-title"><div><h2>Kanıt Arşivi</h2><p>Çerez katmanı temizlenmiş Paket Görünümü, Tam Sayfa PNG, ham HTML ve ayrıştırılmış JSON birlikte saklanır</p></div></div><div class="evidence-grid" id="evidenceGrid"></div></section>
 
 <section id="sources-section" class="section"><div class="section-title"><div><h2>İzlenen Kaynaklar</h2><p>Paketlerin çekildiği resmi KKTC Telsim sayfaları</p></div></div><article class="panel"><div class="table-wrap"><table class="data-table sources-table"><thead><tr><th>Sayfa</th><th>Kaynak URL</th><th>Durum</th><th>HTTP</th><th>Okunan</th><th>Aktif</th><th>Yanıt</th><th>Son Kontrol</th><th>Son Hata</th></tr></thead><tbody id="sourceRows"></tbody></table></div></article></section>
 <div class="foot">Saatlik otomatik tarama • 60 sn arayüz yenileme • PostgreSQL tarihçe • Günlük görsel kanıt • Alan bazlı diff</div>
 </main>
 <div id="evidenceModal" class="modal" onclick="if(event.target===this)closeEvidence()"><div class="modal-panel"><div class="modal-head"><strong id="evidenceTitle">Kanıt</strong><button class="icon-btn" onclick="closeEvidence()">×</button></div><div class="modal-image"><img id="evidenceFull" alt="Snapshot ekran görüntüsü"></div></div></div>
-<script src="/app.js"></script></body></html>
+<script src="/app.js"></script><script src="/evidence.js"></script></body></html>
