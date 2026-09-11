@@ -129,8 +129,9 @@ app.get('/api/product/:id/history', async (req,res,next)=>{try{
 }catch(e){next(e)}});
 
 app.get('/api/snapshots', async (req,res,next)=>{try{
-  const r=await pool.query(`SELECT sn.id,sn.captured_at,sn.kind,sn.page_hash,sn.screenshot_error,
+  const r=await pool.query(`SELECT sn.id,sn.captured_at,sn.kind,sn.page_hash,sn.screenshot_error,sn.focused_screenshot_error,sn.screenshot_meta,
     (sn.screenshot_png IS NOT NULL) has_screenshot,
+    (sn.focused_screenshot_png IS NOT NULL) has_focus,
     (sn.html_gzip IS NOT NULL) has_html,
     (sn.extracted_json IS NOT NULL) has_json,
     s.slug source_slug,s.name source_name,s.url source_url,sc.parsed_count
@@ -145,6 +146,14 @@ app.get('/api/snapshots/:id/image', async (req,res,next)=>{try{
   res.set('Content-Type','image/png');
   res.set('Cache-Control','private, max-age=3600');
   res.send(r.rows[0].screenshot_png);
+}catch(e){next(e)}});
+
+app.get('/api/snapshots/:id/focus', async (req,res,next)=>{try{
+  const r=await pool.query('SELECT focused_screenshot_png FROM snapshots WHERE id=$1',[req.params.id]);
+  if(!r.rows.length || !r.rows[0].focused_screenshot_png) return res.status(404).send('Focused screenshot not available');
+  res.set('Content-Type','image/png');
+  res.set('Cache-Control','private, max-age=3600');
+  res.send(r.rows[0].focused_screenshot_png);
 }catch(e){next(e)}});
 
 app.get('/api/snapshots/:id/html', async (req,res,next)=>{try{
