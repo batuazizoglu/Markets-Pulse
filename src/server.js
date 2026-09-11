@@ -22,6 +22,8 @@ function auth(req,res,next){
 }
 app.use(auth);
 
+const localMidnightSql = `(date_trunc('day', NOW() AT TIME ZONE 'Asia/Famagusta') AT TIME ZONE 'Asia/Famagusta')`;
+
 app.get('/api/health', async (req,res)=>{
   try { await pool.query('SELECT 1'); res.json({ok:true,now:new Date().toISOString()}); }
   catch(e){ res.status(500).json({ok:false,error:e.message}); }
@@ -38,8 +40,9 @@ app.get('/api/summary', async (req,res,next)=>{try{
     (SELECT COUNT(*)::int FROM products p WHERE p.source_id=s.id AND p.active=TRUE) active_products
     FROM sources s ORDER BY s.id`);
   const ch=await pool.query("SELECT COUNT(*)::int c FROM changes WHERE detected_at >= NOW()-INTERVAL '24 hours'");
+  const today=await pool.query(`SELECT COUNT(*)::int c FROM changes WHERE detected_at >= ${localMidnightSql}`);
   const ap=await pool.query('SELECT COUNT(*)::int c FROM products WHERE active=TRUE');
-  res.json({generated_at:new Date().toISOString(),sources:src.rows,active_products:ap.rows[0].c,changes_24h:ch.rows[0].c});
+  res.json({generated_at:new Date().toISOString(),sources:src.rows,active_products:ap.rows[0].c,changes_24h:ch.rows[0].c,changes_today:today.rows[0].c});
 }catch(e){next(e)}});
 
 app.get('/api/packages', async (req,res,next)=>{try{
@@ -52,6 +55,56 @@ app.get('/api/packages', async (req,res,next)=>{try{
     LEFT JOIN LATERAL (SELECT * FROM product_versions v2 WHERE v2.product_id=p.id ORDER BY v2.captured_at DESC,v2.id DESC LIMIT 1) v ON TRUE
     ${where} ORDER BY s.id,p.active DESC,v.price_try ASC,p.current_name`;
   res.json((await pool.query(q,params)).rows);
+}catch(e){next(e)}});
+
+app.get('/api/comparison', async (req,res,next)=>{try{
+  const r=await pool.query(`SELECT
+    p.id,p.active,p.current_name,s.slug source_slug,s.name source_name,s.url source_url,
+    cur.id current_version_id,cur.captured_at current_captured_at,cur.name current_name_version,
+    cur.data_gb current_data_gb,cur.bonus_data_gb current_bonus_data_gb,cur.local_tr_minutes current_local_tr_minutes,
+    cur.international_minutes current_international_minutes,cur.sms current_sms,cur.validity_days current_validity_days,cur.price_try current_price_try,
+    prev.id previous_version_id,prev.captured_at previous_captured_at,prev.name previous_name,
+    prev.data_gb previous_data_gb,prev.bonus_data_gb previous_bonus_data_gb,prev.local_tr_minutes previous_local_tr_minutes,
+    prev.international_minutes previous_international_minutes,prev.sms previous_sms,prev.validity_days previous_validity_days,prev.price_try previous_price_try
+    FROM products p
+    JOIN sources s ON s.id=p.source_id
+    JOIN LATERAL (SELECT * FROM product_versions v WHERE v.product_id=p.id ORDER BY v.captured_at DESC,v.id DESC LIMIT 1) cur ON TRUE
+    LEFT JOIN LATERAL (SELECT * FROM product_versions v WHERE v.product_id=p.id AND v.captured_at < ${localMidnightSql} ORDER BY v.captured_at DESC,v.id DESC LIMIT 1) prev ON TRUE
+    WHERE p.active=TRUE OR p.last_seen_at >= ${localMidnightSql}
+    ORDER BY s.id,cur.price_try ASC NULLS LAST,cur.name`);
+  const numeric=['data_gb','bonus_data_gb','local_tr_minutes','international_minutes','sms','validity_days','price_try'];
+  const rows=r.rows.map(x=>{
+    const diffs={};
+    for(const f of numeric){
+      const a=x[`previous_${f}`], b=x[`current_${f}`];
+      const an=a==null?null:Number(a), bn=b==null?null:Number(b);
+      diffs[f]={old:an,new:bn,delta:(an==null||bn==null)?null:bn-an,pct:(an&&bn!=null)?((bn-an)/an)*100:null};
+    }
+    const changed=Object.values(diffs).some(d=>d.old!==d.new) || (x.previous_name!=null && x.previous_name!==x.current_name_version);
+    return {...x,diffs,changed,is_new_today:!x.previous_version_id && new Date(x.current_captured_at)>=new Date(new Date().toLocaleString('en-US',{timeZone:'Asia/Famagusta'}).split(',')[0])};
+  });
+  res.json({generated_at:new Date().toISOString(),cutoff:'local-midnight-Asia/Famagusta',rows});
+}catch(e){next(e)}});
+
+app.get('/api/value-index', async (req,res,next)=>{try{
+  const r=await pool.query(`SELECT p.id,p.current_name,s.slug source_slug,s.name source_name,
+    v.captured_at,v.name,v.data_gb,v.price_try,
+    CASE WHEN v.price_try>0 AND v.data_gb>0 THEN ROUND((v.data_gb/v.price_try*100)::numeric,2) END gb_per_100tl,
+    CASE WHEN v.price_try>0 AND v.data_gb>0 THEN ROUND((v.price_try/v.data_gb)::numeric,2) END tl_per_gb
+    FROM products p JOIN sources s ON s.id=p.source_id
+    JOIN LATERAL (SELECT * FROM product_versions v2 WHERE v2.product_id=p.id ORDER BY v2.captured_at DESC,v2.id DESC LIMIT 1) v ON TRUE
+    WHERE p.active=TRUE AND v.price_try>0 AND v.data_gb>0
+    ORDER BY (v.data_gb/v.price_try) DESC, v.price_try ASC`);
+  res.json(r.rows.map((x,i)=>({...x,rank:i+1})));
+}catch(e){next(e)}});
+
+app.get('/api/timeline', async (req,res,next)=>{try{
+  const days=Math.max(1,Math.min(180,parseInt(req.query.days||'30',10)||30));
+  const r=await pool.query(`SELECT c.*,s.slug source_slug,s.name source_name,s.url source_url,p.current_name product_name
+    FROM changes c JOIN sources s ON s.id=c.source_id LEFT JOIN products p ON p.id=c.product_id
+    WHERE c.detected_at >= NOW()-($1::text||' days')::interval
+    ORDER BY c.detected_at DESC,c.id DESC LIMIT 300`,[days]);
+  res.json(r.rows);
 }catch(e){next(e)}});
 
 app.get('/api/changes', async (req,res,next)=>{try{
