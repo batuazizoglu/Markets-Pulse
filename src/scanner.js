@@ -64,8 +64,11 @@ async function scanSource(source) {
     await pool.query(`UPDATE scans SET finished_at=NOW(), status='ok', http_status=$1, response_ms=$2, page_hash=$3, parsed_count=$4, error=NULL WHERE id=$5`,
       [responseStatus, Date.now()-t0, pageHash, parsedCount, scanId]);
 
+    const lastEvidence = await pool.query(`SELECT captured_at,(screenshot_png IS NOT NULL) has_screenshot FROM snapshots WHERE source_id=$1 ORDER BY captured_at DESC LIMIT 1`,[source.id]);
+    const previous = lastEvidence.rows[0];
+    const evidenceDue = !previous || !previous.has_screenshot || (Date.now()-new Date(previous.captured_at).getTime() >= 24*60*60*1000);
     let screenshotOk = null;
-    if (baseline || meaningfulChanges > 0) {
+    if (baseline || meaningfulChanges > 0 || evidenceDue) {
       let screenshot = null;
       let screenshotError = null;
       try {
@@ -76,9 +79,10 @@ async function scanSource(source) {
         screenshotOk = false;
         console.error('[screenshot]', source.slug, screenshotError);
       }
+      const kind = baseline ? 'baseline' : meaningfulChanges > 0 ? 'change' : 'daily';
       await pool.query(`INSERT INTO snapshots(source_id,scan_id,captured_at,kind,page_hash,html_gzip,extracted_json,screenshot_png,screenshot_error)
                         VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9)`,
-        [source.id, scanId, started, baseline ? 'baseline' : 'change', pageHash, zlib.gzipSync(Buffer.from(html)), JSON.stringify(cards), screenshot, screenshotError]);
+        [source.id, scanId, started, kind, pageHash, zlib.gzipSync(Buffer.from(html)), JSON.stringify(cards), screenshot, screenshotError]);
     }
 
     return { ok:true, source:source.slug, http_status:responseStatus, response_ms:Date.now()-t0, parsed_count:parsedCount, baseline, changes:meaningfulChanges, screenshot_ok:screenshotOk };
