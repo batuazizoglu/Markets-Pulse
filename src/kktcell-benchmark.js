@@ -23,7 +23,7 @@ function extractProductCards(html,source){
   const $=cheerio.load(html);
   $('script,style,noscript,svg').remove();
   const suffix=source.type==='prepaid'?'Faturasız':'Faturalı';
-  const suffixRe=new RegExp(`\\b${suffix}\\b`,'i');
+  const suffixRe=new RegExp(`${suffix}(?=\\s|$)`,'i');
   const candidates=[];
 
   $('a').each((_,el)=>{
