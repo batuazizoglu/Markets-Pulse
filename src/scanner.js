@@ -3,6 +3,7 @@ import { pool } from './db.js';
 import { TRACKED_FIELDS } from './config.js';
 import { extractRelevantText, parseCards, sha256 } from './parser.js';
 import { matchCardsToProducts } from './matcher.js';
+import { captureFullPageScreenshot } from './screenshot.js';
 
 let scanRunning = false;
 
@@ -50,7 +51,7 @@ async function scanSource(source) {
     const html = await response.text();
     const relevantText = extractRelevantText(html, source.name);
     pageHash = sha256(relevantText);
-    const cards = parseCards(relevantText);
+    const cards = dedupeCards(parseCards(relevantText));
     parsedCount = cards.length;
 
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -63,18 +64,40 @@ async function scanSource(source) {
     await pool.query(`UPDATE scans SET finished_at=NOW(), status='ok', http_status=$1, response_ms=$2, page_hash=$3, parsed_count=$4, error=NULL WHERE id=$5`,
       [responseStatus, Date.now()-t0, pageHash, parsedCount, scanId]);
 
+    let screenshotOk = null;
     if (baseline || meaningfulChanges > 0) {
-      await pool.query(`INSERT INTO snapshots(source_id,scan_id,captured_at,kind,page_hash,html_gzip,extracted_json)
-                        VALUES($1,$2,$3,$4,$5,$6,$7::jsonb)`,
-        [source.id, scanId, started, baseline ? 'baseline' : 'change', pageHash, zlib.gzipSync(Buffer.from(html)), JSON.stringify(cards)]);
+      let screenshot = null;
+      let screenshotError = null;
+      try {
+        screenshot = await captureFullPageScreenshot(source.url);
+        screenshotOk = Boolean(screenshot?.length);
+      } catch (e) {
+        screenshotError = e?.message || String(e);
+        screenshotOk = false;
+        console.error('[screenshot]', source.slug, screenshotError);
+      }
+      await pool.query(`INSERT INTO snapshots(source_id,scan_id,captured_at,kind,page_hash,html_gzip,extracted_json,screenshot_png,screenshot_error)
+                        VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9)`,
+        [source.id, scanId, started, baseline ? 'baseline' : 'change', pageHash, zlib.gzipSync(Buffer.from(html)), JSON.stringify(cards), screenshot, screenshotError]);
     }
 
-    return { ok:true, source:source.slug, http_status:responseStatus, response_ms:Date.now()-t0, parsed_count:parsedCount, baseline, changes:meaningfulChanges };
+    return { ok:true, source:source.slug, http_status:responseStatus, response_ms:Date.now()-t0, parsed_count:parsedCount, baseline, changes:meaningfulChanges, screenshot_ok:screenshotOk };
   } catch (error) {
     await pool.query(`UPDATE scans SET finished_at=NOW(), status='error', http_status=$1, response_ms=$2, page_hash=$3, parsed_count=$4, error=$5 WHERE id=$6`,
       [responseStatus, Date.now()-t0, pageHash, parsedCount, error?.message || String(error), scanId]);
     return { ok:false, source:source.slug, http_status:responseStatus, response_ms:Date.now()-t0, parsed_count:parsedCount, error:error?.message || String(error) };
   }
+}
+
+function dedupeCards(cards) {
+  const seen = new Set();
+  const unique = [];
+  for (const card of cards) {
+    if (seen.has(card.product_hash)) continue;
+    seen.add(card.product_hash);
+    unique.push({ ...card, position: unique.length });
+  }
+  return unique;
 }
 
 async function processCards(source, scanId, cards, baseline, capturedAt) {
