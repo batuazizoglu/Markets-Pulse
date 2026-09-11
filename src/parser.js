@@ -8,17 +8,33 @@ export function sha256(input) {
 export function extractRelevantText(html, pageName) {
   const $ = cheerio.load(html);
   $('script,style,noscript,svg').remove();
-  let text = $('body').text();
-  text = text
+
+  // Cheerio's body.text() concatenates adjacent block elements on the
+  // current Telsim/Next.js markup. Add explicit separators before reading
+  // text so product name, allowance, benefit and price remain distinct.
+  $('br').replaceWith('\n');
+  $('div,section,article,li,p,h1,h2,h3,h4,h5,h6,button,a,td,th,tr').each((_, el) => {
+    $(el).append('\n');
+  });
+
+  let text = $('body').text()
+    .replace(/\u00a0/g, ' ')
     .split(/\r?\n/)
     .map(x => x.replace(/\s+/g, ' ').trim().replace(/^#+\s*/, ''))
     .filter(Boolean)
     .join('\n');
 
+  // On Telsim pages the main tariff payload currently appears in the HTML
+  // after an early footer/copyright block. Keep that portion when present.
   const copyrightIdx = text.lastIndexOf('© 2026 KKTC Telsim');
   if (copyrightIdx >= 0) text = text.slice(copyrightIdx);
-  const pageIdx = text.indexOf(`\n${pageName}\n`);
-  if (pageIdx >= 0) text = text.slice(pageIdx + pageName.length + 2);
+
+  // Prefer an exact logical line match, but don't fail the scan if the page
+  // wrapper changes — parseCards can still identify the tariff cards below.
+  const lines = text.split('\n');
+  const pageLine = lines.findIndex(x => x.toLocaleLowerCase('tr-TR') === pageName.toLocaleLowerCase('tr-TR'));
+  if (pageLine >= 0) text = lines.slice(pageLine + 1).join('\n');
+
   return text;
 }
 
@@ -27,9 +43,15 @@ export function parseCards(text) {
   const starts = [];
 
   for (let i = 1; i < lines.length; i++) {
-    if (/^\d+(?:[.,]\d+)?\s*(?:GB|MB)$/i.test(lines[i])) {
-      const prev = lines[i - 1];
-      if (isLikelyName(prev)) starts.push(i - 1);
+    if (/^\d+(?:[.,]\d+)?\s*(?:GB|MB)(?:\s*\([^)]*\))?$/i.test(lines[i])) {
+      // Normally the product name is immediately above the main allowance.
+      // Walk back a few logical rows to survive harmless wrapper text.
+      for (let j = i - 1; j >= Math.max(0, i - 4); j--) {
+        if (isLikelyName(lines[j])) {
+          starts.push(j);
+          break;
+        }
+      }
     }
   }
 
@@ -37,19 +59,20 @@ export function parseCards(text) {
   const cards = [];
   for (let x = 0; x < uniqueStarts.length; x++) {
     const start = uniqueStarts[x];
-    const end = x + 1 < uniqueStarts.length ? uniqueStarts[x + 1] : Math.min(lines.length, start + 50);
+    const end = x + 1 < uniqueStarts.length ? uniqueStarts[x + 1] : Math.min(lines.length, start + 60);
     const chunk = lines.slice(start, end);
     const card = parseCard(chunk, cards.length);
-    if (card && card.price_try != null) cards.push(card);
+    if (card && card.price_try != null && card.data_gb != null) cards.push(card);
   }
   return cards;
 }
 
 function isLikelyName(s) {
   if (!s || s.length < 3 || s.length > 140) return false;
-  if (/^(Faturalı|Faturasız|Tümü|Dijitale Özel Paketler|Super Databol|Super World|Askerfone|Diğer Faturasız Paketler)$/i.test(s)) return false;
-  if (/^\+/.test(s) || /^\d+(?:[.,]\d+)?\s*(GB|MB|DK|SMS)$/i.test(s)) return false;
+  if (/^(Faturalı|Faturasız|Tümü|Dijitale Özel Paketler|Super Databol|Super World|Askerfone|Diğer Faturasız Paketler|Super Red|Super Simple|Super Cool|Red Junior|Super65|Asker'e Özel|PGM Çalışanlarına Özel|Kamu Çalışanlarına Özel|Sağlık Çalışanlarına Özel|Engelleri Aşan Tarifesi)$/i.test(s)) return false;
+  if (/^\+/.test(s) || /^\d+(?:[.,]\d+)?\s*(GB|MB|DK|SMS)(?:\s*\([^)]*\))?$/i.test(s)) return false;
   if (/^(Detayları Göster|Hemen Başvur|Satın Al|₺|\/ ay)$/i.test(s)) return false;
+  if (/^(Aşım Yok|Fatura Aşımı Yok|Sınırsız|Happy Avantajlar)$/i.test(s)) return false;
   return /[A-Za-zÇĞİÖŞÜçğıöşü]/.test(s);
 }
 
@@ -105,16 +128,16 @@ function parseCard(lines, position) {
 }
 
 function findPrice(lines) {
-  for (let i = 0; i < lines.length - 1; i++) {
-    if (lines[i] === '₺') {
-      const m = lines[i + 1].match(/^(\d+(?:[.,]\d+)?)$/);
-      if (m) return Number(m[1].replace(',', '.'));
-    }
-  }
-  for (const line of lines) {
-    const m = line.match(/^₺\s*(\d+(?:[.,]\d+)?)$/);
-    if (m) return Number(m[1].replace(',', '.'));
-  }
+  const raw = lines.join(' ');
+
+  // Handles both separate nodes (₺ / 3359) and compact renderings
+  // such as "₺3359 / ay" or "₺ 449".
+  let m = raw.match(/₺\s*(\d+(?:[.,]\d+)?)/);
+  if (m) return Number(m[1].replace(',', '.'));
+
+  // Fallback for text-only campaign cards that spell the currency out.
+  m = raw.match(/(?:^|\s)(\d+(?:[.,]\d+)?)\s*TL\b/i);
+  if (m) return Number(m[1].replace(',', '.'));
   return null;
 }
 
