@@ -84,7 +84,7 @@ function applyRoute(route=currentRoute()){
   const vt=document.getElementById('viewTitle');if(vt)vt.innerHTML='<div><h2>'+routes[route].label+'</h2><p>'+routes[route].desc+'</p></div><span class="view-chip">Market Pulse • Live</span>';
   if(route==='segment'&&window.setBmSegment)window.setBmSegment('Genel');
   if(route==='trends'&&window.setBmSegment)window.setBmSegment('Tümü');
-  window.scrollTo({top:0,behavior:'instant'});
+  window.scrollTo({top:0,behavior:'auto'});
 }
 function go(route){if(!routes[route])route='dashboard';history.replaceState(null,'','#'+route);applyRoute(route)}
 
