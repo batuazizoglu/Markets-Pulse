@@ -11,10 +11,7 @@ function mpTime(v){return v?new Intl.DateTimeFormat('tr-TR',{dateStyle:'short',t
 let mpDays=30;
 
 function installMarketPulse(){
-  const h1=document.querySelector('.brand h1');if(h1)h1.textContent='Market Pulse';
-  const sub=document.querySelector('.brand .subtitle');if(sub)sub.textContent='Competitive Intelligence • Telsim Watch';
-  const mark=document.querySelector('.brandmark');if(mark)mark.textContent='M';
-  document.title='Market Pulse • Competitive Intelligence';
+  document.title='Market Pulse by Turkcell';
   const nav=document.querySelector('.section-nav');
   if(nav&&!nav.querySelector('a[href="#market-pulse-section"]')) nav.insertAdjacentHTML('afterbegin','<a href="#market-pulse-section">Market Pulse</a>');
   const overview=document.getElementById('overview');
