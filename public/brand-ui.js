@@ -74,7 +74,7 @@ function ensureViews(){
     </div>
   </section>`);
 }
-function allRouteIds(){return [...new Set(Object.values(routes).flatMap(r=>r.ids))}
+function allRouteIds(){return [...new Set(Object.values(routes).flatMap(r=>r.ids))]}
 function currentRoute(){const h=location.hash.replace('#','');return routes[h]?h:'dashboard'}
 function applyRoute(route=currentRoute()){
   if(!routes[route])route='dashboard';document.body.dataset.view=route;
