@@ -2,7 +2,9 @@ import * as cheerio from 'cheerio';
 
 const KKTCELL_SOURCES = [
   { slug:'kktcell-faturasiz', type:'prepaid', name:'KKTCELL Faturasız', url:'https://www.kktcell.com/faturasiz' },
-  { slug:'kktcell-faturali', type:'postpaid', name:'KKTCELL Faturalı', url:'https://www.kktcell.com/faturali' }
+  { slug:'kktcell-faturali', type:'postpaid', name:'KKTCELL Faturalı', url:'https://www.kktcell.com/faturali' },
+  { slug:'kktcell-gnc', type:'postpaid', name:'KKTCELL GNÇ', url:'https://www.kktcell.com/gnc' },
+  { slug:'kktcell-platinum', type:'postpaid', name:'KKTCELL Platinum', url:'https://www.kktcell.com/platinum' }
 ];
 
 export const BENCHMARK_SEGMENTS = ['Genel','Asker','Öğrenci / Genç','Turist','Premium / Platinum'];
@@ -94,11 +96,12 @@ function parseCatalog(html,source){
     const acquisition=detectAcquisition(`${name} ${raw}`);
     const channel=detectChannel(`${name} ${raw}`);
     const lowName=name.toLocaleLowerCase('tr-TR');
-    const isAddon=/\bek\b|\b100\s*sms\b|\b1\.000\s*sms\b|\b10\.000\s*sms\b|tek numara|aşım|devir|favorim|türkiye \d+\s*dk|tv\+|dakika faturasız|platinum'a ek/i.test(lowName);
-    const isCore=price!=null&&dataGb!=null&&!isAddon;
+    const isAddon=/\bek\b|\b100\s*sms\b|\b1\.000\s*sms\b|\b10\.000\s*sms\b|tek numara|aşım|devir|favorim|türkiye \d+\s*dk|tv\+|dakika faturasız|platinum'a ek|gnç ek|gnc ek/i.test(lowName);
+    const isClosed=/yeni abone alımına kapalı|abone alımına kapalı|sonlanmıştır|sona ermiştir/i.test(raw);
+    const isCore=price!=null&&dataGb!=null&&!isAddon&&!isClosed;
     rows.push({provider:'KKTCELL',source_slug:source.slug,source_name:source.name,source_url:source.url,type:source.type,name,
       data_gb:dataGb,bonus_data_gb:bonusGb||0,effective_data_gb:(dataGb||0)+(bonusGb||0),local_tr_minutes:mins,
-      international_minutes:null,sms,validity_days:validityDays,price_try:price,segment,acquisition,channel,is_core:isCore,raw_text:raw,product_url:card.href});
+      international_minutes:null,sms,validity_days:validityDays,price_try:price,segment,acquisition,channel,is_core:isCore,is_closed:isClosed,raw_text:raw,product_url:card.href});
   }
   const unique=new Map();
   for(const r of rows){const key=[r.type,r.name,r.data_gb,r.bonus_data_gb,r.price_try,r.validity_days].join('|');if(!unique.has(key))unique.set(key,r)}
@@ -117,7 +120,10 @@ export async function getKktcellCatalog(force=false){
       sourceStatus.push({...source,ok:true,http_status:res.status,response_ms:Date.now()-t0,parsed_count:rows.length,core_count:rows.filter(x=>x.is_core).length});
     }catch(e){sourceStatus.push({...source,ok:false,response_ms:Date.now()-t0,error:e?.message||String(e),parsed_count:0,core_count:0})}
   }
-  cache={at:Date.now(),rows:all,sources:sourceStatus,error:sourceStatus.some(x=>!x.ok)?'One or more KKTCELL sources failed':null};
+  const globalUnique=new Map();
+  for(const r of all){const key=[r.type,r.name,r.data_gb,r.bonus_data_gb,r.price_try,r.validity_days].join('|');if(!globalUnique.has(key))globalUnique.set(key,r)}
+  const rows=[...globalUnique.values()];
+  cache={at:Date.now(),rows,sources:sourceStatus,error:sourceStatus.some(x=>!x.ok)?'One or more KKTCELL sources failed':null};
   return cache;
 }
 
