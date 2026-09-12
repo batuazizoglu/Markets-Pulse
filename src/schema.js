@@ -94,4 +94,25 @@ ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS screenshot_error TEXT;
 ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS focused_screenshot_error TEXT;
 ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS screenshot_meta JSONB;
 CREATE INDEX IF NOT EXISTS idx_snapshots_source_time ON snapshots(source_id, captured_at DESC);
+
+CREATE TABLE IF NOT EXISTS competitive_position_history (
+  id BIGSERIAL PRIMARY KEY,
+  bucket_at TIMESTAMPTZ NOT NULL,
+  captured_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  segment TEXT NOT NULL,
+  score INTEGER,
+  level TEXT,
+  confidence TEXT,
+  match_count INTEGER NOT NULL DEFAULT 0,
+  kktcell_advantage_count INTEGER NOT NULL DEFAULT 0,
+  telsim_advantage_count INTEGER NOT NULL DEFAULT 0,
+  parity_count INTEGER NOT NULL DEFAULT 0,
+  avg_value_gap_pct NUMERIC,
+  avg_match_score NUMERIC,
+  rationale TEXT,
+  details_json JSONB,
+  UNIQUE(segment,bucket_at)
+);
+CREATE INDEX IF NOT EXISTS idx_comp_position_segment_time ON competitive_position_history(segment,bucket_at DESC);
+CREATE INDEX IF NOT EXISTS idx_comp_position_time ON competitive_position_history(bucket_at DESC);
 `;
