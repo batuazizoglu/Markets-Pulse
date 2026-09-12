@@ -19,6 +19,7 @@ function cleanNumber(v){
   return m?Number(m[0]):null;
 }
 function normalizeText(v){return String(v||'').replace(/\u00a0/g,' ').replace(/\s+/g,' ').trim()}
+function clamp(v,min,max){return Math.max(min,Math.min(max,v))}
 
 function classifySegment(text){
   const t=String(text||'').toLocaleLowerCase('tr-TR');
@@ -149,6 +150,31 @@ function similarity(t,k){
   return s;
 }
 
+function competitivePositionScore(rows,segment){
+  if(!rows.length){
+    return {segment,score:null,level:'VERİ YETERSİZ',confidence:'DÜŞÜK',match_count:0,positions:{},avg_value_gap_pct:null,avg_match_score:null,rationale:'Bu segmentte karşılaştırılabilir Telsim ↔ KKTCELL SKU eşleşmesi yok.'};
+  }
+  const positions=rows.reduce((a,m)=>(a[m.position]=(a[m.position]||0)+1,a),{});
+  const ours=positions.KKTCELL_ADVANTAGE||0,theirs=positions.TELSIM_ADVANTAGE||0;
+  const netPosition=(ours-theirs)/rows.length;
+  const relativeValue=[];
+  for(const m of rows){
+    const tv=Number(m.telsim?.gb_per_100tl),kv=Number(m.kktcell?.gb_per_100tl);
+    if(tv>0&&Number.isFinite(kv)) relativeValue.push(clamp(((kv-tv)/tv)*100,-60,60));
+  }
+  const avgValuePct=relativeValue.length?relativeValue.reduce((s,v)=>s+v,0)/relativeValue.length:0;
+  const avgMatch=rows.reduce((s,m)=>s+(Number(m.match_score)||0),0)/rows.length;
+  const positionComponent=netPosition*22;
+  const valueComponent=(avgValuePct/60)*28;
+  const score=Math.round(clamp(50+positionComponent+valueComponent,0,100));
+  const level=score>=75?'GÜÇLÜ':score>=60?'AVANTAJLI':score>=45?'DENGELİ':score>=30?'BASKI ALTINDA':'KRİTİK';
+  const confidence=rows.length>=5&&avgMatch>=85?'YÜKSEK':rows.length>=3&&avgMatch>=80?'ORTA':'DÜŞÜK';
+  const parity=positions.PARITY||0;
+  const gapText=`${avgValuePct>=0?'+':''}${avgValuePct.toFixed(1)}%`;
+  const rationale=`${rows.length} eşleşme: ${ours} KKTCELL avantajı, ${theirs} Telsim avantajı, ${parity} parite. Ortalama relatif GB/100 TL farkı ${gapText}.`;
+  return {segment,score,level,confidence,match_count:rows.length,positions,avg_value_gap_pct:Number(avgValuePct.toFixed(1)),avg_match_score:Number(avgMatch.toFixed(1)),rationale};
+}
+
 export function buildBenchmark(telsimRows,kktcellRows){
   const ours=kktcellRows.filter(x=>x.is_core);
   const comp=telsimRows.filter(x=>x.active&&x.price_try!=null&&x.data_gb!=null);
@@ -169,12 +195,15 @@ export function buildBenchmark(telsimRows,kktcellRows){
   }
   matches.sort((a,b)=>{const rank={TELSIM_ADVANTAGE:0,PARITY:1,KKTCELL_ADVANTAGE:2,UNKNOWN:3};return rank[a.position]-rank[b.position]||b.match_score-a.match_score});
   const counts=matches.reduce((a,m)=>(a[m.position]=(a[m.position]||0)+1,a),{});
+  const segment_scores=BENCHMARK_SEGMENTS.map(segment=>competitivePositionScore(matches.filter(m=>m.segment===segment),segment));
+  const overall_score=competitivePositionScore(matches,'Toplam');
   const segment_summary=BENCHMARK_SEGMENTS.map(segment=>{
     const rows=matches.filter(m=>m.segment===segment);
     const positions=rows.reduce((a,m)=>(a[m.position]=(a[m.position]||0)+1,a),{});
-    return {segment,total:rows.length,positions};
+    const score=segment_scores.find(x=>x.segment===segment);
+    return {segment,total:rows.length,positions,score:score?.score??null,level:score?.level||'VERİ YETERSİZ',confidence:score?.confidence||'DÜŞÜK'};
   });
-  return {generated_at:new Date().toISOString(),methodology:'Segment-first nearest commercial equivalent v2',segments:BENCHMARK_SEGMENTS,counts,total_matches:matches.length,segment_summary,matches};
+  return {generated_at:new Date().toISOString(),methodology:'Segment-first benchmark v3 • position + relative value score',score_methodology:'50 nötr baz + net avantaj oranı (±22 puan) + ortalama relatif GB/100 TL farkı (±28 puan, ±60% cap). Eşleşme adedi ve match quality güven seviyesini belirler.',segments:BENCHMARK_SEGMENTS,counts,total_matches:matches.length,overall_score,segment_scores,segment_summary,matches};
 }
 
 function recommend(position,x){
