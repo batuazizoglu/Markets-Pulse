@@ -1,7 +1,7 @@
 (()=>{
 const routes={
-  dashboard:{label:'Dashboard',desc:'Pazarın nabzı, kritik gelişmeler ve yönetici özeti.',ids:['market-pulse-section','overview']},
-  competitor:{label:'Rakip Takip',desc:'Telsim paketleri, değişiklikler, kaynaklar ve kanıt arşivi.',ids:['packages-section','changes-section','historySection','evidence-section','sources-section']},
+  dashboard:{label:'Dashboard',desc:'Pazarın nabzı, kritik gelişmeler, aksiyonlar ve yönetici özeti.',ids:['market-pulse-section','dashboard-insights-section','overview']},
+  competitor:{label:'Rakip Takip',desc:'Kaynak sağlığı, günlük değişim, Telsim paketleri, kanıt ve değişiklik akışı.',ids:['source-health-section','daily-market-section','packages-section','historySection','changes-section','evidence-section','sources-section']},
   compare:{label:'Ürün Karşılaştırma',desc:'Telsim ve KKTCELL ürünlerini segment bazında karşılaştırın.',ids:['benchmark-section']},
   segment:{label:'Segment Analizi',desc:'Genel, Asker, Öğrenci/Genç, Turist ve Premium/Platinum pozisyonu.',ids:['benchmark-section']},
   trends:{label:'Trendler',desc:'Rekabet pozisyonu ve rakip hareketlerinin 7/30/90 günlük seyri.',ids:['benchmark-section','changes-section']},
@@ -55,6 +55,7 @@ function ensureViews(){
     const nav=document.querySelector('.section-nav');
     (nav||shell.firstElementChild)?.insertAdjacentHTML(nav?'afterend':'afterend','<div id="viewTitle" class="view-title"><div><h2>Dashboard</h2><p>Pazarın nabzı, kritik gelişmeler ve yönetici özeti.</p></div><span class="view-chip">Market Pulse • Live</span></div>');
   }
+  if(!document.getElementById('dashboard-insights-section')) shell.insertAdjacentHTML('beforeend',`<section id="dashboard-insights-section" class="section"><div class="section-title"><div><h2>Yönetici İçgörüleri</h2><p>Benchmark ve rakip hareketlerinden türetilen dört kritik sinyal</p></div></div><div id="executiveInsights" class="executive-grid"><article class="executive-card"><span>Genel Pozisyon</span><strong>—</strong><small>Hesaplanıyor</small></article><article class="executive-card"><span>En Güçlü Segment</span><strong>—</strong><small>Hesaplanıyor</small></article><article class="executive-card"><span>En Baskı Altındaki</span><strong>—</strong><small>Hesaplanıyor</small></article><article class="executive-card"><span>Öncelikli Aksiyon</span><strong>—</strong><small>Hesaplanıyor</small></article></div></section>`);
   if(!document.getElementById('reports-section')) shell.insertAdjacentHTML('beforeend',`
   <section id="reports-section" class="section">
     <div class="section-title"><div><h2>Rapor Merkezi</h2><p>Canlı Market Pulse verisini dışa aktarın</p></div></div>
@@ -74,9 +75,16 @@ function ensureViews(){
     </div>
   </section>`);
 }
+function organizeContent(){
+  const packages=document.getElementById('packages-section'),history=document.getElementById('historySection');
+  if(packages&&history&&packages.nextElementSibling!==history)packages.insertAdjacentElement('afterend',history);
+  const mp=document.getElementById('market-pulse-section'),insights=document.getElementById('dashboard-insights-section');
+  if(mp&&insights&&mp.nextElementSibling!==insights)mp.insertAdjacentElement('afterend',insights);
+}
 function allRouteIds(){return [...new Set(Object.values(routes).flatMap(r=>r.ids))]}
 function currentRoute(){const h=location.hash.replace('#','');return routes[h]?h:'dashboard'}
 function applyRoute(route=currentRoute()){
+  organizeContent();
   if(!routes[route])route='dashboard';document.body.dataset.view=route;
   const ids=allRouteIds();
   ids.forEach(id=>{const el=document.getElementById(id);if(el){el.dataset.routeSection='1';el.classList.toggle('route-visible',routes[route].ids.includes(id))}});
@@ -87,6 +95,22 @@ function applyRoute(route=currentRoute()){
   window.scrollTo({top:0,behavior:'auto'});
 }
 function go(route){if(!routes[route])route='dashboard';history.replaceState(null,'','#'+route);applyRoute(route)}
+
+async function loadExecutiveInsights(){
+  const box=document.getElementById('executiveInsights');if(!box)return;
+  try{
+    const [br,mr]=await Promise.all([fetch('/api/benchmark',{cache:'no-store'}),fetch('/api/market-pulse?days=30',{cache:'no-store'})]);
+    if(!br.ok||!mr.ok)throw new Error('Executive data unavailable');
+    const b=await br.json(),m=await mr.json();
+    const scores=(b.segment_scores||[]).filter(x=>x.score!=null).sort((a,z)=>z.score-a.score);
+    const strongest=scores[0],weakest=scores[scores.length-1],threat=(m.top_threats||[])[0];
+    box.innerHTML=
+      '<article class="executive-card primary"><span>Genel Competitive Position</span><strong>'+(b.overall_score?.score??'—')+'/100</strong><small>'+(b.overall_score?.level||'Veri bekleniyor')+' • Güven '+(b.overall_score?.confidence||'—')+'</small></article>'+
+      '<article class="executive-card good"><span>En Güçlü Segment</span><strong>'+(strongest?.segment||'—')+'</strong><small>'+(strongest?.score??'—')+'/100 • '+(strongest?.level||'—')+'</small></article>'+
+      '<article class="executive-card risk"><span>En Baskı Altındaki Segment</span><strong>'+(weakest?.segment||'—')+'</strong><small>'+(weakest?.score??'—')+'/100 • '+(weakest?.level||'—')+'</small></article>'+
+      '<article class="executive-card action"><span>Öncelikli Rakip Hamlesi</span><strong>'+(threat?.product_name||'Anlamlı yeni hamle yok')+'</strong><small>'+(threat?('Tehdit '+threat.threat+'/100 • '+(threat.action||'')):'Son 30 günde kritik hareket görünmüyor')+'</small></article>';
+  }catch(e){console.error(e);box.innerHTML='<article class="executive-card"><span>Yönetici İçgörüleri</span><strong>Veri alınamadı</strong><small>Bir sonraki yenilemede tekrar denenecek.</small></article>'}
+}
 
 function csv(rows){
   if(!Array.isArray(rows)||!rows.length)return '';
@@ -107,9 +131,10 @@ async function download(kind,format='json'){
 }
 
 function init(){
-  document.body.classList.add('branded-app');sidebar();topBrand();ensureViews();applyTheme();applyRoute();
+  document.body.classList.add('branded-app');sidebar();topBrand();ensureViews();organizeContent();applyTheme();applyRoute();loadExecutiveInsights();
   const obs=new MutationObserver(()=>applyRoute(currentRoute()));obs.observe(document.querySelector('main.shell')||document.body,{childList:true,subtree:false});
   setInterval(()=>{if(themeMode==='auto')applyTheme()},60000);
+  setInterval(loadExecutiveInsights,300000);
   window.addEventListener('hashchange',()=>applyRoute(currentRoute()));
 }
 window.MarketPulseUI={go,setTheme:setThemeMode,cycleTheme,download,applyTheme};
