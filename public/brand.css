@@ -133,3 +133,108 @@ html[data-theme="dark"] .bm-chart svg circle{fill:var(--mp-cyan)!important;strok
   .report-grid,.settings-grid{grid-template-columns:1fr}
   .actions .theme-mini{display:grid}
 }
+
+
+/* Theme hardening v2 — all legacy/dynamic components follow semantic colors */
+html[data-theme="light"]{--table-head:#f4f7fc;--hover:#f8fbff;--chart-grid:#d9e3f2;--overlay:rgba(0,15,100,.72);--focus:#1D5AFF}
+html[data-theme="dark"]{--table-head:#0d214d;--hover:#112a5a;--chart-grid:#29416f;--overlay:rgba(0,5,28,.86);--focus:#00C2FF}
+
+body.branded-app,
+body.branded-app :is(.card,.panel,.pkg-card,.report-card,.setting-card,.mp-pressure,.mp-summary,.mp-mini,.mp-threats,.mp-mix,.bm-score-card,.bm-trend,.bm-kpi,.bm-panel,.bm-seg-mini,.executive-card){
+  color:var(--ink);
+}
+body.branded-app :is(.card,.panel,.pkg-card,.report-card,.setting-card,.mp-pressure,.mp-summary,.mp-mini,.mp-threats,.mp-mix,.bm-score-card,.bm-trend,.bm-kpi,.bm-panel,.bm-seg-mini,.executive-card){
+  background:var(--surface)!important;border-color:var(--line)!important;
+}
+body.branded-app :is(.source-stat,.pkg-metric,.diff,.rank,.mp-badge,.mp-reason,.mp-action,.bm-rec,.bm-method,.bm-badge,.bm-seg-summary,.bm-chart,.bm-side,.icon-btn){
+  background:var(--surface2)!important;color:var(--ink)!important;border-color:var(--line)!important;
+}
+body.branded-app :is(.btn,.tab,.mini-btn,.search,.mp-window button,.bm-tab,.bm-horizon,.bm-refresh,.theme-mini){
+  background:var(--surface)!important;color:var(--ink)!important;border-color:var(--line)!important;
+}
+body.branded-app :is(.tab.active,.mp-window button.active,.bm-tab.active,.bm-horizon.active,.mini-btn.primary,.btn.primary){
+  background:var(--mp-electric)!important;color:#fff!important;border-color:var(--mp-electric)!important;
+}
+body.branded-app :is(.btn:hover,.tab:hover,.mini-btn:hover,.bm-refresh:hover,.theme-mini:hover){background:var(--surface2)!important}
+body.branded-app .btn.primary:hover{background:var(--mp-blue)!important}
+body.branded-app .search::placeholder{color:var(--muted);opacity:.85}
+body.branded-app .search:focus{border-color:var(--focus);box-shadow:0 0 0 3px color-mix(in srgb,var(--focus) 16%,transparent)}
+body.branded-app :is(.data-table th,.bm-table th){background:var(--table-head)!important;color:var(--muted)!important;border-color:var(--line)!important}
+body.branded-app :is(.data-table td,.bm-table td,.value-row,.change,.mp-move,.bm-source,.panel-head,.modal-head,.evidence-img){border-color:var(--line)!important}
+body.branded-app :is(.data-table tbody tr:hover,.bm-table tbody tr:hover,.change:hover){background:var(--hover)!important}
+body.branded-app .evidence-img{background:var(--surface2)!important}
+body.branded-app .modal{background:var(--overlay)!important}
+body.branded-app .modal-panel{background:var(--surface)!important;color:var(--ink)!important}
+body.branded-app .modal-image{background:var(--bg)!important}
+body.branded-app .tl-axis:before{background:var(--line)!important}
+body.branded-app .mp-action b,
+body.branded-app .bm-rec b,
+body.branded-app .bm-side b,
+body.branded-app .bm-table td b,
+body.branded-app .mp-move-title,
+body.branded-app .mp-head strong{color:var(--ink)!important}
+body.branded-app :is(.mp-summary p,.mp-meta,.bm-status,.bm-score-meta,.bm-trend-sub,.bm-trend-stat small,.bm-side span,.bm-source small,.bm-method,.mp-note){color:var(--muted)!important}
+body.branded-app .mp-bar{background:var(--line)!important}
+body.branded-app .mp-bar i{background:var(--blue)!important}
+body.branded-app .bm-chart{background:var(--surface2)!important}
+body.branded-app .bm-chart svg text{fill:var(--muted)!important}
+body.branded-app .bm-chart svg line{stroke:var(--chart-grid)!important}
+body.branded-app .bm-chart svg path{stroke:var(--blue)!important}
+body.branded-app .bm-chart svg circle{fill:var(--blue)!important;stroke:var(--surface)!important}
+body.branded-app .bm-score-card.active{outline-color:var(--focus)!important}
+body.branded-app :is(.kpi-value,.hero-value,.source-stat strong,.score,.bm-score-main strong,.bm-trend-stat strong,.bm-kpi strong,.mp-mini strong,.mp-ring strong){text-shadow:none}
+
+/* Executive dashboard */
+.executive-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.executive-card{border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);padding:15px;min-width:0;position:relative;overflow:hidden}
+.executive-card:before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--mp-blue)}
+.executive-card.good:before{background:var(--good)}.executive-card.risk:before{background:var(--bad)}.executive-card.action:before{background:var(--mp-yellow)}
+.executive-card span{display:block;font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:850}
+.executive-card strong{display:block;margin-top:7px;font-size:18px;line-height:1.15;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.executive-card small{display:block;margin-top:5px;color:var(--muted);font-size:9px;line-height:1.4;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+
+/* View-specific information architecture */
+body[data-view="compare"] #benchmark-section .bm-score-title,
+body[data-view="compare"] #benchmark-section .bm-score-grid,
+body[data-view="compare"] #benchmark-section .bm-trend{display:none!important}
+body[data-view="compare"] #benchmark-section .bm-seg-summary{display:none!important}
+body[data-view="compare"] #benchmark-section .bm-kpis{margin-top:4px}
+body[data-view="segment"] #benchmark-section .bm-grid,
+body[data-view="segment"] #benchmark-section .bm-kpis{display:none!important}
+body[data-view="segment"] #benchmark-section .bm-trend{display:block!important}
+body[data-view="trends"] #benchmark-section .bm-trend{margin-bottom:0}
+body[data-view="competitor"] #historySection .history-box:not(.open){display:block}
+body[data-view="competitor"] #historySection .history-box:not(.open) .table-wrap{display:none}
+body[data-view="competitor"] #historySection .history-box:not(.open):after{content:"Bir pakete dokunduğunuzda ürünün tarihsel versiyonları burada açılır.";display:block;padding:22px;color:var(--muted);text-align:center}
+
+/* Light mode gets its own clean accents rather than inheriting legacy whites/blues */
+html[data-theme="light"] body.branded-app .topbar{box-shadow:0 1px 0 rgba(0,20,132,.04)}
+html[data-theme="light"] .app-theme-dot{background:var(--mp-yellow)}
+html[data-theme="light"] body.branded-app :is(.good,.bm-score-trend.up){color:#00835f}
+html[data-theme="light"] body.branded-app :is(.bad,.bm-score-trend.down){color:#c7342d}
+html[data-theme="light"] body.branded-app .warn{color:#9c6b00}
+
+/* Dark contrast tuning */
+html[data-theme="dark"]{--muted:#b6c5e5;--line:#29406e;--surface:#0c1e49;--surface2:#122956;--good:#49e0ad;--bad:#ff8d91;--warn:#ffd84a}
+html[data-theme="dark"] body.branded-app .kpi-label,
+html[data-theme="dark"] body.branded-app .eyebrow,
+html[data-theme="dark"] body.branded-app .source-stat span,
+html[data-theme="dark"] body.branded-app .pkg-metric span{color:#b6c5e5}
+html[data-theme="dark"] body.branded-app .kpi-value,
+html[data-theme="dark"] body.branded-app .hero-value,
+html[data-theme="dark"] body.branded-app .source-stat strong,
+html[data-theme="dark"] body.branded-app .pkg-metric b,
+html[data-theme="dark"] body.branded-app .price{color:#fff}
+html[data-theme="dark"] body.branded-app .bm-score-card.strong .bm-score-main strong,
+html[data-theme="dark"] body.branded-app .bm-score-card.strong .bm-score-level{color:#63e6b8!important}
+html[data-theme="dark"] body.branded-app .bm-score-card.balanced .bm-score-main strong,
+html[data-theme="dark"] body.branded-app .bm-score-card.balanced .bm-score-level{color:#ffdc60!important}
+html[data-theme="dark"] body.branded-app .bm-score-card.weak .bm-score-main strong,
+html[data-theme="dark"] body.branded-app .bm-score-card.weak .bm-score-level{color:#ff989c!important}
+html[data-theme="dark"] body.branded-app :is(.mp-score,.bm-pos,.status){font-weight:900}
+
+@media(max-width:1100px){.executive-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:720px){
+  .executive-grid{grid-template-columns:1fr 1fr;gap:8px}
+  .executive-card{padding:12px}.executive-card strong{font-size:14px}.executive-card small{font-size:8px}
+}
