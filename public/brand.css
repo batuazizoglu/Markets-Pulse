@@ -255,3 +255,33 @@ html[data-theme="dark"] body.branded-app :is(.mp-score,.bm-pos,.status){font-wei
 .report-card .btn:disabled{opacity:.45}
 @media(max-width:900px){.report-status-strip{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:720px){.report-grid-4,.report-status-strip{grid-template-columns:1fr}.report-history{max-height:none}}
+
+
+/* Ev İnterneti Market Intelligence */
+.hi-title{align-items:center}.hi-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.hi-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:12px}
+.hi-kpi{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px;box-shadow:var(--shadow);min-width:0}
+.hi-kpi span{display:block;font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:850}
+.hi-kpi strong{display:block;margin-top:5px;font-size:21px;line-height:1.1;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hi-kpi small{display:block;margin-top:5px;color:var(--muted);font-size:9px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hi-opportunity{margin-bottom:12px}.hi-op-card{background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--mp-blue);border-radius:14px;padding:14px 15px;box-shadow:var(--shadow)}
+.hi-op-card.risk{border-left-color:var(--bad)}.hi-op-card.good{border-left-color:var(--good)}.hi-op-card.neutral{border-left-color:var(--warn)}
+.hi-op-card span{display:block;font-size:9px;letter-spacing:.07em;color:var(--muted);font-weight:900}.hi-op-card strong{display:block;margin-top:4px;font-size:15px;color:var(--ink)}.hi-op-card small{display:block;margin-top:6px;color:var(--muted);font-size:10px;line-height:1.5}
+.hi-toolbar{display:grid;grid-template-columns:180px 180px 150px 1fr;gap:8px;align-items:end;margin:0 0 12px}
+.hi-filter label{display:block;margin:0 0 5px;font-size:9px;color:var(--muted);font-weight:800}
+.hi-filter select{width:100%;height:36px;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--ink);padding:0 10px;font-size:10px;font-weight:700}
+.hi-toggle{height:36px;display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:0 11px;font-size:10px;color:var(--muted);font-weight:700}
+.hi-toggle input{accent-color:var(--mp-electric)}
+.hi-panel{background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);overflow:hidden;margin-bottom:12px}
+.hi-table{min-width:980px}.hi-table td small{display:block;color:var(--muted);font-size:8px;margin-top:3px;line-height:1.35}.hi-product-name{font-weight:800;color:var(--ink)}
+.hi-tech{display:inline-flex;padding:4px 7px;border-radius:999px;background:var(--surface2);border:1px solid var(--line);font-size:8px;font-weight:800;color:var(--ink)}
+.hi-score{display:inline-grid;place-items:center;min-width:34px;height:28px;border-radius:8px;font-size:10px;font-weight:900}.hi-score.good{background:var(--goodbg);color:var(--good)}.hi-score.warn{background:var(--warnbg);color:var(--warn)}.hi-score.bad{background:var(--badbg);color:var(--bad)}
+.hi-own td:first-child{box-shadow:inset 3px 0 0 var(--mp-cyan)}
+.hi-grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}.hi-grid2 .hi-panel{margin-bottom:0}
+.hi-source-list,.hi-change-list{max-height:420px;overflow:auto}
+.hi-source,.hi-change{display:flex;justify-content:space-between;gap:12px;padding:11px 13px;border-bottom:1px solid var(--line)}.hi-source:last-child,.hi-change:last-child{border-bottom:0}
+.hi-source b,.hi-change b{display:block;font-size:10px;color:var(--ink)}.hi-source small,.hi-change small{display:block;margin-top:3px;font-size:8px;color:var(--muted);line-height:1.4}
+.hi-source-meta,.hi-change>div:last-child{text-align:right;flex:0 0 auto}
+html[data-theme="dark"] .hi-filter select,html[data-theme="dark"] .hi-toggle{background:var(--surface2);color:var(--ink)}
+@media(max-width:1050px){.hi-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.hi-toolbar{grid-template-columns:1fr 1fr}.hi-grid2{grid-template-columns:1fr}}
+@media(max-width:720px){.hi-kpis{grid-template-columns:1fr 1fr;gap:8px}.hi-kpi{padding:11px}.hi-kpi strong{font-size:17px}.hi-toolbar{grid-template-columns:1fr}.hi-toggle{width:100%}.hi-op-card strong{font-size:13px}.hi-title{align-items:flex-start}.hi-actions{width:100%}}
