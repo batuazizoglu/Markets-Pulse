@@ -358,6 +358,18 @@ app.use((err,req,res,next)=>{console.error(err);res.status(500).json({error:err?
 const port=Number(process.env.PORT||3000);
 await initDb();
 app.listen(port,()=>console.log(`Markets Pulse / Telsim Watch listening on ${port}`));
+{
+  const es=getReportEmailStatus();
+  console.log('[report-email-config]',JSON.stringify({
+    delivery_mode:es.delivery_mode,
+    api_configured:es.api_configured,
+    smtp_configured:es.smtp_configured,
+    brevo_api_key_present:Boolean(String(process.env.BREVO_API_KEY||'').trim()),
+    brevo_api_key_length:String(process.env.BREVO_API_KEY||'').trim().length,
+    recipients:es.recipients.length,
+    from:es.from
+  }));
+}
 const timezone=process.env.TZ||'Asia/Famagusta';
 const schedule=process.env.SCAN_CRON || '0 * * * *';
 cron.schedule(schedule,()=>scanAll().catch(e=>console.error('scheduled scan failed',e)),{timezone});
