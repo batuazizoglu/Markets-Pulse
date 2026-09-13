@@ -397,3 +397,13 @@ cron.schedule(process.env.REPORT_WEEKLY_CRON||'15 8 * * 1',()=>scheduledReportEm
 setTimeout(()=>scanAll().catch(e=>console.error('startup scan failed',e)),5000);
 setTimeout(()=>captureBenchmarkHistory(false).catch(e=>console.error('startup benchmark history failed',e)),25000);
 setTimeout(()=>scanHomeInternet(pool).catch(e=>console.error('startup home internet scan failed',e)),45000);
+if(process.env.REPORT_SMOKE_TEST==='1'){
+  setTimeout(async()=>{
+    for(const type of ['home','fwa']){
+      try{
+        const r=await generateReportPdf(pool,type,{days:7});
+        console.log('[report-smoke]',JSON.stringify({type,ok:true,file_name:r.fileName,file_size_bytes:r.buffer.length,product_count:r.ctx.home?.products?.length||0}));
+      }catch(e){console.error('[report-smoke]',JSON.stringify({type,ok:false,error:e?.message||String(e)}))}
+    }
+  },80000);
+}
