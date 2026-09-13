@@ -633,6 +633,10 @@ async function cleanupHomeInternetMigrationNoise(pool){
       source_slug='kktcell-home'
       AND detected_at >= TIMESTAMPTZ '2026-09-13 14:03:00+00'
       AND detected_at < TIMESTAMPTZ '2026-09-13 14:06:00+00'
+    ) OR (
+      source_slug='kktcell-home'
+      AND detected_at >= TIMESTAMPTZ '2026-09-13 14:11:00+00'
+      AND detected_at < TIMESTAMPTZ '2026-09-13 14:14:00+00'
     )`);
   migrationCleanupDone=true;
 }
