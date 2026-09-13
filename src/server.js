@@ -11,23 +11,13 @@ import { generateReportPdf } from './report-render.js';
 import { generateEvidencePack } from './evidence-pack.js';
 import { getReportEmailStatus, sendReportEmail } from './report-email.js';
 import { getHomeInternetMarket, scanHomeInternet } from './home-internet.js';
+import { registerAuth, bootstrapInitialUsers } from './auth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 app.use(express.json({limit:'1mb'}));
 
-function auth(req,res,next){
-  const user=process.env.DASHBOARD_USER, pass=process.env.DASHBOARD_PASSWORD;
-  if (!user || !pass) return next();
-  const hdr=req.headers.authorization||'';
-  if (hdr.startsWith('Basic ')) {
-    const [u,p]=Buffer.from(hdr.slice(6),'base64').toString().split(':');
-    if (u===user && p===pass) return next();
-  }
-  res.set('WWW-Authenticate','Basic realm="Markets Pulse"');
-  return res.status(401).send('Authentication required');
-}
-app.use(auth);
+registerAuth(app,pool,path.join(__dirname,'..','public'));
 
 const localMidnightSql = `(date_trunc('day', NOW() AT TIME ZONE 'Asia/Famagusta') AT TIME ZONE 'Asia/Famagusta')`;
 const latestPackagesSql = `SELECT p.id,p.identity_base,p.current_name,p.first_seen_at,p.last_seen_at,p.active,p.missing_count,p.last_position,
@@ -374,6 +364,7 @@ app.use((err,req,res,next)=>{console.error(err);res.status(500).json({error:err?
 
 const port=Number(process.env.PORT||3000);
 await initDb();
+await bootstrapInitialUsers(pool);
 app.listen(port,()=>console.log(`Markets Pulse / Telsim Watch listening on ${port}`));
 {
   const es=getReportEmailStatus();
