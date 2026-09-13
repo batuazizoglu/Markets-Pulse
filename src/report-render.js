@@ -36,7 +36,7 @@ function bodyHtml(ctx){
 }
 export function renderReportHtml(ctx){
   const range=ctx.type==='daily'?localDate(ctx.period_end):localDate(ctx.period_start)+' - '+localDate(ctx.period_end);
-  return '<!doctype html><html lang="tr"><head><meta charset="utf-8"><style>'+css()+'</style></head><body><div class="header"><div>'+logoSvg()+'</div><div class="meta"><b>'+esc(ctx.title)+'</b>'+esc(range)+'<br>Üretim: '+esc(localStamp(ctx.generated_at))+'</div></div><h1>'+esc(ctx.title)+'</h1><div class="sub">Competitive intelligence • Kuzey Kıbrıs Turkcell karar destek raporu</div>'+bodyHtml(ctx)+'<div class="footer"><span>Market Pulse by Turkcell</span><span>Daha fazla veri • Daha güçlü kararlar</span></div></body></html>';
+  return '<!doctype html><html lang="tr"><head><meta charset="utf-8"><style>'+css()+'</style></head><body><div class="header"><div>'+logoSvg()+'</div><div class="meta"><b>'+esc(ctx.title)+'</b>'+esc(range)+'<br>Üretim: '+esc(localStamp(ctx.generated_at))+'</div></div><h1>'+esc(ctx.title)+'</h1><div class="sub">Competitive intelligence • Kuzey Kıbrıs Turkcell karar destek raporu</div>'+bodyHtml(ctx)+'<div class="footer"><span>Markets Pulse by Turkcell</span><span>Daha fazla veri • Daha güçlü kararlar</span></div></body></html>';
 }
 async function getBrowser(){
   if(!reportBrowserPromise)reportBrowserPromise=puppeteer.launch({headless:true,args:['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage','--disable-gpu','--no-zygote']}).catch(e=>{reportBrowserPromise=null;throw e;});
