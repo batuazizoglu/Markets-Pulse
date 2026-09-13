@@ -7,6 +7,9 @@ import { initDb, pool } from './db.js';
 import { scanAll } from './scanner.js';
 import { buildMarketPulse } from './intelligence.js';
 import { getKktcellCatalog, buildBenchmark } from './kktcell-benchmark.js';
+import { generateReportPdf } from './report-render.js';
+import { generateEvidencePack } from './evidence-pack.js';
+import { getReportEmailStatus, sendReportEmail } from './report-email.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -137,6 +140,29 @@ async function captureBenchmarkHistory(forceCatalog=false){
     reason:benchmark.history_capture?.reason||null
   }));
   return benchmark;
+}
+
+async function logReportRun(data){
+  try{
+    await pool.query(`INSERT INTO report_runs(report_type,period_start,period_end,trigger_type,delivery_status,recipients,sent_at,file_name,file_size_bytes,error,meta_json)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)`,[
+      data.report_type,data.period_start||null,data.period_end||null,data.trigger_type||'manual',data.delivery_status||'generated',
+      data.recipients||null,data.sent_at||null,data.file_name||null,data.file_size_bytes||null,data.error||null,JSON.stringify(data.meta_json||{})
+    ]);
+  }catch(e){console.error('report run logging failed',e)}
+}
+
+async function scheduledReportEmail(type){
+  const status=getReportEmailStatus();
+  if(!status.configured){console.log('[report-email]',type,'skipped: email not configured');return;}
+  try{
+    const result=await sendReportEmail(pool,type,{days:type==='daily'?1:7});
+    await logReportRun({report_type:type,period_start:result.ctx.period_start,period_end:result.ctx.period_end,trigger_type:'scheduled',delivery_status:'sent',recipients:result.recipients,sent_at:new Date(),file_size_bytes:result.total_bytes,meta_json:{subject:result.subject,message_id:result.message_id}});
+    console.log('[report-email]',type,'sent',result.recipients.join(','));
+  }catch(e){
+    await logReportRun({report_type:type,trigger_type:'scheduled',delivery_status:'error',error:e?.message||String(e)});
+    console.error('[report-email]',type,'failed',e);
+  }
 }
 
 app.get('/api/health', async (req,res)=>{
@@ -297,6 +323,31 @@ app.get('/api/snapshots/:id/json', async (req,res,next)=>{try{
   res.json(r.rows[0].extracted_json);
 }catch(e){next(e)}});
 
+app.get('/api/reports/status', async (req,res,next)=>{try{
+  const r=await pool.query('SELECT id,report_type,period_start,period_end,generated_at,trigger_type,delivery_status,recipients,sent_at,file_name,file_size_bytes,error,meta_json FROM report_runs ORDER BY generated_at DESC LIMIT 30');
+  res.json({email:getReportEmailStatus(),recent_runs:r.rows});
+}catch(e){next(e)}});
+
+app.get('/api/reports/:type/download', async (req,res,next)=>{try{
+  const type=String(req.params.type||'');
+  if(!['daily','weekly','telsim7','evidence'].includes(type)) return res.status(400).json({error:'Unknown report type'});
+  const result=type==='evidence'?await generateEvidencePack(pool,{days:7}):await generateReportPdf(pool,type,{days:type==='daily'?1:7});
+  await logReportRun({report_type:type,period_start:result.ctx.period_start,period_end:result.ctx.period_end,trigger_type:'manual',delivery_status:'generated',file_name:result.fileName,file_size_bytes:result.buffer.length,meta_json:{download:true}});
+  res.set('Content-Type',result.contentType);res.set('Content-Disposition','attachment; filename="'+result.fileName+'"');res.set('Cache-Control','no-store');res.send(result.buffer);
+}catch(e){next(e)}});
+
+app.post('/api/reports/:type/email', async (req,res,next)=>{try{
+  const type=String(req.params.type||'');
+  if(!['daily','weekly','telsim7','evidence'].includes(type)) return res.status(400).json({error:'Unknown report type'});
+  const result=await sendReportEmail(pool,type,{days:type==='daily'?1:7});
+  await logReportRun({report_type:type,period_start:result.ctx.period_start,period_end:result.ctx.period_end,trigger_type:'manual',delivery_status:'sent',recipients:result.recipients,sent_at:new Date(),file_size_bytes:result.total_bytes,meta_json:{subject:result.subject,message_id:result.message_id}});
+  res.json({ok:true,recipients:result.recipients,subject:result.subject,message_id:result.message_id,total_bytes:result.total_bytes});
+}catch(e){
+  const status=e?.code==='EMAIL_NOT_CONFIGURED'?503:e?.code==='ATTACHMENT_TOO_LARGE'?413:500;
+  await logReportRun({report_type:req.params.type,trigger_type:'manual',delivery_status:'error',error:e?.message||String(e)});
+  res.status(status).json({error:e?.message||String(e),code:e?.code||null});
+}});
+
 app.post('/api/scan', async (req,res,next)=>{try{res.json(await scanAll())}catch(e){next(e)}});
 
 app.use('/api',(req,res)=>res.status(404).json({error:'Not found'}));
@@ -311,5 +362,7 @@ const timezone=process.env.TZ||'Asia/Famagusta';
 const schedule=process.env.SCAN_CRON || '0 * * * *';
 cron.schedule(schedule,()=>scanAll().catch(e=>console.error('scheduled scan failed',e)),{timezone});
 cron.schedule('5 * * * *',()=>captureBenchmarkHistory(false).catch(e=>console.error('benchmark history capture failed',e)),{timezone});
+cron.schedule(process.env.REPORT_DAILY_CRON||'0 8 * * *',()=>scheduledReportEmail('daily'),{timezone});
+cron.schedule(process.env.REPORT_WEEKLY_CRON||'15 8 * * 1',()=>scheduledReportEmail('weekly'),{timezone});
 setTimeout(()=>scanAll().catch(e=>console.error('startup scan failed',e)),5000);
 setTimeout(()=>captureBenchmarkHistory(false).catch(e=>console.error('startup benchmark history failed',e)),25000);
