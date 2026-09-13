@@ -107,7 +107,7 @@ export async function buildReportContext(pool, type, options={}) {
   const days = type === 'daily' ? 1 : Math.max(1,Math.min(30,Number(options.days||7)));
   const periodEnd = new Date(), periodStart = new Date(periodEnd.getTime()-days*86400000);
   const [market,benchmark,sources,changes,baseline,evidence] = await Promise.all([
-    buildMarketPulse(pool,days),currentBenchmark(pool),sourceHealth(pool),periodChanges(pool,days),scoreBaselines(pool,days),periodEvidence(pool,days,type==='evidence')
+    buildMarketPulse(pool,days),currentBenchmark(pool),sourceHealth(pool),periodChanges(pool,days),scoreBaselines(pool,days),periodEvidence(pool,days,type!=='daily')
   ]);
   return {
     type,title:REPORT_NAMES[type]||'Market Pulse Raporu',days,
