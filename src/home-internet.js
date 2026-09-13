@@ -4,8 +4,10 @@ import * as cheerio from 'cheerio';
 const UA='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152 Safari/537.36';
 
 export const HOME_INTERNET_SOURCES=[
-  {slug:'kktcell-home',provider:'KKTCELL',name:'Kuzey Kıbrıs Turkcell İnternet',url:'https://www.kktcell.com/internet-paketleri',technology:'4.5G / Ev İnterneti',ownership_group:'Kuzey Kıbrıs Turkcell',parser:'kktcell'},
+  {slug:'kktcell-home',provider:'Turkcell Ev İnterneti',name:'Kuzey Kıbrıs Turkcell Ev İnterneti',url:'https://www.kktcell.com/internet-paketleri?type=home',technology:'Ev İnterneti',ownership_group:'Kuzey Kıbrıs Turkcell',parser:'kktcell'},
+  {slug:'kktcell-superbox',provider:'KKTCELL',name:'Kuzey Kıbrıs Turkcell Superbox',url:'https://www.kktcell.com/internet-paketleri?type=superbox',technology:'4.5G FWA',ownership_group:'Kuzey Kıbrıs Turkcell',parser:'kktcell-superbox'},
   {slug:'lifecell-digital-home',provider:'Turkcell Ev İnterneti',name:'Lifecell Digital Ev İnterneti',url:'https://www.lifecelldigital.com/paketler?altyapi=1&cat=other',technology:'WDSL / Fiber / Sabit Genişbant',ownership_group:'Lifecell Digital Ltd.',parser:'lifecell-dynamic'},
+  {slug:'lifecell-digital-superbox',provider:'KKTCELL',name:'Lifecell Digital Superbox',url:'https://www.lifecelldigital.com/paketler?altyapi=2',technology:'4.5G FWA',ownership_group:'Lifecell Digital Ltd.',parser:'lifecell-superbox-dynamic'},
   {slug:'extend-wdsl',provider:'Extend',name:'Extend WDSL',url:'https://www.extendbroadband.com/urunler-wdsl.php',technology:'WDSL',ownership_group:'Aydoğan Communication Ltd.',parser:'extend-table'},
   {slug:'extend-fiber',provider:'Extend',name:'Extend FiberNET',url:'https://www.extendbroadband.com/urunler-fibernet.php',technology:'Fiber',ownership_group:'Aydoğan Communication Ltd.',parser:'extend-table'},
   {slug:'telsim-home',provider:'Telsim',name:'Vodafone Evde İnternet',url:'https://www.kktctelsim.com/tr/internet/evde-internet-ve-red-box/vodafone-evde-internet',technology:'WDSL / ADSL',ownership_group:'KKTC Telsim',parser:'telsim-home'},
@@ -66,11 +68,12 @@ function offer(base={}){
 
 function parseKktcell(html,source){
   const $=cheerio.load(html);$('script,style,noscript,svg').remove();
+  const superboxOnly=source.parser==='kktcell-superbox';
   const out=[],seen=new Set();
   $('a').each((_,el)=>{
     const raw=clean($(el).text());
     if(!raw||raw.length<12||raw.length>1200)return;
-    if(!/Superbox|Life(?: Extra)?\b|Dedike WiFi|Ev İnterneti|WiFi|GNÇ|Kıdemli|Oyuncu|Premium/i.test(raw))return;
+    if(superboxOnly){if(!/Superbox/i.test(raw))return}else if(!/Life(?: Extra)?\b|Dedike WiFi|Ev İnterneti|WiFi|GNÇ|Kıdemli|Oyuncu|Premium/i.test(raw)||/Superbox/i.test(raw))return;
     const priceM=raw.match(/(\d[\d.]*(?:,\d+)?)\s*TL\s*\/\s*AY/i)||raw.match(/(\d[\d.]*(?:,\d+)?)\s*TL\b/i);
     if(!priceM)return;
     let name=raw.split(/(?=\d+(?:[.,]\d+)?\s*(?:MBPS|GB|INTERNET))/i)[0].trim();
@@ -81,7 +84,7 @@ function parseKktcell(html,source){
     const dataM=!speedM?raw.match(/(\d+(?:[.,]\d+)?)\s*GB\b/i):null;
     const durM=raw.match(/(\d+)\s*Aylık Abonelik/i);
     const annual=/YILLIK ABONELİK/i.test(raw);
-    const isSuperbox=/Superbox/i.test(raw);
+    const isSuperbox=superboxOnly||/Superbox/i.test(raw);
     const technology=isSuperbox?'4.5G FWA':(/Dedike WiFi|Life|WiFi|GNÇ|Kıdemli|Oyuncu|Premium/i.test(raw)?'Sabit Genişbant':'Ev İnterneti');
     const row=offer({
       source_slug:source.slug,provider:isSuperbox?'KKTCELL':'Turkcell Ev İnterneti',brand:isSuperbox?'Superbox':'Turkcell Ev İnterneti',product_family:isSuperbox?'fwa':'fixed',ownership_group:source.ownership_group,source_url:source.url,
@@ -317,22 +320,26 @@ async function getLifecellBrowser(){
 }
 async function wait(ms){return new Promise(r=>setTimeout(r,ms))}
 
-function parseDynamicLifecellVariant(source,variant){
+function parseDynamicLifecellVariant(source,variant,isSuperbox=false){
   const raw=clean(variant.card_text);
   const selected=clean(variant.option_text);
   const speedMatch=selected.match(/(\d+(?:[.,]\d+)?)\s*(?:Mbps|Mbit|Mb)\b/i)
     ||raw.match(/(\d+(?:[.,]\d+)?)\s*(?:Mbps|Mbit|Mb)(?:'e kadar)?/i);
   const speed=speedMatch?n(speedMatch[1]):null;
-  if(speed==null)return [];
+  const dataMatch=selected.match(/(\d+(?:[.,]\d+)?)\s*GB\b/i)||raw.match(/(\d+(?:[.,]\d+)?)\s*GB\b/i);
+  const dataLimit=dataMatch?n(dataMatch[1]):null;
+  const unlimited=/sınırsız|limitsiz/i.test(raw);
+  if(speed==null&&!isSuperbox)return [];
 
   let name=clean(variant.heading);
   if(!name||name.length<2||/^\d/.test(name)||/^(Mbps|Hız|Seçiniz|Paket)$/i.test(name)){
     const known=raw.match(/(GNÇ[^\d]{0,40}|Merkezi[^\d]{0,30}|Standart Paket[^\d]{0,30}|Aile Paketi[^\d]{0,30}|Pro Paket[^\d]{0,30}|Oyuncu Paketi[^\d]{0,30}|[A-Za-zÇĞİÖŞÜçğıöşü][A-Za-zÇĞİÖŞÜçğıöşü '\-]{2,45}Paket(?:i)?)/i);
-    name=known?clean(known[1]):('Lifecell Digital '+speed+' Mbps');
+    name=known?clean(known[1]):(isSuperbox?'Superbox '+(speed?speed+' Mbps':dataLimit?dataLimit+' GB':unlimited?'Sınırsız':'Paket'):('Lifecell Digital '+speed+' Mbps'));
   }
   name=name.replace(/\s+\d+(?:[.,]\d+)?\s*(?:Mbps|Mbit).*$/i,'').trim();
+  if(isSuperbox&&!/Superbox/i.test(name))name='Superbox '+name;
 
-  const technology=/fiber/i.test(raw)?'Fiber':(/vdsl/i.test(raw)?'VDSL':(/adsl/i.test(raw)?'ADSL':'WDSL / Sabit Genişbant'));
+  const technology=isSuperbox?'4.5G FWA':(/fiber/i.test(raw)?'Fiber':(/vdsl/i.test(raw)?'VDSL':(/adsl/i.test(raw)?'ADSL':'WDSL / Sabit Genişbant')));
   const bonusM=raw.match(/\+\s*(\d+)\s*Ay\s*Hediye/i);
   const bonusDefault=bonusM?Number(bonusM[1]):0;
   const freeInstall=/ücretsiz\s+kurulum|kurulum\s+ücretsiz/i.test(raw);
@@ -345,8 +352,8 @@ function parseDynamicLifecellVariant(source,variant){
     const duration=Number(m[1]),price=n(m[2]);
     const key=duration+'|m|'+price;if(seenTerms.has(key))continue;seenTerms.add(key);
     rows.push(offer({
-      source_slug:source.slug,provider:'Turkcell Ev İnterneti',brand:'Turkcell Ev İnterneti',product_family:'fixed',ownership_group:source.ownership_group,source_url:source.url,
-      name,technology,speed_down_mbps:speed,speed_up_mbps:null,data_limit_gb:null,unlimited:!/kota|GB\s*kotalı/i.test(raw),
+      source_slug:source.slug,provider:isSuperbox?'KKTCELL':'Turkcell Ev İnterneti',brand:isSuperbox?'Superbox':'Turkcell Ev İnterneti',product_family:isSuperbox?'fwa':'fixed',ownership_group:source.ownership_group,source_url:source.url,
+      name,technology,speed_down_mbps:speed,speed_up_mbps:null,data_limit_gb:isSuperbox?dataLimit:null,unlimited:isSuperbox?unlimited:!/kota|GB\s*kotalı/i.test(raw),
       duration_months:duration,bonus_months:bonusDefault,price_monthly_try:price,install_fee_try:freeInstall?0:null,
       features:[freeInstall?'Ücretsiz kurulum':null,bonusDefault?bonusDefault+' ay hediye':null,'Hız dropdown fiyatı'].filter(Boolean),
       raw_text:raw.slice(0,1400),
@@ -359,8 +366,8 @@ function parseDynamicLifecellVariant(source,variant){
     const duration=Number(m[1]),total=n(m[2]);
     const key=duration+'|t|'+total;if(seenTerms.has(key))continue;seenTerms.add(key);
     rows.push(offer({
-      source_slug:source.slug,provider:'Turkcell Ev İnterneti',brand:'Turkcell Ev İnterneti',product_family:'fixed',ownership_group:source.ownership_group,source_url:source.url,
-      name,technology,speed_down_mbps:speed,speed_up_mbps:null,data_limit_gb:null,unlimited:!/kota|GB\s*kotalı/i.test(raw),
+      source_slug:source.slug,provider:isSuperbox?'KKTCELL':'Turkcell Ev İnterneti',brand:isSuperbox?'Superbox':'Turkcell Ev İnterneti',product_family:isSuperbox?'fwa':'fixed',ownership_group:source.ownership_group,source_url:source.url,
+      name,technology,speed_down_mbps:speed,speed_up_mbps:null,data_limit_gb:isSuperbox?dataLimit:null,unlimited:isSuperbox?unlimited:!/kota|GB\s*kotalı/i.test(raw),
       duration_months:duration,bonus_months:bonusDefault,total_price_try:total,install_fee_try:freeInstall?0:null,
       features:[freeInstall?'Ücretsiz kurulum':null,bonusDefault?bonusDefault+' ay hediye':null,'Hız dropdown fiyatı'].filter(Boolean),
       raw_text:raw.slice(0,1400),
@@ -374,8 +381,8 @@ function parseDynamicLifecellVariant(source,variant){
       const durationM=raw.match(/(1|3|4|6|12|14|24)\s*Ay/i);
       const duration=durationM?Number(durationM[1]):1;
       rows.push(offer({
-        source_slug:source.slug,provider:'Turkcell Ev İnterneti',brand:'Turkcell Ev İnterneti',product_family:'fixed',ownership_group:source.ownership_group,source_url:source.url,
-        name,technology,speed_down_mbps:speed,speed_up_mbps:null,data_limit_gb:null,unlimited:!/kota|GB\s*kotalı/i.test(raw),
+        source_slug:source.slug,provider:isSuperbox?'KKTCELL':'Turkcell Ev İnterneti',brand:isSuperbox?'Superbox':'Turkcell Ev İnterneti',product_family:isSuperbox?'fwa':'fixed',ownership_group:source.ownership_group,source_url:source.url,
+        name,technology,speed_down_mbps:speed,speed_up_mbps:null,data_limit_gb:isSuperbox?dataLimit:null,unlimited:isSuperbox?unlimited:!/kota|GB\s*kotalı/i.test(raw),
         duration_months:duration,bonus_months:bonusDefault,price_monthly_try:n(priceM[1]),install_fee_try:freeInstall?0:null,
         features:[freeInstall?'Ücretsiz kurulum':null,bonusDefault?bonusDefault+' ay hediye':null,'Hız dropdown fiyatı'].filter(Boolean),
         raw_text:raw.slice(0,1400),
@@ -387,6 +394,7 @@ function parseDynamicLifecellVariant(source,variant){
 }
 
 async function fetchLifecellDynamic(source){
+  const isSuperbox=source.parser==='lifecell-superbox-dynamic';
   const t0=Date.now();let page;
   try{
     const browser=await getLifecellBrowser();
@@ -433,8 +441,8 @@ async function fetchLifecellDynamic(source){
 
     const speedSelects=selectInfo.filter(s=>{
       const opts=s.options.filter(o=>!o.disabled&&String(o.value||'')!=='');
-      const speedish=opts.filter(o=>/\b\d+(?:[.,]\d+)?\s*(?:Mbps|Mbit|Mb)\b/i.test(o.text));
-      return speedish.length>=1 || (opts.length>=2 && /Mbps|Mbit|hız/i.test(s.card_text));
+      const speedish=opts.filter(o=>/\b\d+(?:[.,]\d+)?\s*(?:Mbps|Mbit|Mb|GB)\b/i.test(o.text)||/Sınırsız|Limitsiz/i.test(o.text));
+      return speedish.length>=1 || (opts.length>=2 && /Mbps|Mbit|GB|hız|kota|sınırsız|limitsiz/i.test(s.card_text));
     });
 
     const customDiagnostic=await page.evaluate(()=>{
@@ -516,7 +524,7 @@ async function fetchLifecellDynamic(source){
           const visible=el=>{const r=el.getBoundingClientRect(),s=getComputedStyle(el);return r.width>4&&r.height>4&&s.display!=='none'&&s.visibility!=='hidden'&&Number(s.opacity||1)>0};
           const els=[...document.querySelectorAll('.ant-dropdown-menu-item,[role="menuitem"],.ant-dropdown [class*="menu-item"]')].filter(visible);
           const out=[];const seen=new Set();
-          for(const el of els){const t=clean(el.innerText||el.textContent);if(!/^\d+(?:[.,]\d+)?\s*(?:Mbps|Mbit|Mb)\b/i.test(t))continue;if(!seen.has(t)){seen.add(t);out.push(t)}}
+          for(const el of els){const t=clean(el.innerText||el.textContent);if(!/^\d+(?:[.,]\d+)?\s*(?:Mbps|Mbit|Mb|GB)\b/i.test(t)&&!/^(Sınırsız|Limitsiz)/i.test(t))continue;if(!seen.has(t)){seen.add(t);out.push(t)}}
           return out;
         });
         await page.keyboard.press('Escape').catch(()=>{});
@@ -543,7 +551,7 @@ async function fetchLifecellDynamic(source){
     }
 
     const products=[];
-    for(const v of variants)products.push(...parseDynamicLifecellVariant(source,v));
+    for(const v of variants)products.push(...parseDynamicLifecellVariant(source,v,isSuperbox));
     const uniq=new Map();
     for(const p of products){
       const old=uniq.get(p.product_key);
@@ -569,7 +577,7 @@ async function fetchLifecellDynamic(source){
 }
 
 function parserFor(source,html){
-  if(source.parser==='kktcell')return {products:parseKktcell(html,source),meta:discoveryMeta(html,source)};
+  if(source.parser==='kktcell'||source.parser==='kktcell-superbox')return {products:parseKktcell(html,source),meta:discoveryMeta(html,source)};
   if(source.parser==='extend-table')return {products:parseExtendTable(html,source),meta:discoveryMeta(html,source)};
   if(source.parser==='lifecell-digital')return {products:parseLifecellDigital(html,source),meta:discoveryMeta(html,source)};
   if(source.parser==='telsim-home')return {products:parseTelsimHome(html,source),meta:discoveryMeta(html,source)};
@@ -581,7 +589,7 @@ function parserFor(source,html){
 }
 
 async function fetchSource(source){
-  if(source.parser==='lifecell-dynamic')return fetchLifecellDynamic(source);
+  if(source.parser==='lifecell-dynamic'||source.parser==='lifecell-superbox-dynamic')return fetchLifecellDynamic(source);
   const t0=Date.now();
   try{
     const res=await fetch(source.url,{headers:{'user-agent':UA,'accept':'text/html,application/xhtml+xml','accept-language':'tr-TR,tr;q=0.9,en;q=0.7','cache-control':'no-cache'},redirect:'follow',signal:AbortSignal.timeout(30000)});
