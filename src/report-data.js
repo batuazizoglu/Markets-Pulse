@@ -108,6 +108,27 @@ function scoreDeltas(benchmark, baseline) {
   });
 }
 
+function dailyHomeSections(home,days=1){
+  const cutoff=Date.now()-Math.max(1,Number(days)||1)*86400000;
+  const productMap=new Map((home.products||[]).map(x=>[x.product_key,x]));
+  const familyChanges=family=>(home.changes||[]).filter(ch=>{
+    if(new Date(ch.detected_at).getTime()<cutoff)return false;
+    const p=productMap.get(ch.product_key);
+    if(p)return (p.product_family||'fixed')===family;
+    if(family==='fwa')return ['kktcell-superbox','lifecell-digital-superbox','telsim-redbox'].includes(ch.source_slug)||/superbox|red box/i.test(ch.product_name||'');
+    return !['kktcell-superbox','lifecell-digital-superbox','telsim-redbox'].includes(ch.source_slug)&&!/superbox|red box/i.test(ch.product_name||'');
+  });
+  const fixedProducts=(home.products||[]).filter(x=>(x.product_family||'fixed')==='fixed');
+  const fwaProducts=(home.products||[]).filter(x=>x.product_family==='fwa');
+  const fixedSources=(home.sources||[]).filter(s=>!['kktcell-superbox','lifecell-digital-superbox','telsim-redbox'].includes(s.slug));
+  const fwaSources=(home.sources||[]).filter(s=>['kktcell-superbox','lifecell-digital-superbox','telsim-redbox'].includes(s.slug));
+  const fixedChanges=familyChanges('fixed'),fwaChanges=familyChanges('fwa');
+  return {
+    fixed:{products:fixedProducts,sources:fixedSources,changes:fixedChanges,stats:changeStats(fixedChanges),opportunities:home.opportunities||[]},
+    fwa:{products:fwaProducts,sources:fwaSources,changes:fwaChanges,stats:changeStats(fwaChanges),comparison:home.fwa_comparison||{}}
+  };
+}
+
 export async function buildReportContext(pool, type, options={}) {
   const days = type === 'daily' ? 1 : Math.max(1,Math.min(30,Number(options.days||7)));
   const periodEnd = new Date(), periodStart = new Date(periodEnd.getTime()-days*86400000);
@@ -132,12 +153,17 @@ export async function buildReportContext(pool, type, options={}) {
     };
   }
 
-  const [market,benchmark,sources,changes,baseline,evidence] = await Promise.all([
+  const tasks=[
     buildMarketPulse(pool,days),currentBenchmark(pool),sourceHealth(pool),periodChanges(pool,days),scoreBaselines(pool,days),periodEvidence(pool,days,type==='evidence'?'full':type==='daily'?'meta':'visual')
-  ]);
+  ];
+  if(type==='daily')tasks.push(getHomeInternetMarket(pool,{refresh:false}));
+  const results=await Promise.all(tasks);
+  const [market,benchmark,sources,changes,baseline,evidence]=results;
+  const daily_home=type==='daily'?dailyHomeSections(results[6],days):null;
   return {
     type,title:REPORT_NAMES[type]||'Markets Pulse Raporu',days,
     period_start:periodStart.toISOString(),period_end:periodEnd.toISOString(),generated_at:new Date().toISOString(),
-    market,benchmark,sources,changes,stats:changeStats(changes),score_deltas:scoreDeltas(benchmark,baseline),evidence
+    market,benchmark,sources,changes,stats:changeStats(changes),score_deltas:scoreDeltas(benchmark,baseline),evidence,
+    daily_home
   };
 }
