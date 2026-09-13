@@ -9,6 +9,7 @@ export const HOME_INTERNET_SOURCES=[
   {slug:'extend-wdsl',provider:'Extend',name:'Extend WDSL',url:'https://www.extendbroadband.com/urunler-wdsl.php',technology:'WDSL',ownership_group:'Aydoğan Communication Ltd.',parser:'extend-table'},
   {slug:'extend-fiber',provider:'Extend',name:'Extend FiberNET',url:'https://www.extendbroadband.com/urunler-fibernet.php',technology:'Fiber',ownership_group:'Aydoğan Communication Ltd.',parser:'extend-table'},
   {slug:'telsim-home',provider:'Telsim',name:'Vodafone Evde İnternet',url:'https://www.kktctelsim.com/tr/internet/evde-internet-ve-red-box/vodafone-evde-internet',technology:'WDSL / ADSL',ownership_group:'KKTC Telsim',parser:'telsim-home'},
+  {slug:'telsim-redbox',provider:'Telsim',name:'Telsim Red Box',url:'https://www.kktctelsim.com/tr/internet/evde-internet-ve-red-box/red-box',technology:'5G FWA',ownership_group:'KKTC Telsim',parser:'redbox'},
   {slug:'freenet-home',provider:'FreeNet',name:'FreeNet Ev İnterneti',url:'https://freenetcyp.com/',technology:'WDSL',ownership_group:'FreeNet',parser:'freenet'},
   {slug:'fixnet-home',provider:'FixNet',name:'FixNet Broadband',url:'https://www.fixnetbroadband.com/',technology:'WDSL / Fiber',ownership_group:'FixNet Broadband',parser:'fixnet'},
   {slug:'towernet-home',provider:'Towernet',name:'Towernet Ev İnterneti',url:'https://towernet.net/paketler/',technology:'WDSL / ADSL',ownership_group:'Towernet',parser:'towernet'},
@@ -49,6 +50,8 @@ function offer(base={}){
   const speed=base.speed_down_mbps!=null?Number(base.speed_down_mbps):null;
   return {
     ...base,
+    product_family:base.product_family||'fixed',
+    brand:base.brand||base.provider||null,
     duration_months:duration,
     bonus_months:bonus,
     service_months:service,
@@ -77,9 +80,10 @@ function parseKktcell(html,source){
     const dataM=!speedM?raw.match(/(\d+(?:[.,]\d+)?)\s*GB\b/i):null;
     const durM=raw.match(/(\d+)\s*Aylık Abonelik/i);
     const annual=/YILLIK ABONELİK/i.test(raw);
-    const technology=/Superbox/i.test(raw)?'4.5G FWA':(/Dedike WiFi|Life/i.test(raw)?'Turkcell Ev İnterneti':'Ev İnterneti');
+    const isSuperbox=/Superbox/i.test(raw);
+    const technology=isSuperbox?'4.5G FWA':(/Dedike WiFi|Life|WiFi|GNÇ|Kıdemli|Oyuncu|Premium/i.test(raw)?'Sabit Genişbant':'Ev İnterneti');
     const row=offer({
-      source_slug:source.slug,provider:source.provider,ownership_group:source.ownership_group,source_url:source.url,
+      source_slug:source.slug,provider:isSuperbox?'KKTCELL':'Turkcell Ev İnterneti',brand:isSuperbox?'Superbox':'Turkcell Ev İnterneti',product_family:isSuperbox?'fwa':'fixed',ownership_group:source.ownership_group,source_url:source.url,
       product_url:$(el).attr('href')||null,name,technology,
       speed_down_mbps:speedM?n(speedM[1]):null,speed_up_mbps:null,
       data_limit_gb:dataM?n(dataM[1]):null,unlimited:/Sınırsız/i.test(raw),
@@ -108,7 +112,7 @@ function parseExtendTable(html,source){
     for(const t of terms){
       if(cells[t.i]==null)continue;const total=n(cells[t.i]);if(total==null)continue;
       out.push(offer({
-        source_slug:source.slug,provider:source.provider,ownership_group:source.ownership_group,source_url:source.url,
+        source_slug:source.slug,provider:source.provider,brand:source.provider,product_family:'fixed',ownership_group:source.ownership_group,source_url:source.url,
         name:(technology==='Fiber'?'FiberNET ':'WDSL ')+speed+' Mbps',technology,
         speed_down_mbps:speed,speed_up_mbps:null,data_limit_gb:null,unlimited:true,
         duration_months:t.d,bonus_months:t.b,total_price_try:total,
@@ -169,12 +173,40 @@ function parseTelsimHome(html,source){
     if(price==null&&total==null)continue;
     const tech=/ADSL/i.test(seg)?'ADSL':'WDSL';
     out.push(offer({
-      source_slug:source.slug,provider:source.provider,ownership_group:source.ownership_group,source_url:source.url,
+      source_slug:source.slug,provider:source.provider,brand:source.provider,product_family:'fixed',ownership_group:source.ownership_group,source_url:source.url,
       name:type+' Evde '+speed,technology:tech,speed_down_mbps:speed,speed_up_mbps:null,data_limit_gb:null,unlimited:true,
       duration_months:duration,bonus_months:bonus,price_monthly_try:price,total_price_try:total,
       install_fee_try:/Kurulum Ücretsiz/i.test(seg)?0:null,
       features:[type,/Kurulum Ücretsiz/i.test(seg)?'Kurulum ücretsiz':null,bonus?bonus+' ay hediye':null].filter(Boolean),
       raw_text:seg.slice(0,700),product_key:[source.slug,type,speed,duration,bonus].join('|')
+    }));
+  }
+  const uniq=new Map();for(const x of out)if(!uniq.has(x.product_key))uniq.set(x.product_key,x);return [...uniq.values()];
+}
+
+function parseRedBox(html,source){
+  const $=cheerio.load(html);$('script,style,noscript,svg').remove();const text=clean($.root().text());
+  const out=[];
+  const blocks=[...text.matchAll(/Red Box\s*(?:5G)?[\s\S]{0,650}?(?=(?:Red Box\s*(?:5G)?|Detayları Göster|Hemen Başvur|$))/ig)];
+  const list=blocks.length?blocks.map(x=>x[0]):[text];
+  for(const raw0 of list){
+    const raw=clean(raw0);
+    if(!/Red Box/i.test(raw))continue;
+    const durationM=raw.match(/(12|24)\s*Ay/i);const duration=durationM?Number(durationM[1]):24;
+    const first=raw.match(/₺?\s*(\d[\d.]*)\s*\/\s*ilk\s*12\s*ay/i);
+    const second=raw.match(/son\s*12\s*ay\s*(\d[\d.]*)\s*TL/i);
+    const simple=raw.match(/₺?\s*(\d[\d.]*)\s*\/\s*ay/i);
+    let total=null,monthly=null;
+    if(first&&second){total=n(first[1])*12+n(second[1])*12}
+    else if(simple)monthly=n(simple[1]);
+    if(total==null&&monthly==null)continue;
+    out.push(offer({
+      source_slug:source.slug,provider:'Telsim',brand:'Red Box',product_family:'fwa',ownership_group:source.ownership_group,source_url:source.url,
+      name:/5G/i.test(raw)?'Red Box 5G':'Red Box',technology:/5G/i.test(raw)?'5G FWA':'FWA',
+      speed_down_mbps:null,speed_up_mbps:null,data_limit_gb:null,unlimited:/sabit internet|limitsiz|sınırsız/i.test(raw),
+      duration_months:duration,bonus_months:0,total_price_try:total,price_monthly_try:monthly,install_fee_try:null,
+      features:[/sim kart girişlidir/i.test(raw)?'SIM kartlı':null,/sabit internet/i.test(raw)?'Sabit internet':null,first&&second?('İlk 12 ay '+first[1]+' TL • Son 12 ay '+second[1]+' TL'):null].filter(Boolean),
+      raw_text:raw.slice(0,900),product_key:[source.slug,/5G/i.test(raw)?'5g':'std',duration].join('|')
     }));
   }
   const uniq=new Map();for(const x of out)if(!uniq.has(x.product_key))uniq.set(x.product_key,x);return [...uniq.values()];
@@ -198,7 +230,7 @@ function parseFreeNet(html,source){
       {d:12,b:/12\s*Aylık\s*\+2\s*Ay\s*Hediye/i.test(seg)?2:0,re:/([\d.]+)₺\s*12\s*Aylık/i}
     ];
     for(const t of terms){const m=seg.match(t.re);if(!m)continue;out.push(offer({
-      source_slug:source.slug,provider:source.provider,ownership_group:source.ownership_group,source_url:source.url,
+      source_slug:source.slug,provider:source.provider,brand:source.provider,product_family:'fixed',ownership_group:source.ownership_group,source_url:source.url,
       name:d.label,technology:'WDSL',speed_down_mbps:d.speed,speed_up_mbps:null,data_limit_gb:null,unlimited:true,
       duration_months:t.d,bonus_months:t.b,total_price_try:n(m[1]),install_fee_try:null,
       features:['Sınırsız','Statik IP / VPN avantajı'],raw_text:seg.slice(0,600),
@@ -220,7 +252,7 @@ function parseFixNet(html,source){
     const durationM=raw.match(/(\d+)\s*Ay\s*Paket/i);const duration=durationM?Number(durationM[1]):1;
     const bonusM=raw.match(/\+\s*(\d+)\s*AY\s*HEDİYE/i);const bonus=bonusM?Number(bonusM[1]):0;
     out.push(offer({
-      source_slug:source.slug,provider:source.provider,ownership_group:source.ownership_group,source_url:source.url,
+      source_slug:source.slug,provider:source.provider,brand:source.provider,product_family:'fixed',ownership_group:source.ownership_group,source_url:source.url,
       name,technology:'WDSL / Fiber',speed_down_mbps:n(dm[1]),speed_up_mbps:um?n(um[1]):null,data_limit_gb:null,unlimited:/Limitsiz|Kotasız/i.test(raw),
       duration_months:duration,bonus_months:bonus,total_price_try:n(priceM[1]),install_fee_try:null,
       features:[/Sabit Hız Garantisi/i.test(raw)?'Sabit hız garantisi':null,/Düşük Ping/i.test(raw)?'Düşük ping':null,/Yüksek Upload/i.test(raw)?'Yüksek upload':null].filter(Boolean),
@@ -249,7 +281,7 @@ function parseTowernet(html,source){
     if(year)terms.push({d:12,b:year[2]?Number(year[2]):(/12\s*\+\s*3\s*AY/i.test(seg)?3:2),total:n(year[1])});
     if(!terms.length)terms.push({d:1,b:0,total:monthly});
     for(const t of terms)out.push(offer({
-      source_slug:source.slug,provider:source.provider,ownership_group:source.ownership_group,source_url:source.url,
+      source_slug:source.slug,provider:source.provider,brand:source.provider,product_family:'fixed',ownership_group:source.ownership_group,source_url:source.url,
       name:'Towernet '+speed+' Mbps',technology,speed_down_mbps:speed,speed_up_mbps:null,data_limit_gb:null,unlimited:true,
       duration_months:t.d,bonus_months:t.b,total_price_try:t.total,
       install_fee_try:technology==='WDSL'?null:0,features:['Limitsiz'],raw_text:seg.slice(0,500),
@@ -312,7 +344,7 @@ function parseDynamicLifecellVariant(source,variant){
     const duration=Number(m[1]),price=n(m[2]);
     const key=duration+'|m|'+price;if(seenTerms.has(key))continue;seenTerms.add(key);
     rows.push(offer({
-      source_slug:source.slug,provider:source.provider,ownership_group:source.ownership_group,source_url:source.url,
+      source_slug:source.slug,provider:'Turkcell Ev İnterneti',brand:'Turkcell Ev İnterneti',product_family:'fixed',ownership_group:source.ownership_group,source_url:source.url,
       name,technology,speed_down_mbps:speed,speed_up_mbps:null,data_limit_gb:null,unlimited:!/kota|GB\s*kotalı/i.test(raw),
       duration_months:duration,bonus_months:bonusDefault,price_monthly_try:price,install_fee_try:freeInstall?0:null,
       features:[freeInstall?'Ücretsiz kurulum':null,bonusDefault?bonusDefault+' ay hediye':null,'Hız dropdown fiyatı'].filter(Boolean),
@@ -326,7 +358,7 @@ function parseDynamicLifecellVariant(source,variant){
     const duration=Number(m[1]),total=n(m[2]);
     const key=duration+'|t|'+total;if(seenTerms.has(key))continue;seenTerms.add(key);
     rows.push(offer({
-      source_slug:source.slug,provider:source.provider,ownership_group:source.ownership_group,source_url:source.url,
+      source_slug:source.slug,provider:'Turkcell Ev İnterneti',brand:'Turkcell Ev İnterneti',product_family:'fixed',ownership_group:source.ownership_group,source_url:source.url,
       name,technology,speed_down_mbps:speed,speed_up_mbps:null,data_limit_gb:null,unlimited:!/kota|GB\s*kotalı/i.test(raw),
       duration_months:duration,bonus_months:bonusDefault,total_price_try:total,install_fee_try:freeInstall?0:null,
       features:[freeInstall?'Ücretsiz kurulum':null,bonusDefault?bonusDefault+' ay hediye':null,'Hız dropdown fiyatı'].filter(Boolean),
@@ -540,6 +572,7 @@ function parserFor(source,html){
   if(source.parser==='extend-table')return {products:parseExtendTable(html,source),meta:discoveryMeta(html,source)};
   if(source.parser==='lifecell-digital')return {products:parseLifecellDigital(html,source),meta:discoveryMeta(html,source)};
   if(source.parser==='telsim-home')return {products:parseTelsimHome(html,source),meta:discoveryMeta(html,source)};
+  if(source.parser==='redbox')return {products:parseRedBox(html,source),meta:discoveryMeta(html,source)};
   if(source.parser==='freenet')return {products:parseFreeNet(html,source),meta:discoveryMeta(html,source)};
   if(source.parser==='fixnet')return {products:parseFixNet(html,source),meta:discoveryMeta(html,source)};
   if(source.parser==='towernet')return {products:parseTowernet(html,source),meta:discoveryMeta(html,source)};
@@ -648,8 +681,10 @@ function marketPayload(scans,changes){
   const bestValue=[...speedBased].sort((a,b)=>(b.mbps_per_100tl||0)-(a.mbps_per_100tl||0))[0]||null;
   const fastest=[...speedBased].sort((a,b)=>(b.speed_down_mbps||0)-(a.speed_down_mbps||0))[0]||null;
   const cheapest=[...priced].sort((a,b)=>(a.effective_monthly_try||Infinity)-(b.effective_monthly_try||Infinity))[0]||null;
-  const ours=speedBased.filter(x=>x.provider==='KKTCELL');
-  const rivals=speedBased.filter(x=>x.provider!=='KKTCELL');
+  const fixedProducts=products.filter(x=>x.product_family!=='fwa');
+  const fwaProducts=products.filter(x=>x.product_family==='fwa');
+  const ours=speedBased.filter(x=>x.provider==='Turkcell Ev İnterneti'&&x.product_family!=='fwa');
+  const rivals=speedBased.filter(x=>x.provider!=='Turkcell Ev İnterneti'&&x.product_family!=='fwa');
   const opportunities=[];
   for(const o of ours){
     const near=rivals.filter(r=>Math.abs(Number(r.speed_down_mbps)-Number(o.speed_down_mbps))<=Math.max(5,Number(o.speed_down_mbps)*.35)).sort((a,b)=>(b.market_score||0)-(a.market_score||0))[0];
@@ -658,15 +693,19 @@ function marketPayload(scans,changes){
     }
   }
   opportunities.sort((a,b)=>a.score_gap-b.score_gap);
+  const superbox=fwaProducts.filter(x=>x.brand==='Superbox').sort((a,b)=>(a.effective_monthly_try||Infinity)-(b.effective_monthly_try||Infinity));
+  const redbox=fwaProducts.filter(x=>x.brand==='Red Box').sort((a,b)=>(a.effective_monthly_try||Infinity)-(b.effective_monthly_try||Infinity));
+  const fwa_comparison={superbox,redbox,superbox_count:superbox.length,redbox_count:redbox.length};
   return {
     generated_at:new Date().toISOString(),
     methodology:'Home Internet v1 • official source monitoring + normalized contract economics',
     metrics:{
       providers:providerCount,sources:sources.length,products:products.length,priced_products:priced.length,
+      fixed_products:fixedProducts.length,fwa_products:fwaProducts.length,turkcell_home_products:fixedProducts.filter(x=>x.provider==='Turkcell Ev İnterneti').length,superbox_products:fwaProducts.filter(x=>x.brand==='Superbox').length,redbox_products:fwaProducts.filter(x=>x.brand==='Red Box').length,
       technologies:technologies.length,changes_7d:changes.filter(x=>new Date(x.detected_at)>Date.now()-7*86400000).length,
       best_value:bestValue,fastest,cheapest
     },
-    sources,products,opportunities:opportunities.slice(0,10),changes:changes.slice(0,100)
+    sources,products,fixed_products:fixedProducts,fwa_products:fwaProducts,opportunities:opportunities.slice(0,10),fwa_comparison,changes:changes.slice(0,100)
   };
 }
 
