@@ -123,7 +123,7 @@ export async function buildReportContext(pool, type, options={}) {
       if(type==='fwa')return ch.source_slug==='telsim-redbox'||/superbox|red box/i.test(ch.product_name||'');
       return ch.source_slug!=='telsim-redbox'&&!/superbox|red box/i.test(ch.product_name||'');
     });
-    const sources=(home.sources||[]).filter(s=>type==='fwa'?['kktcell-home','telsim-redbox'].includes(s.slug):s.slug!=='telsim-redbox');
+    const sources=(home.sources||[]).filter(s=>type==='fwa'?['kktcell-superbox','lifecell-digital-superbox','telsim-redbox'].includes(s.slug):!['kktcell-superbox','lifecell-digital-superbox','telsim-redbox'].includes(s.slug));
     return {
       type,title:REPORT_NAMES[type],days,
       period_start:periodStart.toISOString(),period_end:periodEnd.toISOString(),generated_at:new Date().toISOString(),
