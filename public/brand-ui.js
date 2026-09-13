@@ -20,6 +20,7 @@ reports:'<svg viewBox="0 0 24 24" fill="none"><path d="M6 3h9l3 3v15H6V3Z" strok
 settings:'<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke-width="1.7"/><path d="M19 13.5v-3l-2-.7a7 7 0 0 0-.7-1.7l.9-1.9-2.1-2.1-1.9.9a7 7 0 0 0-1.7-.7L10.5 2h-3l-.7 2.3a7 7 0 0 0-1.7.7l-1.9-.9-2.1 2.1.9 1.9a7 7 0 0 0-.7 1.7L0 10.5v3l2.3.7a7 7 0 0 0 .7 1.7l-.9 1.9 2.1 2.1 1.9-.9a7 7 0 0 0 1.7.7l.7 2.3h3l.7-2.3a7 7 0 0 0 1.7-.7l1.9.9 2.1-2.1-.9-1.9a7 7 0 0 0 .7-1.7l2.3-.7Z" stroke-width="1.2" transform="translate(2 1) scale(.83)"/></svg>'
 };
 let themeMode=localStorage.getItem('marketPulseThemeMode')||'auto';
+let currentUser=null;
 
 function cyprusHour(){
   const part=new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Famagusta',hour:'2-digit',hour12:false}).format(new Date());
@@ -41,15 +42,15 @@ function sidebar(){
   if(document.querySelector('.app-sidebar'))return;
   const aside=document.createElement('aside');aside.className='app-sidebar';
   aside.innerHTML='<div class="app-side-brand"><img src="/brand/market-pulse-logo-dark.svg" alt="Markets Pulse by Turkcell"><div class="app-side-tag">Competitive Intelligence</div></div>'+
-    '<nav class="app-nav">'+Object.entries(routes).map(([k,r])=>'<button class="app-nav-btn" data-route="'+k+'" onclick="MarketPulseUI.go(\''+k+'\')">'+icon[k]+'<span>'+r.label+'</span></button>').join('')+'</nav>'+
-    '<div class="app-side-bottom"><div class="app-theme-status"><span class="app-theme-dot"></span><span id="themeStatus">Otomatik</span></div><div class="app-side-copy">Daha fazla veri<br>Daha güçlü kararlar</div></div>';
+    '<nav class="app-nav">'+Object.entries(routes).filter(([k])=>k!=='settings'||currentUser?.role==='admin').map(([k,r])=>'<button class="app-nav-btn" data-route="'+k+'" onclick="MarketPulseUI.go(\''+k+'\')">'+icon[k]+'<span>'+r.label+'</span></button>').join('')+'</nav>'+
+    '<div class="app-side-bottom"><div class="app-user-mini"><b>'+((currentUser?.first_name||'')+' '+(currentUser?.last_name||'')).trim()+'</b><span>'+(currentUser?.role==='admin'?'Admin':'Standart')+' • '+(currentUser?.username||'')+'</span></div><button class="app-logout" onclick="MarketPulseUI.logout()">Çıkış Yap</button><div class="app-theme-status"><span class="app-theme-dot"></span><span id="themeStatus">Otomatik</span></div><div class="app-side-copy">Daha fazla veri<br>Daha güçlü kararlar</div></div>';
   document.body.prepend(aside);
 }
 function topBrand(){
   const b=document.querySelector('.brand');if(!b)return;
   b.innerHTML='<img id="marketPulseTopLogo" src="/brand/market-pulse-logo-light.svg" alt="Markets Pulse by Turkcell">';
   const actions=document.querySelector('.actions');
-  if(actions&&!document.getElementById('themeMini'))actions.insertAdjacentHTML('afterbegin','<button id="themeMini" class="theme-mini" onclick="MarketPulseUI.cycleTheme()" title="Tema değiştir">☀</button>');
+  if(actions&&!document.getElementById('themeMini'))actions.insertAdjacentHTML('afterbegin','<div class="user-chip"><b>'+((currentUser?.first_name||'')+' '+(currentUser?.last_name||'')).trim()+'</b><span>'+(currentUser?.role==='admin'?'Admin':'Standart')+'</span></div><button id="themeMini" class="theme-mini" onclick="MarketPulseUI.cycleTheme()" title="Tema değiştir">☀</button>');
 }
 function ensureViews(){
   const shell=document.querySelector('main.shell');if(!shell)return;
@@ -72,13 +73,21 @@ function ensureViews(){
     </div>
     <article class="report-history-card"><div class="panel-head"><strong>Rapor & Dağıtım Geçmişi</strong><button class="btn" onclick="MarketPulseUI.loadReportStatus()">Yenile</button></div><div id="reportHistory" class="report-history"><div class="empty">Geçmiş yükleniyor…</div></div></article>
   </section>`);
-  if(!document.getElementById('settings-section')) shell.insertAdjacentHTML('beforeend',`
+  if(currentUser?.role==='admin'&&!document.getElementById('settings-section')) shell.insertAdjacentHTML('beforeend',`
   <section id="settings-section" class="section">
-    <div class="section-title"><div><h2>Ayarlar</h2><p>Görünüm ve çalışma tercihleri</p></div></div>
+    <div class="section-title"><div><h2>Ayarlar</h2><p>Platform, erişim ve çalışma tercihleri</p></div></div>
     <div class="settings-grid">
       <article class="setting-card"><h3>Tema</h3><p>Varsayılan otomatik plan: 06:00–18:00 Light, 18:00–06:00 Dark. Saat dilimi Asia/Famagusta.</p><div class="theme-choice"><button data-theme-choice="auto" onclick="MarketPulseUI.setTheme('auto')">Otomatik</button><button data-theme-choice="light" onclick="MarketPulseUI.setTheme('light')">Light</button><button data-theme-choice="dark" onclick="MarketPulseUI.setTheme('dark')">Dark</button></div></article>
       <article class="setting-card"><h3>Tarama</h3><p>Rakip kaynaklar arka planda otomatik kontrol edilir.</p><div class="setting-line"><span>Otomatik tarama</span><b>Saatlik</b></div><div class="setting-line"><span>Dashboard yenileme</span><b>60 sn</b></div><div class="setting-line"><span>Kanıt görseli</span><b>Aktif</b></div></article>
       <article class="setting-card"><h3>Marka</h3><p>Markets Pulse by Turkcell • KKTC Turkcell renk sistemi.</p><div class="setting-line"><span>Electric Blue</span><b>#0014F2</b></div><div class="setting-line"><span>Cyan</span><b>#00C2FF</b></div><div class="setting-line"><span>Yellow</span><b>#FFCA00</b></div></article>
+      <article class="setting-card user-admin-card"><h3>Kullanıcı Ekle</h3><p>Yeni kullanıcıya otomatik kullanıcı adı ve geçici parola oluşturulur; bilgiler e-posta ile kişiye gönderilir.</p>
+        <form class="user-add-form" onsubmit="MarketPulseUI.addUser(event)">
+          <div><label>İsim</label><input id="newUserFirst" required></div><div><label>Soyisim</label><input id="newUserLast" required></div>
+          <div><label>E-posta</label><input id="newUserEmail" type="email" required></div><div><label>Rol</label><select id="newUserRole"><option value="standard">Standart</option><option value="admin">Admin</option></select></div>
+          <button class="btn primary" id="newUserBtn" type="submit">Kullanıcı Oluştur ve Davet Gönder</button>
+        </form>
+      </article>
+      <article class="setting-card user-list-card"><div class="user-list-head"><div><h3>Kullanıcılar</h3><p>Platform erişimi, rol ve davet durumları</p></div><button class="btn" onclick="MarketPulseUI.loadUsers()">Yenile</button></div><div id="userAdminList" class="user-admin-list"><div class="empty">Kullanıcılar yükleniyor…</div></div></article>
     </div>
   </section>`);
 }
@@ -92,7 +101,7 @@ function allRouteIds(){return [...new Set(Object.values(routes).flatMap(r=>r.ids
 function currentRoute(){const h=location.hash.replace('#','');return routes[h]?h:'dashboard'}
 function applyRoute(route=currentRoute()){
   organizeContent();
-  if(!routes[route])route='dashboard';document.body.dataset.view=route;
+  if(!routes[route])route='dashboard';if(route==='settings'&&currentUser?.role!=='admin')route='dashboard';document.body.dataset.view=route;
   const ids=allRouteIds();
   ids.forEach(id=>{const el=document.getElementById(id);if(el){el.dataset.routeSection='1';el.classList.toggle('route-visible',routes[route].ids.includes(id))}});
   document.querySelectorAll('.app-nav-btn').forEach(b=>b.classList.toggle('active',b.dataset.route===route));
@@ -100,6 +109,7 @@ function applyRoute(route=currentRoute()){
   if(route==='segment'&&window.setBmSegment)window.setBmSegment('Genel');
   if(route==='trends'&&window.setBmSegment)window.setBmSegment('Tümü');
   if(route==='reports')loadReportStatus();
+  if(route==='settings'&&currentUser?.role==='admin')loadUsers();
   if(route==='home'&&window.HomeInternetUI)window.HomeInternetUI.load();
   window.scrollTo({top:0,behavior:'auto'});
 }
@@ -171,13 +181,49 @@ async function download(kind,format='json'){
   }else saveBlob(name+'.json',JSON.stringify(data,null,2),'application/json');
 }
 
-function init(){
-  document.body.classList.add('branded-app');sidebar();topBrand();ensureViews();organizeContent();applyTheme();applyRoute();loadExecutiveInsights();
+async function loadCurrentUser(){
+  const r=await fetch('/api/auth/me',{cache:'no-store'});
+  if(!r.ok){location.href='/login';throw new Error('Oturum gerekli')}
+  const d=await r.json();currentUser=d.user;return currentUser;
+}
+async function logout(){
+  await fetch('/api/auth/logout',{method:'POST'}).catch(()=>{});
+  location.href='/login';
+}
+function fmtUserDate(v){return v?new Intl.DateTimeFormat('tr-TR',{timeZone:'Asia/Famagusta',dateStyle:'short',timeStyle:'short'}).format(new Date(v)):'—'}
+async function loadUsers(){
+  if(currentUser?.role!=='admin')return;
+  const box=document.getElementById('userAdminList');if(!box)return;
+  try{
+    const r=await fetch('/api/admin/users',{cache:'no-store'}),d=await r.json();if(!r.ok)throw new Error(d.error||'Kullanıcılar alınamadı');
+    box.innerHTML=(d.users||[]).map(u=>'<div class="user-row"><div class="user-avatar">'+String(u.first_name||'?').slice(0,1)+String(u.last_name||'').slice(0,1)+'</div><div class="user-main"><b>'+u.first_name+' '+u.last_name+'</b><span>'+u.email+' • @'+u.username+'</span><small>'+(u.invite_sent_at?'Davet '+fmtUserDate(u.invite_sent_at):'Davet bekliyor')+' • Son giriş '+fmtUserDate(u.last_login_at)+(u.must_change_password?' • Parola değişimi bekliyor':'')+'</small></div><div class="user-actions"><span class="role-badge '+(u.role==='admin'?'admin':'')+'">'+(u.role==='admin'?'Admin':'Standart')+'</span><span class="status '+(u.active?'ok':'err')+'">'+(u.active?'Aktif':'Pasif')+'</span><button class="btn" onclick="MarketPulseUI.resendInvite('+u.id+')">Yeni Parola Gönder</button>'+(u.id!==currentUser.id?'<button class="btn" onclick="MarketPulseUI.toggleUser('+u.id+','+(!u.active)+')">'+(u.active?'Pasifleştir':'Aktifleştir')+'</button>':'')+'</div></div>').join('')||'<div class="empty">Kullanıcı yok.</div>';
+  }catch(e){box.innerHTML='<div class="empty">'+e.message+'</div>'}
+}
+async function addUser(ev){
+  ev.preventDefault();if(currentUser?.role!=='admin')return;
+  const btn=document.getElementById('newUserBtn');btn.disabled=true;btn.textContent='Oluşturuluyor…';
+  try{
+    const body={first_name:document.getElementById('newUserFirst').value,last_name:document.getElementById('newUserLast').value,email:document.getElementById('newUserEmail').value,role:document.getElementById('newUserRole').value};
+    const r=await fetch('/api/admin/users',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}),d=await r.json();if(!r.ok)throw new Error(d.error||'Kullanıcı oluşturulamadı');
+    alert('Kullanıcı oluşturuldu ve giriş bilgileri '+d.user.email+' adresine gönderildi. Kullanıcı adı: '+d.user.username);
+    ev.target.reset();await loadUsers();
+  }catch(e){alert(e.message)}finally{btn.disabled=false;btn.textContent='Kullanıcı Oluştur ve Davet Gönder'}
+}
+async function resendInvite(id){
+  if(!confirm('Bu kullanıcı için mevcut parola geçersiz olacak ve yeni geçici parola e-posta ile gönderilecek. Devam edilsin mi?'))return;
+  const r=await fetch('/api/admin/users/'+id+'/resend',{method:'POST'}),d=await r.json().catch(()=>({}));if(!r.ok)return alert(d.error||'Davet gönderilemedi');alert('Yeni giriş bilgileri '+d.user.email+' adresine gönderildi.');loadUsers();
+}
+async function toggleUser(id,active){
+  const r=await fetch('/api/admin/users/'+id,{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({active})}),d=await r.json().catch(()=>({}));if(!r.ok)return alert(d.error||'Kullanıcı güncellenemedi');loadUsers();
+}
+
+async function init(){
+  await loadCurrentUser();document.body.classList.add('branded-app');sidebar();topBrand();ensureViews();organizeContent();applyTheme();applyRoute();loadExecutiveInsights();
   const obs=new MutationObserver(()=>applyRoute(currentRoute()));obs.observe(document.querySelector('main.shell')||document.body,{childList:true,subtree:false});
   setInterval(()=>{if(themeMode==='auto')applyTheme()},60000);
   setInterval(loadExecutiveInsights,300000);
   window.addEventListener('hashchange',()=>applyRoute(currentRoute()));
 }
-window.MarketPulseUI={go,setTheme:setThemeMode,cycleTheme,download,applyTheme,reportDownload,sendReport,loadReportStatus};
+window.MarketPulseUI={go,setTheme:setThemeMode,cycleTheme,download,applyTheme,reportDownload,sendReport,loadReportStatus,logout,loadUsers,addUser,resendInvite,toggleUser};
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
 })();
