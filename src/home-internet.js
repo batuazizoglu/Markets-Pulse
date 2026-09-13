@@ -1,10 +1,11 @@
+import puppeteer from 'puppeteer';
 import * as cheerio from 'cheerio';
 
 const UA='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152 Safari/537.36';
 
 export const HOME_INTERNET_SOURCES=[
   {slug:'kktcell-home',provider:'KKTCELL',name:'Kuzey Kıbrıs Turkcell İnternet',url:'https://www.kktcell.com/internet-paketleri',technology:'4.5G / Ev İnterneti',ownership_group:'Kuzey Kıbrıs Turkcell',parser:'kktcell'},
-  {slug:'lifecell-digital-home',provider:'Turkcell Ev İnterneti',name:'Lifecell Digital Ev İnterneti',url:'https://tsurvey.lifecelldigital.com/kurumsal/paketler',technology:'WDSL / Sabit Genişbant',ownership_group:'Lifecell Digital Ltd.',parser:'lifecell-digital'},
+  {slug:'lifecell-digital-home',provider:'Turkcell Ev İnterneti',name:'Lifecell Digital Ev İnterneti',url:'https://www.lifecelldigital.com/paketler?altyapi=1&cat=other',technology:'WDSL / Fiber / Sabit Genişbant',ownership_group:'Lifecell Digital Ltd.',parser:'lifecell-dynamic'},
   {slug:'extend-wdsl',provider:'Extend',name:'Extend WDSL',url:'https://www.extendbroadband.com/urunler-wdsl.php',technology:'WDSL',ownership_group:'Aydoğan Communication Ltd.',parser:'extend-table'},
   {slug:'extend-fiber',provider:'Extend',name:'Extend FiberNET',url:'https://www.extendbroadband.com/urunler-fibernet.php',technology:'Fiber',ownership_group:'Aydoğan Communication Ltd.',parser:'extend-table'},
   {slug:'telsim-home',provider:'Telsim',name:'Vodafone Evde İnternet',url:'https://www.kktctelsim.com/tr/internet/evde-internet-ve-red-box/vodafone-evde-internet',technology:'WDSL / ADSL',ownership_group:'KKTC Telsim',parser:'telsim-home'},
@@ -270,6 +271,197 @@ function discoveryMeta(html,source){
   };
 }
 
+
+let lifecellBrowserPromise=null;
+async function getLifecellBrowser(){
+  if(!lifecellBrowserPromise){
+    lifecellBrowserPromise=puppeteer.launch({
+      headless:true,
+      args:['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage','--disable-gpu','--no-zygote']
+    }).catch(e=>{lifecellBrowserPromise=null;throw e});
+  }
+  return lifecellBrowserPromise;
+}
+async function wait(ms){return new Promise(r=>setTimeout(r,ms))}
+
+function parseDynamicLifecellVariant(source,variant){
+  const raw=clean(variant.card_text);
+  const selected=clean(variant.option_text);
+  const speedMatch=selected.match(/(\d+(?:[.,]\d+)?)\s*(?:Mbps|Mbit|Mb)\b/i)
+    ||raw.match(/(\d+(?:[.,]\d+)?)\s*(?:Mbps|Mbit|Mb)(?:'e kadar)?/i);
+  const speed=speedMatch?n(speedMatch[1]):null;
+  if(speed==null)return [];
+
+  let name=clean(variant.heading);
+  if(!name||name.length<2||/^\d/.test(name)||/^(Mbps|Hız|Seçiniz|Paket)$/i.test(name)){
+    const known=raw.match(/(GNÇ[^\d]{0,40}|Merkezi[^\d]{0,30}|Standart Paket[^\d]{0,30}|Aile Paketi[^\d]{0,30}|Pro Paket[^\d]{0,30}|Oyuncu Paketi[^\d]{0,30}|[A-Za-zÇĞİÖŞÜçğıöşü][A-Za-zÇĞİÖŞÜçğıöşü '\-]{2,45}Paket(?:i)?)/i);
+    name=known?clean(known[1]):('Lifecell Digital '+speed+' Mbps');
+  }
+  name=name.replace(/\s+\d+(?:[.,]\d+)?\s*(?:Mbps|Mbit).*$/i,'').trim();
+
+  const technology=/fiber/i.test(raw)?'Fiber':(/vdsl/i.test(raw)?'VDSL':(/adsl/i.test(raw)?'ADSL':'WDSL / Sabit Genişbant'));
+  const bonusM=raw.match(/\+\s*(\d+)\s*Ay\s*Hediye/i);
+  const bonusDefault=bonusM?Number(bonusM[1]):0;
+  const freeInstall=/ücretsiz\s+kurulum|kurulum\s+ücretsiz/i.test(raw);
+
+  const rows=[];
+  const seenTerms=new Set();
+
+  const monthlyTerms=[...raw.matchAll(/(1|3|4|6|12|14|24)\s*Ay(?:lık|\s+Kontratlı|\s+Paket)?[^₺\d]{0,55}(?:₺\s*)?(\d[\d.]*(?:,\d+)?)\s*(?:TL|₺)\s*\/\s*Ay/ig)];
+  for(const m of monthlyTerms){
+    const duration=Number(m[1]),price=n(m[2]);
+    const key=duration+'|m|'+price;if(seenTerms.has(key))continue;seenTerms.add(key);
+    rows.push(offer({
+      source_slug:source.slug,provider:source.provider,ownership_group:source.ownership_group,source_url:source.url,
+      name,technology,speed_down_mbps:speed,speed_up_mbps:null,data_limit_gb:null,unlimited:!/kota|GB\s*kotalı/i.test(raw),
+      duration_months:duration,bonus_months:bonusDefault,price_monthly_try:price,install_fee_try:freeInstall?0:null,
+      features:[freeInstall?'Ücretsiz kurulum':null,bonusDefault?bonusDefault+' ay hediye':null,'Hız dropdown fiyatı'].filter(Boolean),
+      raw_text:raw.slice(0,1400),
+      product_key:[source.slug,keyPart(name),speed,duration,'monthly'].join('|')
+    }));
+  }
+
+  const totalTerms=[...raw.matchAll(/(1|3|4|6|12|14|24)\s*Ay(?:lık)?[^₺\d]{0,55}(?:₺\s*)?(\d[\d.]*(?:,\d+)?)\s*(?:TL|₺)(?!\s*\/\s*Ay)/ig)];
+  for(const m of totalTerms){
+    const duration=Number(m[1]),total=n(m[2]);
+    const key=duration+'|t|'+total;if(seenTerms.has(key))continue;seenTerms.add(key);
+    rows.push(offer({
+      source_slug:source.slug,provider:source.provider,ownership_group:source.ownership_group,source_url:source.url,
+      name,technology,speed_down_mbps:speed,speed_up_mbps:null,data_limit_gb:null,unlimited:!/kota|GB\s*kotalı/i.test(raw),
+      duration_months:duration,bonus_months:bonusDefault,total_price_try:total,install_fee_try:freeInstall?0:null,
+      features:[freeInstall?'Ücretsiz kurulum':null,bonusDefault?bonusDefault+' ay hediye':null,'Hız dropdown fiyatı'].filter(Boolean),
+      raw_text:raw.slice(0,1400),
+      product_key:[source.slug,keyPart(name),speed,duration,'total'].join('|')
+    }));
+  }
+
+  if(!rows.length){
+    const priceM=raw.match(/(?:₺\s*)?(\d[\d.]*(?:,\d+)?)\s*(?:TL|₺)(?:\s*\/\s*Ay)?/i);
+    if(priceM){
+      const durationM=raw.match(/(1|3|4|6|12|14|24)\s*Ay/i);
+      const duration=durationM?Number(durationM[1]):1;
+      rows.push(offer({
+        source_slug:source.slug,provider:source.provider,ownership_group:source.ownership_group,source_url:source.url,
+        name,technology,speed_down_mbps:speed,speed_up_mbps:null,data_limit_gb:null,unlimited:!/kota|GB\s*kotalı/i.test(raw),
+        duration_months:duration,bonus_months:bonusDefault,price_monthly_try:n(priceM[1]),install_fee_try:freeInstall?0:null,
+        features:[freeInstall?'Ücretsiz kurulum':null,bonusDefault?bonusDefault+' ay hediye':null,'Hız dropdown fiyatı'].filter(Boolean),
+        raw_text:raw.slice(0,1400),
+        product_key:[source.slug,keyPart(name),speed,duration,'fallback'].join('|')
+      }));
+    }
+  }
+  return rows;
+}
+
+async function fetchLifecellDynamic(source){
+  const t0=Date.now();let page;
+  try{
+    const browser=await getLifecellBrowser();
+    page=await browser.newPage();
+    await page.setViewport({width:1440,height:1200,deviceScaleFactor:1});
+    await page.setUserAgent(UA);
+    await page.goto(source.url,{waitUntil:'networkidle2',timeout:60000});
+    await page.evaluate(()=>{
+      const norm=s=>String(s||'').replace(/\s+/g,' ').trim().toLocaleLowerCase('tr-TR');
+      for(const el of document.querySelectorAll('button,a,[role="button"]')){
+        const t=norm(el.textContent||el.getAttribute('aria-label'));
+        if(/tümünü kabul|hepsini kabul|çerezleri kabul|kabul et|accept all/.test(t)){try{el.click()}catch{}}
+      }
+    }).catch(()=>{});
+    await wait(700);
+    await page.evaluate(async()=>{
+      let y=0,max=Math.max(document.body.scrollHeight,document.documentElement.scrollHeight);
+      while(y<max){y+=900;window.scrollTo(0,y);await new Promise(r=>setTimeout(r,80));max=Math.max(max,document.body.scrollHeight)}
+      window.scrollTo(0,0);
+    }).catch(()=>{});
+    await wait(800);
+
+    const selectInfo=await page.evaluate(()=>{
+      const all=[...document.querySelectorAll('select')];
+      const clean=s=>String(s||'').replace(/\s+/g,' ').trim();
+      const nearestCard=s=>{
+        let el=s;
+        for(let i=0;i<8&&el;i++,el=el.parentElement){
+          const t=clean(el.innerText);
+          if(t.length>=50&&t.length<=3500&&/(TL|₺|Mbps|Mbit)/i.test(t))return el;
+        }
+        return s.parentElement;
+      };
+      return all.map((s,idx)=>{
+        const card=nearestCard(s);
+        return {
+          idx,
+          id:s.id||null,name:s.name||null,cls:s.className||null,
+          options:[...s.options].map(o=>({value:o.value,text:clean(o.textContent),disabled:o.disabled})),
+          card_text:clean(card?.innerText||'').slice(0,2500)
+        };
+      });
+    });
+
+    const speedSelects=selectInfo.filter(s=>{
+      const opts=s.options.filter(o=>!o.disabled&&String(o.value||'')!=='');
+      const speedish=opts.filter(o=>/\b\d+(?:[.,]\d+)?\s*(?:Mbps|Mbit|Mb)\b/i.test(o.text));
+      return speedish.length>=1 || (opts.length>=2 && /Mbps|Mbit|hız/i.test(s.card_text));
+    });
+
+    const variants=[];
+    for(const si of speedSelects){
+      const opts=si.options.filter(o=>!o.disabled && String(o.value||'')!=='' && !/seçiniz|choose|hız seç/i.test(o.text));
+      for(const opt of opts){
+        const result=await page.evaluate(({idx,value})=>{
+          const clean=s=>String(s||'').replace(/\s+/g,' ').trim();
+          const selects=[...document.querySelectorAll('select')],s=selects[idx];
+          if(!s)return {ok:false};
+          const setter=Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value')?.set;
+          try{setter?setter.call(s,value):(s.value=value)}catch{s.value=value}
+          s.dispatchEvent(new Event('input',{bubbles:true}));
+          s.dispatchEvent(new Event('change',{bubbles:true}));
+          return {ok:true};
+        },{idx:si.idx,value:opt.value});
+        if(!result?.ok)continue;
+        await wait(650);
+        await page.waitForNetworkIdle({idleTime:300,timeout:1800}).catch(()=>{});
+        const v=await page.evaluate(({idx,optionText})=>{
+          const clean=s=>String(s||'').replace(/\s+/g,' ').trim();
+          const s=[...document.querySelectorAll('select')][idx];
+          if(!s)return null;
+          let card=s;
+          for(let i=0;i<8&&card;i++,card=card.parentElement){
+            const t=clean(card.innerText);
+            if(t.length>=50&&t.length<=3500&&/(TL|₺|Mbps|Mbit)/i.test(t))break;
+          }
+          const headings=card?[...card.querySelectorAll('h1,h2,h3,h4,h5,h6,.title,.card-title,strong,b')]:[];
+          const heading=headings.map(x=>clean(x.textContent)).find(t=>t.length>=3&&t.length<=100&&!/^\d/.test(t)&&!/(TL|₺|Mbps|Mbit|Ay$)/i.test(t))||'';
+          return {option_text:optionText,selected_value:s.value,heading,card_text:clean(card?.innerText||'').slice(0,3500)};
+        },{idx:si.idx,optionText:opt.text});
+        if(v)variants.push(v);
+      }
+    }
+
+    const products=[];
+    for(const v of variants)products.push(...parseDynamicLifecellVariant(source,v));
+    const uniq=new Map();
+    for(const p of products){
+      const old=uniq.get(p.product_key);
+      if(!old || Number(p.effective_monthly_try||Infinity)<Number(old.effective_monthly_try||Infinity))uniq.set(p.product_key,p);
+    }
+    const rows=[...uniq.values()];
+    return {
+      ok:true,http_status:200,response_ms:Date.now()-t0,products:rows,
+      meta:{
+        dynamic:true,
+        select_count:selectInfo.length,
+        speed_select_count:speedSelects.length,
+        combinations_examined:variants.length,
+        unique_products:rows.length,
+        speed_options:speedSelects.map(s=>s.options.map(o=>o.text).filter(Boolean)).slice(0,30)
+      }
+    };
+  }catch(e){
+    return {ok:false,http_status:null,response_ms:Date.now()-t0,products:[],meta:{dynamic:true},error:e?.message||String(e)};
+  }finally{if(page)await page.close().catch(()=>{})}
+}
+
 function parserFor(source,html){
   if(source.parser==='kktcell')return {products:parseKktcell(html,source),meta:discoveryMeta(html,source)};
   if(source.parser==='extend-table')return {products:parseExtendTable(html,source),meta:discoveryMeta(html,source)};
@@ -282,6 +474,7 @@ function parserFor(source,html){
 }
 
 async function fetchSource(source){
+  if(source.parser==='lifecell-dynamic')return fetchLifecellDynamic(source);
   const t0=Date.now();
   try{
     const res=await fetch(source.url,{headers:{'user-agent':UA,'accept':'text/html,application/xhtml+xml','accept-language':'tr-TR,tr;q=0.9,en;q=0.7','cache-control':'no-cache'},redirect:'follow',signal:AbortSignal.timeout(30000)});
