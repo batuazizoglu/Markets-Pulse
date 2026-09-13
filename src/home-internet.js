@@ -404,6 +404,24 @@ async function fetchLifecellDynamic(source){
       return speedish.length>=1 || (opts.length>=2 && /Mbps|Mbit|hız/i.test(s.card_text));
     });
 
+    const customDiagnostic=await page.evaluate(()=>{
+      const clean=s=>String(s||'').replace(/\s+/g,' ').trim();
+      const visible=el=>{const r=el.getBoundingClientRect(),s=getComputedStyle(el);return r.width>5&&r.height>5&&s.display!=='none'&&s.visibility!=='hidden'&&Number(s.opacity||1)>0};
+      const selectors='button,[role="combobox"],[aria-haspopup="listbox"],[aria-haspopup="menu"],[class*="dropdown"],[class*="select"],input';
+      const all=[...document.querySelectorAll(selectors)].filter(visible);
+      const rows=[];
+      for(const el of all){
+        const text=clean(el.innerText||el.value||el.getAttribute('aria-label')||el.getAttribute('placeholder'));
+        let p=el;let context='';
+        for(let i=0;i<5&&p;i++,p=p.parentElement){const t=clean(p.innerText);if(t.length>=20&&t.length<=1000){context=t;if(/Mbps|Mbit|hız|paket|TL|₺/i.test(t))break}}
+        if(/Mbps|Mbit|hız|paket/i.test(text+' '+context)){
+          rows.push({tag:el.tagName,id:el.id||null,cls:String(el.className||'').slice(0,180),role:el.getAttribute('role'),aria:el.getAttribute('aria-haspopup'),text:text.slice(0,180),context:context.slice(0,500)});
+        }
+      }
+      const body=clean(document.body.innerText);
+      return {candidates:rows.slice(0,80),body_speed_samples:(body.match(/.{0,45}\b\d+(?:[.,]\d+)?\s*(?:Mbps|Mbit|Mb).{0,90}/ig)||[]).slice(0,30)};
+    });
+
     const variants=[];
     for(const si of speedSelects){
       const opts=si.options.filter(o=>!o.disabled && String(o.value||'')!=='' && !/seçiniz|choose|hız seç/i.test(o.text));
@@ -454,7 +472,7 @@ async function fetchLifecellDynamic(source){
         speed_select_count:speedSelects.length,
         combinations_examined:variants.length,
         unique_products:rows.length,
-        speed_options:speedSelects.map(s=>s.options.map(o=>o.text).filter(Boolean)).slice(0,30)
+        speed_options:speedSelects.map(s=>s.options.map(o=>o.text).filter(Boolean)).slice(0,30),custom_candidates:customDiagnostic.candidates,body_speed_samples:customDiagnostic.body_speed_samples
       }
     };
   }catch(e){
