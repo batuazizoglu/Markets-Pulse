@@ -21,7 +21,7 @@ function transportConfig(){
   const status=getReportEmailStatus();
   if(!status.configured){const e=new Error('E-posta yapılandırılmadı. SMTP_HOST, REPORT_EMAIL_FROM ve REPORT_EMAIL_TO gerekli.');e.code='EMAIL_NOT_CONFIGURED';throw e;}
   const port=Number(process.env.SMTP_PORT||587);
-  const cfg={host:process.env.SMTP_HOST,port,secure:String(process.env.SMTP_SECURE||'').toLowerCase()==='true'||port===465};
+  const cfg={host:process.env.SMTP_HOST,port,secure:String(process.env.SMTP_SECURE||'').toLowerCase()==='true'||port===465,connectionTimeout:15000,greetingTimeout:15000,socketTimeout:30000,requireTLS:port===587};
   if(process.env.SMTP_USER)cfg.auth={user:process.env.SMTP_USER,pass:process.env.SMTP_PASS||''};
   return {status,transport:nodemailer.createTransport(cfg)};
 }
@@ -48,9 +48,11 @@ export async function sendReportEmail(pool,type,options={}){
   const maxBytes=mail.status.max_attachment_mb*1024*1024;
   if(totalBytes>maxBytes){const e=new Error('E-posta eki '+(totalBytes/1024/1024).toFixed(1)+' MB; limit '+mail.status.max_attachment_mb+' MB.');e.code='ATTACHMENT_TOO_LARGE';throw e;}
   const subject='Markets Pulse - '+(REPORT_NAMES[type]||type)+' - '+localDate(ctx.period_end);
+  console.log('[report-email] connecting',JSON.stringify({host:process.env.SMTP_HOST,port:Number(process.env.SMTP_PORT||587),from:mail.status.from,recipients:mail.status.recipients.length,subject,total_bytes:totalBytes}));
   const info=await mail.transport.sendMail({
     from:mail.status.from,to:mail.status.recipients.join(', '),subject,
     text:ctx.market.executive_summary,html:emailHtml(type,ctx),attachments
   });
+  console.log('[report-email] accepted',JSON.stringify({message_id:info.messageId,accepted:info.accepted,rejected:info.rejected,response:info.response}));
   return {message_id:info.messageId,recipients:mail.status.recipients,subject,total_bytes:totalBytes,ctx};
 }
