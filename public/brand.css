@@ -290,3 +290,24 @@ html[data-theme="dark"] .hi-filter select,html[data-theme="dark"] .hi-toggle{bac
 .hi-family-tab{appearance:none;border:0;background:transparent;color:var(--muted);border-radius:8px;padding:9px 13px;font-size:10px;font-weight:850;cursor:pointer;white-space:nowrap}
 .hi-family-tab.active{background:var(--mp-electric);color:#fff;box-shadow:0 4px 12px rgba(0,20,242,.18)}
 @media(max-width:720px){.hi-family-tabs{width:100%}.hi-family-tab{flex:1;padding:9px 8px;font-size:9px}}
+
+/* Access management */
+.user-chip{display:flex;flex-direction:column;align-items:flex-end;gap:1px;margin-right:2px;max-width:180px}
+.user-chip b{font-size:10px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px}
+.user-chip span{font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.app-user-mini{padding:8px 0 10px;border-bottom:1px solid rgba(255,255,255,.13);margin-bottom:9px}
+.app-user-mini b{display:block;color:#fff;font-size:10px}.app-user-mini span{display:block;margin-top:3px;color:#b9ccff;font-size:8px}
+.app-logout{appearance:none;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.07);color:#fff;border-radius:8px;padding:7px 9px;font-size:8px;font-weight:800;cursor:pointer;width:100%;margin-bottom:9px}
+.user-admin-card,.user-list-card{grid-column:1/-1}
+.user-add-form{display:grid;grid-template-columns:1fr 1fr;gap:10px 12px;margin-top:12px}
+.user-add-form label{display:block;font-size:9px;font-weight:800;color:var(--muted);margin-bottom:5px}
+.user-add-form input,.user-add-form select{width:100%;height:38px;border:1px solid var(--line);border-radius:9px;background:var(--surface2);color:var(--ink);padding:0 10px;font-size:10px;outline:none}
+.user-add-form input:focus,.user-add-form select:focus{border-color:var(--mp-electric);box-shadow:0 0 0 3px rgba(0,20,242,.1)}
+.user-add-form .btn{grid-column:1/-1;width:max-content}
+.user-list-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.user-admin-list{margin-top:10px;border-top:1px solid var(--line)}
+.user-row{display:grid;grid-template-columns:36px minmax(0,1fr) auto;gap:10px;align-items:center;padding:11px 0;border-bottom:1px solid var(--line)}
+.user-avatar{width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,var(--mp-electric),var(--mp-cyan));color:white;display:grid;place-items:center;font-size:10px;font-weight:900;text-transform:uppercase}
+.user-main{min-width:0}.user-main b{display:block;font-size:10px;color:var(--ink)}.user-main span{display:block;margin-top:3px;font-size:9px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.user-main small{display:block;margin-top:3px;font-size:8px;color:var(--muted)}
+.user-actions{display:flex;align-items:center;justify-content:flex-end;gap:6px;flex-wrap:wrap}.role-badge{font-size:8px;font-weight:900;padding:5px 7px;border-radius:999px;background:var(--surface2);color:var(--muted);border:1px solid var(--line)}.role-badge.admin{background:rgba(0,194,255,.12);color:var(--mp-cyan);border-color:rgba(0,194,255,.3)}
+@media(max-width:760px){.user-chip{display:none}.user-add-form{grid-template-columns:1fr}.user-add-form .btn{grid-column:1}.user-row{grid-template-columns:34px 1fr}.user-actions{grid-column:1/-1;justify-content:flex-start;padding-left:44px}.app-user-mini,.app-logout{display:none}}
