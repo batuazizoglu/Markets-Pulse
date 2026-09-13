@@ -10,6 +10,7 @@ import { getKktcellCatalog, buildBenchmark } from './kktcell-benchmark.js';
 import { generateReportPdf } from './report-render.js';
 import { generateEvidencePack } from './evidence-pack.js';
 import { getReportEmailStatus, sendReportEmail } from './report-email.js';
+import { getHomeInternetMarket, scanHomeInternet } from './home-internet.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -173,6 +174,22 @@ app.get('/api/health', async (req,res)=>{
 app.get('/api/market-pulse', async (req,res,next)=>{try{
   const days=Math.max(1,Math.min(180,parseInt(req.query.days||'30',10)||30));
   res.json(await buildMarketPulse(pool,days));
+}catch(e){next(e)}});
+
+app.get('/api/home-internet', async (req,res,next)=>{try{
+  const refresh=req.query.refresh==='1';
+  res.json(await getHomeInternetMarket(pool,{refresh}));
+}catch(e){next(e)}});
+
+app.post('/api/home-internet/scan', async (req,res,next)=>{try{
+  const scan=await scanHomeInternet(pool);
+  res.json({scan,market:await getHomeInternetMarket(pool)});
+}catch(e){next(e)}});
+
+app.get('/api/home-internet/changes', async (req,res,next)=>{try{
+  const days=Math.max(1,Math.min(180,parseInt(req.query.days||'30',10)||30));
+  const r=await pool.query(`SELECT * FROM home_internet_changes WHERE detected_at>=NOW()-($1::text||' days')::interval ORDER BY detected_at DESC,id DESC LIMIT 500`,[days]);
+  res.json({generated_at:new Date().toISOString(),days,rows:r.rows});
 }catch(e){next(e)}});
 
 app.get('/api/kktcell-catalog', async (req,res,next)=>{try{
@@ -374,7 +391,9 @@ const timezone=process.env.TZ||'Asia/Famagusta';
 const schedule=process.env.SCAN_CRON || '0 * * * *';
 cron.schedule(schedule,()=>scanAll().catch(e=>console.error('scheduled scan failed',e)),{timezone});
 cron.schedule('5 * * * *',()=>captureBenchmarkHistory(false).catch(e=>console.error('benchmark history capture failed',e)),{timezone});
+cron.schedule(process.env.HOME_INTERNET_CRON||'12 * * * *',()=>scanHomeInternet(pool).catch(e=>console.error('home internet scan failed',e)),{timezone});
 cron.schedule(process.env.REPORT_DAILY_CRON||'0 8 * * *',()=>scheduledReportEmail('daily'),{timezone});
 cron.schedule(process.env.REPORT_WEEKLY_CRON||'15 8 * * 1',()=>scheduledReportEmail('weekly'),{timezone});
 setTimeout(()=>scanAll().catch(e=>console.error('startup scan failed',e)),5000);
 setTimeout(()=>captureBenchmarkHistory(false).catch(e=>console.error('startup benchmark history failed',e)),25000);
+setTimeout(()=>scanHomeInternet(pool).catch(e=>console.error('startup home internet scan failed',e)),45000);
