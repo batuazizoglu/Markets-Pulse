@@ -8,6 +8,8 @@ function localDate(v=new Date()){return new Intl.DateTimeFormat('tr-TR',{timeZon
 function localStamp(v=new Date()){return new Intl.DateTimeFormat('tr-TR',{timeZone:REPORT_TZ,dateStyle:'short',timeStyle:'short'}).format(new Date(v));}
 function slugStamp(v=new Date()){return new Intl.DateTimeFormat('sv-SE',{timeZone:REPORT_TZ,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(v)).replace(/-/g,'');}
 function changeLabel(c){if(c.change_type==='added')return 'Yeni paket';if(c.change_type==='removed')return 'Paket kaldırıldı';return c.field_name||'Alan değişikliği';}
+function money(v){return v==null||Number.isNaN(Number(v))?'—':Number(v).toLocaleString('tr-TR',{maximumFractionDigits:0})+' TL';}
+function nfmt(v,d=0){return v==null||Number.isNaN(Number(v))?'—':Number(v).toLocaleString('tr-TR',{maximumFractionDigits:d});}
 
 function logoSvg(){
   return '<svg width="210" height="48" viewBox="0 0 420 82" xmlns="http://www.w3.org/2000/svg"><g transform="translate(4 13)"><circle cx="7" cy="45" r="6" fill="#0014F2"/><rect x="20" y="31" width="13" height="20" rx="6.5" fill="#1D5AFF"/><rect x="39" y="19" width="13" height="32" rx="6.5" fill="#1D5AFF"/><rect x="58" y="5" width="13" height="46" rx="6.5" fill="#00C2FF"/><circle cx="82" cy="45" r="7" fill="#FFCA00"/></g><text x="106" y="48" font-family="Arial,sans-serif" font-size="34" font-weight="800" letter-spacing="-1.5" fill="#001484">Markets</text><text x="217" y="48" font-family="Arial,sans-serif" font-size="34" font-weight="800" letter-spacing="-1.5" fill="#00C2FF">Pulse</text><text x="218" y="68" font-family="Arial,sans-serif" font-size="9.5" font-weight="700" letter-spacing="4.8" fill="#001484">BY TURKCELL</text></svg>';
@@ -20,6 +22,60 @@ function evidenceHtml(ctx,limit=4){
   if(!rows.length)return '';
   return '<h2>Seçilmiş Görsel Kanıtlar</h2><div class="evidence">'+rows.map(x=>{const b=x.focused_screenshot_png||x.screenshot_png;const uri='data:image/png;base64,'+Buffer.from(b).toString('base64');return '<div class="evidence-card"><img src="'+uri+'"><div><b>'+esc(x.source_name)+'</b> • '+esc(localStamp(x.captured_at))+' • '+esc(x.kind)+'</div></div>';}).join('')+'</div>';
 }
+function homeBodyHtml(ctx){
+  const h=ctx.home||{},products=h.products||[],sources=h.sources||[],changes=h.changes||[],isFwa=ctx.type==='fwa';
+  const priced=products.filter(x=>x.effective_monthly_try!=null);
+  const turkcell=products.filter(x=>x.provider==='Turkcell Ev İnterneti');
+  const competitors=products.filter(x=>x.provider!=='Turkcell Ev İnterneti');
+  const superbox=products.filter(x=>x.brand==='Superbox');
+  const redbox=products.filter(x=>x.brand==='Red Box');
+  const cheapest=arr=>[...arr].filter(x=>x.effective_monthly_try!=null).sort((a,b)=>a.effective_monthly_try-b.effective_monthly_try)[0]||null;
+  const bestValue=arr=>[...arr].filter(x=>x.mbps_per_100tl!=null).sort((a,b)=>b.mbps_per_100tl-a.mbps_per_100tl)[0]||null;
+  const tcBest=bestValue(turkcell),rivalBest=bestValue(competitors);
+  const sbCheap=cheapest(superbox),rbCheap=cheapest(redbox);
+  const kpis=isFwa?[
+    ['Superbox',superbox.length+' SKU','KKTCELL 4.5G FWA'],
+    ['Red Box',redbox.length+' SKU','Telsim 5G FWA'],
+    ['En Uygun Superbox',sbCheap?money(sbCheap.effective_monthly_try):'—',sbCheap?.name||'Veri bekleniyor'],
+    ['En Uygun Red Box',rbCheap?money(rbCheap.effective_monthly_try):'—',rbCheap?.name||'Veri bekleniyor']
+  ]:[
+    ['Turkcell Ev İnterneti',turkcell.length+' SKU','KKTCELL + Lifecell Digital birleşik katalog'],
+    ['Rakip Teklif',competitors.length+' SKU','Sabit internet sağlayıcıları'],
+    ['Turkcell En İyi Değer',tcBest?nfmt(tcBest.mbps_per_100tl,2):'—',tcBest?.name||'Veri bekleniyor'],
+    ['Rakip En İyi Değer',rivalBest?nfmt(rivalBest.mbps_per_100tl,2):'—',rivalBest?(rivalBest.provider+' • '+rivalBest.name):'Veri bekleniyor']
+  ];
+  const kpiHtml=kpis.map(x=>'<div class="kpi"><span>'+esc(x[0])+'</span><strong>'+esc(x[1])+'</strong><small>'+esc(x[2])+'</small></div>').join('');
+
+  const rows=[...products].sort((a,b)=>{
+    if(isFwa)return (a.brand==='Superbox'?0:1)-(b.brand==='Superbox'?0:1)||(a.effective_monthly_try||Infinity)-(b.effective_monthly_try||Infinity);
+    return (a.provider==='Turkcell Ev İnterneti'?0:1)-(b.provider==='Turkcell Ev İnterneti'?0:1)||(b.market_score||0)-(a.market_score||0);
+  }).slice(0,isFwa?30:55).map(x=>{
+    const speed=x.speed_down_mbps?nfmt(x.speed_down_mbps)+' Mbps':(x.data_limit_gb?nfmt(x.data_limit_gb)+' GB':'—');
+    const duration=(x.duration_months||1)+(x.bonus_months?(' + '+x.bonus_months+' hediye'):'')+' ay';
+    return '<tr><td><b>'+esc(x.brand||x.provider)+'</b></td><td>'+esc(x.name)+'</td><td>'+esc(x.technology||'—')+'</td><td>'+esc(speed)+'</td><td>'+esc(duration)+'</td><td>'+esc(money(x.effective_monthly_try))+'</td><td>'+esc(money(x.first_year_equiv_try))+'</td><td>'+esc(x.mbps_per_100tl==null?'—':nfmt(x.mbps_per_100tl,2))+'</td><td>'+esc(x.market_score==null?'—':x.market_score+'/100')+'</td></tr>';
+  }).join('');
+
+  let insight='';
+  if(isFwa){
+    insight='<div class="callout yellow"><b>FWA ürünleri ayrı izleniyor.</b><br>Superbox, sabit genişbant kataloğundan ayrılmıştır. Telsim Red Box aynı FWA rekabet kümesinde karşılaştırılır.'+
+      (sbCheap&&rbCheap?'<br><b>Efektif aylık fiyat farkı:</b> '+esc(money(Number(sbCheap.effective_monthly_try)-Number(rbCheap.effective_monthly_try)))+' (Superbox − Red Box)':'')+'</div>';
+  }else{
+    const o=(h.opportunities||[])[0];
+    insight='<div class="callout"><b>Turkcell Ev İnterneti birleşik katalog</b><br>KKTCELL ve Lifecell Digital sabit internet ürünleri tek ürün ailesinde değerlendirilir.'+
+      (o?'<br><b>Öncelikli eşleşme:</b> '+esc(o.kktcell?.name)+' ↔ '+esc((o.competitor?.provider||'')+' '+(o.competitor?.name||''))+' • Home Value Score farkı '+esc((o.score_gap>0?'+':'')+o.score_gap):'')+'</div>';
+  }
+
+  const changeRows=changes.slice(0,35).map(x=>'<tr><td>'+esc(localStamp(x.detected_at))+'</td><td>'+esc(x.provider||'—')+'</td><td>'+esc(x.product_name||'Paket')+'</td><td>'+esc(changeLabel(x))+'</td><td>'+esc(x.old_value||'—')+'</td><td>'+esc(x.new_value||'—')+'</td></tr>').join('');
+  const sourceRows=sources.map(x=>'<tr><td>'+esc(x.name)+'</td><td>'+esc(x.provider||'—')+'</td><td>'+esc(x.status||'—')+'</td><td>'+esc(x.http_status||'—')+'</td><td>'+esc(x.parsed_count||0)+'</td><td>'+esc(x.response_ms?x.response_ms+' ms':'—')+'</td></tr>').join('');
+
+  return '<div class="grid">'+kpiHtml+'</div>'+insight+
+    '<h2>'+(isFwa?'Superbox / Red Box Ürünleri':'Turkcell Ev İnterneti ve Pazar Benchmark')+'</h2>'+
+    '<table><thead><tr><th>Marka</th><th>Ürün</th><th>Teknoloji</th><th>Hız/Kota</th><th>Süre</th><th>Efektif Aylık</th><th>12 Ay Eşdeğer</th><th>Mbps/100 TL</th><th>Skor</th></tr></thead><tbody>'+rows+'</tbody></table>'+
+    '<div class="pagebreak"></div><h2>Son '+esc(ctx.days)+' Günlük Değişiklikler</h2>'+
+    '<table><thead><tr><th>Tarih</th><th>Sağlayıcı</th><th>Ürün</th><th>Hareket</th><th>Önce</th><th>Sonra</th></tr></thead><tbody>'+(changeRows||'<tr><td colspan="6">Anlamlı değişiklik yok.</td></tr>')+'</tbody></table>'+
+    '<h2>Kaynak Sağlığı</h2><table><thead><tr><th>Kaynak</th><th>Sağlayıcı</th><th>Durum</th><th>HTTP</th><th>Okunan</th><th>Yanıt</th></tr></thead><tbody>'+sourceRows+'</tbody></table>';
+}
+
 function bodyHtml(ctx){
   const m=ctx.market,b=ctx.benchmark,s=ctx.stats;
   const scoreTable=(ctx.score_deltas||[]).map(x=>{const d=x.delta==null?'—':(x.delta>0?'+':'')+x.delta;const cls=x.delta==null?'':x.delta>=0?'good':'bad';return '<tr><td><b>'+esc(x.segment)+'</b></td><td>'+esc(x.current==null?'—':x.current+'/100')+'</td><td>'+esc(x.baseline==null?'—':x.baseline+'/100')+'</td><td class="'+cls+'">'+esc(d)+'</td><td>'+esc(x.level||'—')+'</td><td>'+esc(x.confidence||'—')+'</td></tr>';}).join('');
@@ -36,7 +92,9 @@ function bodyHtml(ctx){
 }
 export function renderReportHtml(ctx){
   const range=ctx.type==='daily'?localDate(ctx.period_end):localDate(ctx.period_start)+' - '+localDate(ctx.period_end);
-  return '<!doctype html><html lang="tr"><head><meta charset="utf-8"><style>'+css()+'</style></head><body><div class="header"><div>'+logoSvg()+'</div><div class="meta"><b>'+esc(ctx.title)+'</b>'+esc(range)+'<br>Üretim: '+esc(localStamp(ctx.generated_at))+'</div></div><h1>'+esc(ctx.title)+'</h1><div class="sub">Competitive intelligence • Kuzey Kıbrıs Turkcell karar destek raporu</div>'+bodyHtml(ctx)+'<div class="footer"><span>Markets Pulse by Turkcell</span><span>Daha fazla veri • Daha güçlü kararlar</span></div></body></html>';
+  const isHome=ctx.type==='home'||ctx.type==='fwa';
+  const subtitle=isHome?(ctx.type==='fwa'?'FWA competitive intelligence • Superbox / Red Box':'Sabit internet competitive intelligence • Turkcell Ev İnterneti'):'Competitive intelligence • Kuzey Kıbrıs Turkcell karar destek raporu';
+  return '<!doctype html><html lang="tr"><head><meta charset="utf-8"><style>'+css()+'</style></head><body><div class="header"><div>'+logoSvg()+'</div><div class="meta"><b>'+esc(ctx.title)+'</b>'+esc(range)+'<br>Üretim: '+esc(localStamp(ctx.generated_at))+'</div></div><h1>'+esc(ctx.title)+'</h1><div class="sub">'+esc(subtitle)+'</div>'+(isHome?homeBodyHtml(ctx):bodyHtml(ctx))+'<div class="footer"><span>Markets Pulse by Turkcell</span><span>Daha fazla veri • Daha güçlü kararlar</span></div></body></html>';
 }
 async function getBrowser(){
   if(!reportBrowserPromise)reportBrowserPromise=puppeteer.launch({headless:true,args:['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage','--disable-gpu','--no-zygote']}).catch(e=>{reportBrowserPromise=null;throw e;});
