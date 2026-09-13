@@ -145,7 +145,7 @@ function setCookie(res,token){res.setHeader('Set-Cookie',COOKIE+'='+encodeURICom
 function clearCookie(res){res.setHeader('Set-Cookie',COOKIE+'=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0')}
 async function newSession(pool,user,req,res){
   const token=crypto.randomBytes(32).toString('base64url');
-  await pool.query('INSERT INTO app_sessions(token_hash,user_id,expires_at,ip,user_agent) VALUES($1,$2,NOW()+INTERVAL \\'7 days\\',$3,$4)',[tokenHash(token),user.id,ip(req),String(req.headers['user-agent']||'').slice(0,500)]);
+  await pool.query("INSERT INTO app_sessions(token_hash,user_id,expires_at,ip,user_agent) VALUES($1,$2,NOW()+INTERVAL '7 days',$3,$4)",[tokenHash(token),user.id,ip(req),String(req.headers['user-agent']||'').slice(0,500)]);
   setCookie(res,token);
 }
 function adminOnly(req,res,next){if(!req.appUser)return res.status(401).json({error:'Oturum gerekli'});if(req.appUser.role!=='admin')return res.status(403).json({error:'Admin yetkisi gerekli'});next()}
