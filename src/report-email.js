@@ -74,16 +74,112 @@ async function sendViaBrevoApi({status,subject,textContent,htmlContent,attachmen
   console.log('[report-email] brevo-api accepted',JSON.stringify({message_id:payload.messageId||null}));
   return {messageId:payload.messageId||null,accepted:status.recipients,rejected:[],response:'Brevo API '+response.status};
 }
-function emailHtml(type,ctx){
-  const title=REPORT_NAMES[type]||'Markets Pulse Raporu',top=(ctx.market.top_threats||[])[0];
-  return '<div style="font-family:Arial,sans-serif;color:#001484"><h2 style="margin-bottom:4px">'+esc(title)+'</h2><p style="color:#667399">Markets Pulse by Turkcell</p><p><b>Competitive Pressure:</b> '+esc(ctx.market.pressure_index)+'/100 • <b>Competitive Position:</b> '+esc(ctx.benchmark.overall_score&&ctx.benchmark.overall_score.score!=null?ctx.benchmark.overall_score.score+'/100':'—')+'</p><p>'+esc(ctx.market.executive_summary)+'</p>'+(top?'<p><b>Öncelikli hamle:</b> '+esc(top.product_name)+' ('+esc(top.threat)+'/100)<br><b>Öneri:</b> '+esc(top.action)+'</p>':'')+'<p style="color:#667399;font-size:12px">Detaylı rapor ektedir.</p></div>';
+function signed(v){
+  if(v==null||Number.isNaN(Number(v)))return '—';
+  const n=Number(v);return (n>0?'+':'')+n;
+}
+function pctColor(v){
+  if(v==null)return '#667399';
+  return Number(v)>=0?'#00835f':'#c7342d';
+}
+function emailHtml(type,ctx,attachments=[]){
+  const title=REPORT_NAMES[type]||'Markets Pulse Raporu';
+  const m=ctx.market||{},b=ctx.benchmark||{},s=ctx.stats||{};
+  const top=(m.top_threats||[])[0];
+  const scoreRows=(ctx.score_deltas||[]).slice(0,6);
+  const healthy=(ctx.sources||[]).filter(x=>String(x.last_status||'').toLowerCase()==='ok' && (!x.http_status||Number(x.http_status)<400)).length;
+  const sourceCount=(ctx.sources||[]).length;
+  const position=b.overall_score&&b.overall_score.score!=null?b.overall_score.score:'—';
+  const pressure=m.pressure_index!=null?m.pressure_index:'—';
+  const range=ctx.days===1?localDate(ctx.period_end):(localDate(ctx.period_start)+' – '+localDate(ctx.period_end));
+  const attachmentList=attachments.map(a=>'<tr><td style="padding:5px 0;color:#42526e;font-size:12px;">📎 '+esc(a.filename)+'</td></tr>').join('');
+  const segmentRows=scoreRows.map(x=>{
+    const d=signed(x.delta),dc=pctColor(x.delta);
+    return '<tr>'+
+      '<td style="padding:9px 8px;border-bottom:1px solid #e7edf6;font-weight:700;color:#001484;font-size:12px;">'+esc(x.segment)+'</td>'+
+      '<td style="padding:9px 8px;border-bottom:1px solid #e7edf6;text-align:center;color:#001484;font-size:12px;">'+esc(x.current==null?'—':x.current+'/100')+'</td>'+
+      '<td style="padding:9px 8px;border-bottom:1px solid #e7edf6;text-align:center;font-weight:800;color:'+dc+';font-size:12px;">'+esc(d)+'</td>'+
+      '<td style="padding:9px 8px;border-bottom:1px solid #e7edf6;color:#667399;font-size:11px;">'+esc(x.level||'—')+'</td>'+
+    '</tr>';
+  }).join('');
+  const threatBlock=top?(
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:separate;border-spacing:0;background:#fff8de;border:1px solid #f6dc72;border-radius:12px;">'+
+      '<tr><td style="padding:15px 16px;">'+
+        '<div style="font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#8b6b00;font-weight:800;margin-bottom:5px;">ÖNCELİKLİ RAKİP HAMLESİ</div>'+
+        '<div style="font-size:17px;line-height:1.3;color:#001484;font-weight:800;">'+esc(top.product_name||'Telsim hamlesi')+'</div>'+
+        '<div style="margin-top:7px;font-size:12px;color:#42526e;line-height:1.55;">Tehdit skoru: <b style="color:#c7342d;">'+esc(top.threat)+'/100</b>'+
+        (top.segment?' &nbsp;•&nbsp; Segment: <b>'+esc(top.segment)+'</b>':'')+
+        (top.intent?' &nbsp;•&nbsp; Niyet: <b>'+esc(top.intent)+'</b>':'')+'</div>'+
+        ((top.reasons||[]).length?'<div style="margin-top:7px;font-size:12px;color:#667399;">'+esc((top.reasons||[]).join(' • '))+'</div>':'')+
+        '<div style="margin-top:10px;padding-top:10px;border-top:1px solid #eedb8d;font-size:12px;color:#001484;line-height:1.55;"><b>Önerilen aksiyon:</b> '+esc(top.action||'İzlemeye devam et.')+'</div>'+
+      '</td></tr>'+
+    '</table>'
+  ):(
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#edf9f5;border:1px solid #b9e7d7;border-radius:12px;"><tr><td style="padding:14px 16px;color:#176a54;font-size:12px;"><b>Kritik rakip hamlesi yok.</b> Dönem içinde yüksek öncelikli yeni bir Telsim hareketi tespit edilmedi.</td></tr></table>'
+  );
+  return '<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'+
+    '<style>@media only screen and (max-width:620px){.mp-wrap{width:100%!important}.mp-pad{padding-left:16px!important;padding-right:16px!important}.mp-kpi{display:block!important;width:100%!important;padding:0 0 8px!important}.mp-two{display:block!important;width:100%!important}.mp-hide-mobile{display:none!important}}</style></head>'+
+    '<body style="margin:0;padding:0;background:#f3f6fb;font-family:Arial,Helvetica,sans-serif;color:#001484;">'+
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f3f6fb;"><tr><td align="center" style="padding:24px 12px;">'+
+    '<table role="presentation" class="mp-wrap" width="680" cellpadding="0" cellspacing="0" style="width:680px;max-width:680px;background:#ffffff;border-radius:18px;overflow:hidden;box-shadow:0 8px 28px rgba(0,20,132,.08);">'+
+      '<tr><td style="background:#000f64;padding:0;">'+
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>'+
+          '<td style="padding:22px 28px;">'+
+            '<div style="font-size:26px;line-height:1;font-weight:900;letter-spacing:-1px;color:#ffffff;">Markets <span style="color:#00c2ff;">Pulse</span></div>'+
+            '<div style="margin-top:6px;font-size:9px;letter-spacing:.22em;color:#b9ccff;font-weight:700;">BY TURKCELL • COMPETITIVE INTELLIGENCE</div>'+
+          '</td>'+
+          '<td align="right" class="mp-hide-mobile" style="padding:22px 28px;color:#dbe6ff;font-size:11px;line-height:1.5;"><b style="color:#ffffff;">'+esc(title)+'</b><br>'+esc(range)+'</td>'+
+        '</tr></table>'+
+        '<div style="height:4px;background:linear-gradient(90deg,#0014f2,#00c2ff,#ffca00);font-size:0;line-height:0;">&nbsp;</div>'+
+      '</td></tr>'+
+      '<tr><td class="mp-pad" style="padding:25px 28px 8px;">'+
+        '<div style="font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#667399;font-weight:800;">YÖNETİCİ ÖZETİ</div>'+
+        '<div style="margin-top:7px;font-size:20px;line-height:1.35;color:#001484;font-weight:800;">'+esc(title)+'</div>'+
+        '<div style="margin-top:8px;font-size:13px;line-height:1.65;color:#42526e;">'+esc(m.executive_summary||'Markets Pulse raporu hazırlandı.')+'</div>'+
+      '</td></tr>'+
+      '<tr><td class="mp-pad" style="padding:14px 28px 18px;">'+
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>'+
+          '<td class="mp-kpi" width="25%" style="padding-right:6px;vertical-align:top;"><div style="background:#f6f9ff;border:1px solid #dde7f6;border-radius:12px;padding:12px;"><div style="font-size:9px;color:#667399;font-weight:800;text-transform:uppercase;">Pressure</div><div style="margin-top:4px;font-size:22px;font-weight:900;color:#0014f2;">'+esc(pressure)+'</div><div style="font-size:10px;color:#667399;">/100 • '+esc(m.pressure_level||'—')+'</div></div></td>'+
+          '<td class="mp-kpi" width="25%" style="padding:0 4px;vertical-align:top;"><div style="background:#f6f9ff;border:1px solid #dde7f6;border-radius:12px;padding:12px;"><div style="font-size:9px;color:#667399;font-weight:800;text-transform:uppercase;">Position</div><div style="margin-top:4px;font-size:22px;font-weight:900;color:#001484;">'+esc(position)+'</div><div style="font-size:10px;color:#667399;">/100 • '+esc(b.overall_score?.level||'—')+'</div></div></td>'+
+          '<td class="mp-kpi" width="25%" style="padding:0 4px;vertical-align:top;"><div style="background:#f6f9ff;border:1px solid #dde7f6;border-radius:12px;padding:12px;"><div style="font-size:9px;color:#667399;font-weight:800;text-transform:uppercase;">Değişiklik</div><div style="margin-top:4px;font-size:22px;font-weight:900;color:#001484;">'+esc(s.total||0)+'</div><div style="font-size:10px;color:#667399;">'+esc(s.added||0)+' yeni • '+esc(s.removed||0)+' kaldırılan</div></div></td>'+
+          '<td class="mp-kpi" width="25%" style="padding-left:6px;vertical-align:top;"><div style="background:#f6f9ff;border:1px solid #dde7f6;border-radius:12px;padding:12px;"><div style="font-size:9px;color:#667399;font-weight:800;text-transform:uppercase;">Kaynak</div><div style="margin-top:4px;font-size:22px;font-weight:900;color:#00835f;">'+esc(healthy)+'</div><div style="font-size:10px;color:#667399;">'+esc(sourceCount)+' kaynaktan sağlıklı</div></div></td>'+
+        '</tr></table>'+
+      '</td></tr>'+
+      '<tr><td class="mp-pad" style="padding:0 28px 18px;">'+threatBlock+'</td></tr>'+
+      '<tr><td class="mp-pad" style="padding:0 28px 18px;">'+
+        '<div style="font-size:12px;color:#001484;font-weight:800;margin-bottom:8px;">Segment Bazlı Rekabet Pozisyonu</div>'+
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e1e8f2;border-radius:12px;border-collapse:separate;border-spacing:0;overflow:hidden;">'+
+          '<tr style="background:#001484;"><th align="left" style="padding:9px 8px;color:#fff;font-size:10px;">Segment</th><th style="padding:9px 8px;color:#fff;font-size:10px;">Skor</th><th style="padding:9px 8px;color:#fff;font-size:10px;">Delta</th><th align="left" style="padding:9px 8px;color:#fff;font-size:10px;">Durum</th></tr>'+
+          (segmentRows||'<tr><td colspan="4" style="padding:12px;color:#667399;font-size:12px;">Segment verisi bulunamadı.</td></tr>')+
+        '</table>'+
+      '</td></tr>'+
+      '<tr><td class="mp-pad" style="padding:0 28px 18px;">'+
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f7f9fc;border:1px solid #e2e8f1;border-radius:12px;"><tr><td style="padding:14px 16px;">'+
+          '<div style="font-size:11px;font-weight:800;color:#001484;margin-bottom:6px;">Ekli dosyalar</div>'+
+          '<table role="presentation" width="100%" cellpadding="0" cellspacing="0">'+(attachmentList||'<tr><td style="font-size:12px;color:#667399;">Ek bulunmuyor.</td></tr>')+'</table>'+
+        '</td></tr></table>'+
+      '</td></tr>'+
+      '<tr><td align="center" class="mp-pad" style="padding:2px 28px 26px;">'+
+        '<a href="https://www.marketspulse.cloud/#reports" style="display:inline-block;background:#0014f2;color:#ffffff;text-decoration:none;font-size:12px;font-weight:800;padding:12px 20px;border-radius:9px;">Markets Pulse Dashboard’u Aç</a>'+
+        '<div style="margin-top:10px;font-size:10px;color:#8a96ad;">Detaylı PDF raporu bu e-postanın ekinde bulabilirsiniz.</div>'+
+      '</td></tr>'+
+      '<tr><td style="background:#f4f7fb;border-top:1px solid #e3e9f2;padding:16px 28px;">'+
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td style="font-size:10px;line-height:1.5;color:#7b89a5;">Bu e-posta Markets Pulse tarafından otomatik oluşturulmuştur.<br><span style="color:#001484;font-weight:700;">Daha fazla veri • Daha güçlü kararlar</span></td><td align="right" class="mp-hide-mobile" style="font-size:10px;color:#7b89a5;">noreply@marketspulse.cloud</td></tr></table>'+
+      '</td></tr>'+
+    '</table></td></tr></table></body></html>';
 }
 export async function sendReportEmail(pool,type,options={}){
   const mail=transportConfig();
   let attachments=[],ctx,totalBytes=0;
   if(type==='evidence'){
-    const pack=await generateEvidencePack(pool,{days:options.days||7});ctx=pack.ctx;
-    attachments.push({filename:pack.fileName,content:pack.buffer,contentType:pack.contentType});totalBytes+=pack.buffer.length;
+    const [pack,summary]=await Promise.all([
+      generateEvidencePack(pool,{days:options.days||7}),
+      generateReportPdf(pool,'telsim7',{days:options.days||7})
+    ]);
+    ctx=pack.ctx;
+    attachments.push({filename:summary.fileName,content:summary.buffer,contentType:summary.contentType});
+    attachments.push({filename:pack.fileName,content:pack.buffer,contentType:pack.contentType});
+    totalBytes+=summary.buffer.length+pack.buffer.length;
   }else if(type==='weekly'){
     const weekly=await generateReportPdf(pool,'weekly',{days:7}),seven=await generateReportPdf(pool,'telsim7',{days:7});
     ctx=weekly.ctx;
@@ -96,20 +192,20 @@ export async function sendReportEmail(pool,type,options={}){
   }
   const maxBytes=mail.status.max_attachment_mb*1024*1024;
   if(totalBytes>maxBytes){const e=new Error('E-posta eki '+(totalBytes/1024/1024).toFixed(1)+' MB; limit '+mail.status.max_attachment_mb+' MB.');e.code='ATTACHMENT_TOO_LARGE';throw e;}
-  const subject='Markets Pulse - '+(REPORT_NAMES[type]||type)+' - '+localDate(ctx.period_end);
+  const subject='Markets Pulse | '+(REPORT_NAMES[type]||type)+' | '+localDate(ctx.period_end);
   let info;
   if(mail.status.api_configured){
     info=await sendViaBrevoApi({
       status:mail.status,subject,
       textContent:ctx.market.executive_summary,
-      htmlContent:emailHtml(type,ctx),
+      htmlContent:emailHtml(type,ctx,attachments),
       attachments
     });
   }else{
     console.log('[report-email] smtp connecting',JSON.stringify({host:process.env.SMTP_HOST,port:Number(process.env.SMTP_PORT||587),from:mail.status.from,recipients:mail.status.recipients.length,subject,total_bytes:totalBytes}));
     info=await mail.transport.sendMail({
       from:mail.status.from,to:mail.status.recipients.join(', '),subject,
-      text:ctx.market.executive_summary,html:emailHtml(type,ctx),attachments
+      text:ctx.market.executive_summary,html:emailHtml(type,ctx,attachments),attachments
     });
     console.log('[report-email] smtp accepted',JSON.stringify({message_id:info.messageId,accepted:info.accepted,rejected:info.rejected,response:info.response}));
   }
