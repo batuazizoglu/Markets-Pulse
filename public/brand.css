@@ -285,3 +285,8 @@ html[data-theme="dark"] body.branded-app :is(.mp-score,.bm-pos,.status){font-wei
 html[data-theme="dark"] .hi-filter select,html[data-theme="dark"] .hi-toggle{background:var(--surface2);color:var(--ink)}
 @media(max-width:1050px){.hi-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.hi-toolbar{grid-template-columns:1fr 1fr}.hi-grid2{grid-template-columns:1fr}}
 @media(max-width:720px){.hi-kpis{grid-template-columns:1fr 1fr;gap:8px}.hi-kpi{padding:11px}.hi-kpi strong{font-size:17px}.hi-toolbar{grid-template-columns:1fr}.hi-toggle{width:100%}.hi-op-card strong{font-size:13px}.hi-title{align-items:flex-start}.hi-actions{width:100%}}
+
+.hi-family-tabs{display:flex;gap:7px;margin:0 0 12px;padding:4px;background:var(--surface2);border:1px solid var(--line);border-radius:12px;width:max-content;max-width:100%}
+.hi-family-tab{appearance:none;border:0;background:transparent;color:var(--muted);border-radius:8px;padding:9px 13px;font-size:10px;font-weight:850;cursor:pointer;white-space:nowrap}
+.hi-family-tab.active{background:var(--mp-electric);color:#fff;box-shadow:0 4px 12px rgba(0,20,242,.18)}
+@media(max-width:720px){.hi-family-tabs{width:100%}.hi-family-tab{flex:1;padding:9px 8px;font-size:9px}}
