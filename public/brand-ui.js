@@ -38,14 +38,14 @@ function cycleTheme(){const t=resolvedTheme();setThemeMode(t==='dark'?'light':'d
 function sidebar(){
   if(document.querySelector('.app-sidebar'))return;
   const aside=document.createElement('aside');aside.className='app-sidebar';
-  aside.innerHTML='<div class="app-side-brand"><img src="/brand/market-pulse-logo-dark.svg" alt="Market Pulse by Turkcell"><div class="app-side-tag">Competitive Intelligence</div></div>'+
+  aside.innerHTML='<div class="app-side-brand"><img src="/brand/market-pulse-logo-dark.svg" alt="Markets Pulse by Turkcell"><div class="app-side-tag">Competitive Intelligence</div></div>'+
     '<nav class="app-nav">'+Object.entries(routes).map(([k,r])=>'<button class="app-nav-btn" data-route="'+k+'" onclick="MarketPulseUI.go(\''+k+'\')">'+icon[k]+'<span>'+r.label+'</span></button>').join('')+'</nav>'+
     '<div class="app-side-bottom"><div class="app-theme-status"><span class="app-theme-dot"></span><span id="themeStatus">Otomatik</span></div><div class="app-side-copy">Daha fazla veri<br>Daha güçlü kararlar</div></div>';
   document.body.prepend(aside);
 }
 function topBrand(){
   const b=document.querySelector('.brand');if(!b)return;
-  b.innerHTML='<img id="marketPulseTopLogo" src="/brand/market-pulse-logo-light.svg" alt="Market Pulse by Turkcell">';
+  b.innerHTML='<img id="marketPulseTopLogo" src="/brand/market-pulse-logo-light.svg" alt="Markets Pulse by Turkcell">';
   const actions=document.querySelector('.actions');
   if(actions&&!document.getElementById('themeMini'))actions.insertAdjacentHTML('afterbegin','<button id="themeMini" class="theme-mini" onclick="MarketPulseUI.cycleTheme()" title="Tema değiştir">☀</button>');
 }
@@ -53,7 +53,7 @@ function ensureViews(){
   const shell=document.querySelector('main.shell');if(!shell)return;
   if(!document.getElementById('viewTitle')) {
     const nav=document.querySelector('.section-nav');
-    (nav||shell.firstElementChild)?.insertAdjacentHTML(nav?'afterend':'afterend','<div id="viewTitle" class="view-title"><div><h2>Dashboard</h2><p>Pazarın nabzı, kritik gelişmeler ve yönetici özeti.</p></div><span class="view-chip">Market Pulse • Live</span></div>');
+    (nav||shell.firstElementChild)?.insertAdjacentHTML(nav?'afterend':'afterend','<div id="viewTitle" class="view-title"><div><h2>Dashboard</h2><p>Pazarın nabzı, kritik gelişmeler ve yönetici özeti.</p></div><span class="view-chip">Markets Pulse • Live</span></div>');
   }
   if(!document.getElementById('dashboard-insights-section')) shell.insertAdjacentHTML('beforeend',`<section id="dashboard-insights-section" class="section"><div class="section-title"><div><h2>Yönetici İçgörüleri</h2><p>Benchmark ve rakip hareketlerinden türetilen dört kritik sinyal</p></div></div><div id="executiveInsights" class="executive-grid"><article class="executive-card"><span>Genel Pozisyon</span><strong>—</strong><small>Hesaplanıyor</small></article><article class="executive-card"><span>En Güçlü Segment</span><strong>—</strong><small>Hesaplanıyor</small></article><article class="executive-card"><span>En Baskı Altındaki</span><strong>—</strong><small>Hesaplanıyor</small></article><article class="executive-card"><span>Öncelikli Aksiyon</span><strong>—</strong><small>Hesaplanıyor</small></article></div></section>`);
   if(!document.getElementById('reports-section')) shell.insertAdjacentHTML('beforeend',`
@@ -62,7 +62,7 @@ function ensureViews(){
     <div id="reportStatusStrip" class="report-status-strip"><div><b>Otomatik dağıtım</b><span>Durum yükleniyor…</span></div></div>
     <div class="report-grid report-grid-4">
       <article class="report-card"><div class="report-icon">☀</div><h3>Günlük Yönetici Özeti</h3><p>Son 24 saat: Competitive Pressure, genel pozisyon, segment skorları, kritik rakip hamleleri ve aksiyon önerileri.</p><div class="report-actions"><button class="btn primary" onclick="MarketPulseUI.reportDownload('daily')">PDF İndir</button><button class="btn" data-report-email onclick="MarketPulseUI.sendReport('daily',this)">E-posta Gönder</button></div></article>
-      <article class="report-card"><div class="report-icon">7</div><h3>Haftalık Market Pulse PDF</h3><p>7 günlük skor değişimi, segment trendleri, önemli Telsim hamleleri, değişiklik özeti ve seçilmiş görsel kanıtlar.</p><div class="report-actions"><button class="btn primary" onclick="MarketPulseUI.reportDownload('weekly')">PDF İndir</button><button class="btn" data-report-email onclick="MarketPulseUI.sendReport('weekly',this)">E-posta Gönder</button></div></article>
+      <article class="report-card"><div class="report-icon">7</div><h3>Haftalık Markets Pulse PDF</h3><p>7 günlük skor değişimi, segment trendleri, önemli Telsim hamleleri, değişiklik özeti ve seçilmiş görsel kanıtlar.</p><div class="report-actions"><button class="btn primary" onclick="MarketPulseUI.reportDownload('weekly')">PDF İndir</button><button class="btn" data-report-email onclick="MarketPulseUI.sendReport('weekly',this)">E-posta Gönder</button></div></article>
       <article class="report-card"><div class="report-icon">↯</div><h3>Son 7 Günde Telsim Ne Yaptı?</h3><p>Ürün bazlı ekleme, kaldırma, fiyat/data/fayda değişimleri; tehdit skoru, segment ve önerilen karşı aksiyonlarla.</p><div class="report-actions"><button class="btn primary" onclick="MarketPulseUI.reportDownload('telsim7')">PDF İndir</button><button class="btn" data-report-email onclick="MarketPulseUI.sendReport('telsim7',this)">E-posta Gönder</button></div></article>
       <article class="report-card"><div class="report-icon">▣</div><h3>Evidence Pack</h3><p>7 günlük rapor + changes.csv + Paket Görünümü PNG + değişiklik/baseline tam sayfa PNG + HTML + JSON + metadata.</p><div class="report-actions"><button class="btn primary" onclick="MarketPulseUI.reportDownload('evidence')">ZIP İndir</button><button class="btn" data-report-email onclick="MarketPulseUI.sendReport('evidence',this)">E-posta Gönder</button></div></article>
     </div>
@@ -74,7 +74,7 @@ function ensureViews(){
     <div class="settings-grid">
       <article class="setting-card"><h3>Tema</h3><p>Varsayılan otomatik plan: 06:00–18:00 Light, 18:00–06:00 Dark. Saat dilimi Asia/Famagusta.</p><div class="theme-choice"><button data-theme-choice="auto" onclick="MarketPulseUI.setTheme('auto')">Otomatik</button><button data-theme-choice="light" onclick="MarketPulseUI.setTheme('light')">Light</button><button data-theme-choice="dark" onclick="MarketPulseUI.setTheme('dark')">Dark</button></div></article>
       <article class="setting-card"><h3>Tarama</h3><p>Rakip kaynaklar arka planda otomatik kontrol edilir.</p><div class="setting-line"><span>Otomatik tarama</span><b>Saatlik</b></div><div class="setting-line"><span>Dashboard yenileme</span><b>60 sn</b></div><div class="setting-line"><span>Kanıt görseli</span><b>Aktif</b></div></article>
-      <article class="setting-card"><h3>Marka</h3><p>Market Pulse by Turkcell • KKTC Turkcell renk sistemi.</p><div class="setting-line"><span>Electric Blue</span><b>#0014F2</b></div><div class="setting-line"><span>Cyan</span><b>#00C2FF</b></div><div class="setting-line"><span>Yellow</span><b>#FFCA00</b></div></article>
+      <article class="setting-card"><h3>Marka</h3><p>Markets Pulse by Turkcell • KKTC Turkcell renk sistemi.</p><div class="setting-line"><span>Electric Blue</span><b>#0014F2</b></div><div class="setting-line"><span>Cyan</span><b>#00C2FF</b></div><div class="setting-line"><span>Yellow</span><b>#FFCA00</b></div></article>
     </div>
   </section>`);
 }
@@ -92,7 +92,7 @@ function applyRoute(route=currentRoute()){
   const ids=allRouteIds();
   ids.forEach(id=>{const el=document.getElementById(id);if(el){el.dataset.routeSection='1';el.classList.toggle('route-visible',routes[route].ids.includes(id))}});
   document.querySelectorAll('.app-nav-btn').forEach(b=>b.classList.toggle('active',b.dataset.route===route));
-  const vt=document.getElementById('viewTitle');if(vt)vt.innerHTML='<div><h2>'+routes[route].label+'</h2><p>'+routes[route].desc+'</p></div><span class="view-chip">Market Pulse • Live</span>';
+  const vt=document.getElementById('viewTitle');if(vt)vt.innerHTML='<div><h2>'+routes[route].label+'</h2><p>'+routes[route].desc+'</p></div><span class="view-chip">Markets Pulse • Live</span>';
   if(route==='segment'&&window.setBmSegment)window.setBmSegment('Genel');
   if(route==='trends'&&window.setBmSegment)window.setBmSegment('Tümü');
   if(route==='reports')loadReportStatus();
