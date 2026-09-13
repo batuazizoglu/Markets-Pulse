@@ -133,4 +133,41 @@ CREATE TABLE IF NOT EXISTS report_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_report_runs_type_time ON report_runs(report_type,generated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_report_runs_delivery ON report_runs(delivery_status,generated_at DESC);
+CREATE TABLE IF NOT EXISTS home_internet_scans (
+  id BIGSERIAL PRIMARY KEY,
+  source_slug TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  source_name TEXT NOT NULL,
+  source_url TEXT NOT NULL,
+  technology TEXT,
+  ownership_group TEXT,
+  captured_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  status TEXT NOT NULL,
+  http_status INTEGER,
+  response_ms INTEGER,
+  parsed_count INTEGER NOT NULL DEFAULT 0,
+  payload_json JSONB,
+  source_meta_json JSONB,
+  error TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_home_internet_scans_source_time ON home_internet_scans(source_slug,captured_at DESC);
+CREATE INDEX IF NOT EXISTS idx_home_internet_scans_time ON home_internet_scans(captured_at DESC);
+
+CREATE TABLE IF NOT EXISTS home_internet_changes (
+  id BIGSERIAL PRIMARY KEY,
+  source_slug TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  product_key TEXT,
+  product_name TEXT,
+  detected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  change_type TEXT NOT NULL,
+  field_name TEXT,
+  old_value TEXT,
+  new_value TEXT,
+  severity TEXT NOT NULL DEFAULT 'medium',
+  scan_id BIGINT REFERENCES home_internet_scans(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_home_internet_changes_time ON home_internet_changes(detected_at DESC);
+CREATE INDEX IF NOT EXISTS idx_home_internet_changes_source_time ON home_internet_changes(source_slug,detected_at DESC);
+
 `;
