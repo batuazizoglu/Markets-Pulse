@@ -95,7 +95,7 @@ function renderProducts(){
 
 function renderSources(){
   let rows=state.data?.sources||[];const box=document.getElementById('hiSources');
-  if(state.family==='fwa')rows=rows.filter(s=>['kktcell-home','telsim-redbox'].includes(s.slug));
+  if(state.family==='fwa')rows=rows.filter(s=>['kktcell-superbox','lifecell-digital-superbox','telsim-redbox'].includes(s.slug));
   box.innerHTML=rows.map(s=>{
     const ok=s.status==='ok',dynamic=Number(s.parsed_count||0)===0;
     return '<div class="hi-source"><div><b>'+esc(s.name)+'</b><small>'+esc(s.provider)+' • '+esc(s.technology||'')+(s.ownership_group&&s.ownership_group!==s.provider?' • '+esc(s.ownership_group):'')+'</small></div><div class="hi-source-meta"><span class="status '+(ok?'ok':'err')+'">'+(ok?(dynamic?'Kaynak aktif':'Sağlıklı'):'Hata')+'</span><small>'+num(s.response_ms)+' ms • '+num(s.parsed_count)+' teklif</small></div></div>';
