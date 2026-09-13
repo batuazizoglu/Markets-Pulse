@@ -26,8 +26,8 @@ function transportConfig(){
   return {status,transport:nodemailer.createTransport(cfg)};
 }
 function emailHtml(type,ctx){
-  const title=REPORT_NAMES[type]||'Market Pulse Raporu',top=(ctx.market.top_threats||[])[0];
-  return '<div style="font-family:Arial,sans-serif;color:#001484"><h2 style="margin-bottom:4px">'+esc(title)+'</h2><p style="color:#667399">Market Pulse by Turkcell</p><p><b>Competitive Pressure:</b> '+esc(ctx.market.pressure_index)+'/100 • <b>Competitive Position:</b> '+esc(ctx.benchmark.overall_score&&ctx.benchmark.overall_score.score!=null?ctx.benchmark.overall_score.score+'/100':'—')+'</p><p>'+esc(ctx.market.executive_summary)+'</p>'+(top?'<p><b>Öncelikli hamle:</b> '+esc(top.product_name)+' ('+esc(top.threat)+'/100)<br><b>Öneri:</b> '+esc(top.action)+'</p>':'')+'<p style="color:#667399;font-size:12px">Detaylı rapor ektedir.</p></div>';
+  const title=REPORT_NAMES[type]||'Markets Pulse Raporu',top=(ctx.market.top_threats||[])[0];
+  return '<div style="font-family:Arial,sans-serif;color:#001484"><h2 style="margin-bottom:4px">'+esc(title)+'</h2><p style="color:#667399">Markets Pulse by Turkcell</p><p><b>Competitive Pressure:</b> '+esc(ctx.market.pressure_index)+'/100 • <b>Competitive Position:</b> '+esc(ctx.benchmark.overall_score&&ctx.benchmark.overall_score.score!=null?ctx.benchmark.overall_score.score+'/100':'—')+'</p><p>'+esc(ctx.market.executive_summary)+'</p>'+(top?'<p><b>Öncelikli hamle:</b> '+esc(top.product_name)+' ('+esc(top.threat)+'/100)<br><b>Öneri:</b> '+esc(top.action)+'</p>':'')+'<p style="color:#667399;font-size:12px">Detaylı rapor ektedir.</p></div>';
 }
 export async function sendReportEmail(pool,type,options={}){
   const mail=transportConfig();
@@ -47,7 +47,7 @@ export async function sendReportEmail(pool,type,options={}){
   }
   const maxBytes=mail.status.max_attachment_mb*1024*1024;
   if(totalBytes>maxBytes){const e=new Error('E-posta eki '+(totalBytes/1024/1024).toFixed(1)+' MB; limit '+mail.status.max_attachment_mb+' MB.');e.code='ATTACHMENT_TOO_LARGE';throw e;}
-  const subject='Market Pulse - '+(REPORT_NAMES[type]||type)+' - '+localDate(ctx.period_end);
+  const subject='Markets Pulse - '+(REPORT_NAMES[type]||type)+' - '+localDate(ctx.period_end);
   const info=await mail.transport.sendMail({
     from:mail.status.from,to:mail.status.recipients.join(', '),subject,
     text:ctx.market.executive_summary,html:emailHtml(type,ctx),attachments
