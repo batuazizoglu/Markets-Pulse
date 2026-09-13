@@ -390,10 +390,10 @@ setTimeout(()=>captureBenchmarkHistory(false).catch(e=>console.error('startup be
 setTimeout(()=>scanHomeInternet(pool).catch(e=>console.error('startup home internet scan failed',e)),45000);
 if(process.env.REPORT_SMOKE_TEST==='1'){
   setTimeout(async()=>{
-    for(const type of ['home','fwa']){
+    for(const type of ['daily','home','fwa']){
       try{
-        const r=await generateReportPdf(pool,type,{days:7});
-        console.log('[report-smoke]',JSON.stringify({type,ok:true,file_name:r.fileName,file_size_bytes:r.buffer.length,product_count:r.ctx.home?.products?.length||0}));
+        const r=await generateReportPdf(pool,type,{days:type==='daily'?1:7});
+        console.log('[report-smoke]',JSON.stringify({type,ok:true,file_name:r.fileName,file_size_bytes:r.buffer.length,product_count:r.ctx.home?.products?.length||0,daily_fixed_products:r.ctx.daily_home?.fixed?.products?.length||0,daily_fixed_changes:r.ctx.daily_home?.fixed?.changes?.length||0,daily_fwa_products:r.ctx.daily_home?.fwa?.products?.length||0,daily_fwa_changes:r.ctx.daily_home?.fwa?.changes?.length||0}));
       }catch(e){console.error('[report-smoke]',JSON.stringify({type,ok:false,error:e?.message||String(e)}))}
     }
   },80000);
