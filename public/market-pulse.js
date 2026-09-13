@@ -11,11 +11,11 @@ function mpTime(v){return v?new Intl.DateTimeFormat('tr-TR',{dateStyle:'short',t
 let mpDays=30;
 
 function installMarketPulse(){
-  document.title='Market Pulse by Turkcell';
+  document.title='Markets Pulse by Turkcell';
   const nav=document.querySelector('.section-nav');
-  if(nav&&!nav.querySelector('a[href="#market-pulse-section"]')) nav.insertAdjacentHTML('afterbegin','<a href="#market-pulse-section">Market Pulse</a>');
+  if(nav&&!nav.querySelector('a[href="#market-pulse-section"]')) nav.insertAdjacentHTML('afterbegin','<a href="#market-pulse-section">Markets Pulse</a>');
   const overview=document.getElementById('overview');
-  if(overview&&!document.getElementById('market-pulse-section')) overview.insertAdjacentHTML('beforebegin',`<section id="market-pulse-section" class="mp-shell"><div id="mpContent" class="mp-empty">Market Pulse hesaplanıyor…</div></section>`);
+  if(overview&&!document.getElementById('market-pulse-section')) overview.insertAdjacentHTML('beforebegin',`<section id="market-pulse-section" class="mp-shell"><div id="mpContent" class="mp-empty">Markets Pulse hesaplanıyor…</div></section>`);
   loadMarketPulse(30);
 }
 
@@ -28,7 +28,7 @@ async function loadMarketPulse(days=30,btn){
     const r=await fetch('/api/market-pulse?days='+days,{cache:'no-store'});
     if(!r.ok)throw new Error(await r.text());
     const d=await r.json();renderMarketPulse(d);
-  }catch(e){console.error(e);box.innerHTML='<div class="mp-empty">Market Pulse verisi şu anda yüklenemiyor.</div>'}
+  }catch(e){console.error(e);box.innerHTML='<div class="mp-empty">Markets Pulse verisi şu anda yüklenemiyor.</div>'}
 }
 
 function renderMarketPulse(d){
