@@ -58,12 +58,15 @@ function ensureViews(){
   if(!document.getElementById('dashboard-insights-section')) shell.insertAdjacentHTML('beforeend',`<section id="dashboard-insights-section" class="section"><div class="section-title"><div><h2>Yönetici İçgörüleri</h2><p>Benchmark ve rakip hareketlerinden türetilen dört kritik sinyal</p></div></div><div id="executiveInsights" class="executive-grid"><article class="executive-card"><span>Genel Pozisyon</span><strong>—</strong><small>Hesaplanıyor</small></article><article class="executive-card"><span>En Güçlü Segment</span><strong>—</strong><small>Hesaplanıyor</small></article><article class="executive-card"><span>En Baskı Altındaki</span><strong>—</strong><small>Hesaplanıyor</small></article><article class="executive-card"><span>Öncelikli Aksiyon</span><strong>—</strong><small>Hesaplanıyor</small></article></div></section>`);
   if(!document.getElementById('reports-section')) shell.insertAdjacentHTML('beforeend',`
   <section id="reports-section" class="section">
-    <div class="section-title"><div><h2>Rapor Merkezi</h2><p>Canlı Market Pulse verisini dışa aktarın</p></div></div>
-    <div class="report-grid">
-      <article class="report-card"><div class="report-icon">↗</div><h3>Yönetici Özeti</h3><p>Market Pulse, skorlar ve son rakip hareketlerini JSON olarak indirin.</p><div class="report-actions"><button class="btn" onclick="MarketPulseUI.download('executive')">JSON İndir</button></div></article>
-      <article class="report-card"><div class="report-icon">⇄</div><h3>Ürün Benchmark</h3><p>Telsim ↔ KKTCELL benchmark eşleşmelerini CSV veya JSON olarak dışa aktarın.</p><div class="report-actions"><button class="btn" onclick="MarketPulseUI.download('benchmark','csv')">CSV</button><button class="btn" onclick="MarketPulseUI.download('benchmark')">JSON</button></div></article>
-      <article class="report-card"><div class="report-icon">⌁</div><h3>Rakip Değişiklikleri</h3><p>Son değişiklik akışını tarih ve alan farklarıyla birlikte indirin.</p><div class="report-actions"><button class="btn" onclick="MarketPulseUI.download('changes','csv')">CSV</button><button class="btn" onclick="MarketPulseUI.download('changes')">JSON</button></div></article>
+    <div class="section-title"><div><h2>Rapor Merkezi</h2><p>Yönetici ve rakip istihbarat raporlarını PDF/ZIP olarak üretin ve e-posta grubuna gönderin</p></div><span id="reportEmailBadge" class="view-chip">E-posta kontrol ediliyor…</span></div>
+    <div id="reportStatusStrip" class="report-status-strip"><div><b>Otomatik dağıtım</b><span>Durum yükleniyor…</span></div></div>
+    <div class="report-grid report-grid-4">
+      <article class="report-card"><div class="report-icon">☀</div><h3>Günlük Yönetici Özeti</h3><p>Son 24 saat: Competitive Pressure, genel pozisyon, segment skorları, kritik rakip hamleleri ve aksiyon önerileri.</p><div class="report-actions"><button class="btn primary" onclick="MarketPulseUI.reportDownload('daily')">PDF İndir</button><button class="btn" data-report-email onclick="MarketPulseUI.sendReport('daily',this)">E-posta Gönder</button></div></article>
+      <article class="report-card"><div class="report-icon">7</div><h3>Haftalık Market Pulse PDF</h3><p>7 günlük skor değişimi, segment trendleri, önemli Telsim hamleleri, değişiklik özeti ve seçilmiş görsel kanıtlar.</p><div class="report-actions"><button class="btn primary" onclick="MarketPulseUI.reportDownload('weekly')">PDF İndir</button><button class="btn" data-report-email onclick="MarketPulseUI.sendReport('weekly',this)">E-posta Gönder</button></div></article>
+      <article class="report-card"><div class="report-icon">↯</div><h3>Son 7 Günde Telsim Ne Yaptı?</h3><p>Ürün bazlı ekleme, kaldırma, fiyat/data/fayda değişimleri; tehdit skoru, segment ve önerilen karşı aksiyonlarla.</p><div class="report-actions"><button class="btn primary" onclick="MarketPulseUI.reportDownload('telsim7')">PDF İndir</button><button class="btn" data-report-email onclick="MarketPulseUI.sendReport('telsim7',this)">E-posta Gönder</button></div></article>
+      <article class="report-card"><div class="report-icon">▣</div><h3>Evidence Pack</h3><p>7 günlük rapor + changes.csv + Paket Görünümü PNG + değişiklik/baseline tam sayfa PNG + HTML + JSON + metadata.</p><div class="report-actions"><button class="btn primary" onclick="MarketPulseUI.reportDownload('evidence')">ZIP İndir</button><button class="btn" data-report-email onclick="MarketPulseUI.sendReport('evidence',this)">E-posta Gönder</button></div></article>
     </div>
+    <article class="report-history-card"><div class="panel-head"><strong>Rapor & Dağıtım Geçmişi</strong><button class="btn" onclick="MarketPulseUI.loadReportStatus()">Yenile</button></div><div id="reportHistory" class="report-history"><div class="empty">Geçmiş yükleniyor…</div></div></article>
   </section>`);
   if(!document.getElementById('settings-section')) shell.insertAdjacentHTML('beforeend',`
   <section id="settings-section" class="section">
@@ -92,6 +95,7 @@ function applyRoute(route=currentRoute()){
   const vt=document.getElementById('viewTitle');if(vt)vt.innerHTML='<div><h2>'+routes[route].label+'</h2><p>'+routes[route].desc+'</p></div><span class="view-chip">Market Pulse • Live</span>';
   if(route==='segment'&&window.setBmSegment)window.setBmSegment('Genel');
   if(route==='trends'&&window.setBmSegment)window.setBmSegment('Tümü');
+  if(route==='reports')loadReportStatus();
   window.scrollTo({top:0,behavior:'auto'});
 }
 function go(route){if(!routes[route])route='dashboard';history.replaceState(null,'','#'+route);applyRoute(route)}
@@ -110,6 +114,38 @@ async function loadExecutiveInsights(){
       '<article class="executive-card risk"><span>En Baskı Altındaki Segment</span><strong>'+(weakest?.segment||'—')+'</strong><small>'+(weakest?.score??'—')+'/100 • '+(weakest?.level||'—')+'</small></article>'+
       '<article class="executive-card action"><span>Öncelikli Rakip Hamlesi</span><strong>'+(threat?.product_name||'Anlamlı yeni hamle yok')+'</strong><small>'+(threat?('Tehdit '+threat.threat+'/100 • '+(threat.action||'')):'Son 30 günde kritik hareket görünmüyor')+'</small></article>';
   }catch(e){console.error(e);box.innerHTML='<article class="executive-card"><span>Yönetici İçgörüleri</span><strong>Veri alınamadı</strong><small>Bir sonraki yenilemede tekrar denenecek.</small></article>'}
+}
+
+function reportDownload(type){
+  window.location.href='/api/reports/'+type+'/download';
+  setTimeout(loadReportStatus,1500);
+}
+function reportFmtTime(v){return v?new Intl.DateTimeFormat('tr-TR',{timeZone:'Asia/Famagusta',dateStyle:'short',timeStyle:'short'}).format(new Date(v)):'—'}
+function reportBytes(v){const n=Number(v||0);if(!n)return '—';if(n<1024*1024)return (n/1024).toFixed(0)+' KB';return (n/1024/1024).toFixed(1)+' MB'}
+async function sendReport(type,btn){
+  const original=btn?.textContent||'E-posta Gönder';if(btn){btn.disabled=true;btn.textContent='Gönderiliyor…'}
+  try{
+    const r=await fetch('/api/reports/'+type+'/email',{method:'POST',headers:{'content-type':'application/json'},body:'{}'});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(d.error||'E-posta gönderilemedi');
+    alert('Rapor gönderildi: '+(d.recipients||[]).join(', '));
+  }catch(e){alert(e.message||String(e))}
+  finally{if(btn){btn.disabled=false;btn.textContent=original}loadReportStatus()}
+}
+async function loadReportStatus(){
+  const badge=document.getElementById('reportEmailBadge'),strip=document.getElementById('reportStatusStrip'),historyBox=document.getElementById('reportHistory');
+  if(!badge&&!strip&&!historyBox)return;
+  try{
+    const r=await fetch('/api/reports/status',{cache:'no-store'});if(!r.ok)throw new Error('Rapor durumu alınamadı');
+    const d=await r.json(),em=d.email||{};
+    if(badge){badge.textContent=em.configured?'E-posta aktif':'E-posta yapılandırılmadı';badge.classList.toggle('report-ok',!!em.configured);badge.classList.toggle('report-warn',!em.configured)}
+    document.querySelectorAll('[data-report-email]').forEach(b=>{b.disabled=!em.configured;b.title=em.configured?'Tanımlı e-posta grubuna gönder':'SMTP_HOST, REPORT_EMAIL_FROM ve REPORT_EMAIL_TO gerekli'});
+    if(strip)strip.innerHTML='<div><b>Günlük otomatik gönderim</b><span>'+em.daily_cron+' • '+em.timezone+'</span></div><div><b>Haftalık otomatik gönderim</b><span>'+em.weekly_cron+' • '+em.timezone+'</span></div><div><b>Alıcı grubu</b><span>'+(em.recipients?.length?em.recipients.join(', '):'Tanımlı değil')+'</span></div><div><b>E-posta altyapısı</b><span>'+(em.configured?'Hazır • '+(em.from||''):'Railway environment variable gerekli')+'</span></div>';
+    if(historyBox){
+      const rows=d.recent_runs||[];
+      historyBox.innerHTML=rows.length?'<div class="table-wrap"><table class="data-table report-history-table"><thead><tr><th>Tarih</th><th>Rapor</th><th>Tetikleme</th><th>Durum</th><th>Alıcı</th><th>Boyut</th><th>Hata</th></tr></thead><tbody>'+rows.map(x=>'<tr><td>'+reportFmtTime(x.generated_at)+'</td><td><b>'+String(x.report_type||'')+'</b></td><td>'+String(x.trigger_type||'')+'</td><td><span class="status '+(x.delivery_status==='sent'?'ok':x.delivery_status==='error'?'err':'warn')+'">'+String(x.delivery_status||'')+'</span></td><td>'+((x.recipients||[]).join(', ')||'—')+'</td><td>'+reportBytes(x.file_size_bytes)+'</td><td class="error-text">'+String(x.error||'—')+'</td></tr>').join('')+'</tbody></table></div>':'<div class="empty">Henüz rapor üretim kaydı yok.</div>';
+    }
+  }catch(e){console.error(e);if(badge)badge.textContent='Rapor durumu alınamadı'}
 }
 
 function csv(rows){
@@ -137,6 +173,6 @@ function init(){
   setInterval(loadExecutiveInsights,300000);
   window.addEventListener('hashchange',()=>applyRoute(currentRoute()));
 }
-window.MarketPulseUI={go,setTheme:setThemeMode,cycleTheme,download,applyTheme};
+window.MarketPulseUI={go,setTheme:setThemeMode,cycleTheme,download,applyTheme,reportDownload,sendReport,loadReportStatus};
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
 })();
