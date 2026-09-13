@@ -170,4 +170,51 @@ CREATE TABLE IF NOT EXISTS home_internet_changes (
 CREATE INDEX IF NOT EXISTS idx_home_internet_changes_time ON home_internet_changes(detected_at DESC);
 CREATE INDEX IF NOT EXISTS idx_home_internet_changes_source_time ON home_internet_changes(source_slug,detected_at DESC);
 
+CREATE TABLE IF NOT EXISTS app_users (
+  id BIGSERIAL PRIMARY KEY,
+  first_name TEXT NOT NULL,
+  last_name TEXT NOT NULL,
+  email TEXT NOT NULL,
+  username TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'standard' CHECK (role IN ('admin','standard')),
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  must_change_password BOOLEAN NOT NULL DEFAULT TRUE,
+  invite_sent_at TIMESTAMPTZ,
+  last_login_at TIMESTAMPTZ,
+  failed_login_count INTEGER NOT NULL DEFAULT 0,
+  locked_until TIMESTAMPTZ,
+  created_by BIGINT REFERENCES app_users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_app_users_email_lower ON app_users((lower(email)));
+CREATE UNIQUE INDEX IF NOT EXISTS idx_app_users_username_lower ON app_users((lower(username)));
+CREATE INDEX IF NOT EXISTS idx_app_users_active_role ON app_users(active,role);
+
+CREATE TABLE IF NOT EXISTS app_sessions (
+  token_hash TEXT PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL,
+  last_used_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ip TEXT,
+  user_agent TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_app_sessions_user ON app_sessions(user_id,expires_at DESC);
+CREATE INDEX IF NOT EXISTS idx_app_sessions_expiry ON app_sessions(expires_at);
+
+CREATE TABLE IF NOT EXISTS auth_audit (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT REFERENCES app_users(id) ON DELETE SET NULL,
+  identity TEXT,
+  event TEXT NOT NULL,
+  ip TEXT,
+  user_agent TEXT,
+  meta_json JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_auth_audit_time ON auth_audit(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_auth_audit_user_time ON auth_audit(user_id,created_at DESC);
+
 `;
