@@ -2,6 +2,7 @@
 const routes={
   dashboard:{label:'Dashboard',desc:'Pazarın nabzı, kritik gelişmeler, aksiyonlar ve yönetici özeti.',ids:['market-pulse-section','dashboard-insights-section','overview']},
   competitor:{label:'Rakip Takip',desc:'Kaynak sağlığı, günlük değişim, Telsim paketleri, kanıt ve değişiklik akışı.',ids:['source-health-section','daily-market-section','packages-section','historySection','changes-section','evidence-section','sources-section']},
+  home:{label:'Ev İnterneti',desc:'KKTC sabit internet pazarında fiyat, hız, teknoloji, TCO ve rakip hareketleri.',ids:['home-internet-section']},
   compare:{label:'Ürün Karşılaştırma',desc:'Telsim ve KKTCELL ürünlerini segment bazında karşılaştırın.',ids:['benchmark-section']},
   segment:{label:'Segment Analizi',desc:'Genel, Asker, Öğrenci/Genç, Turist ve Premium/Platinum pozisyonu.',ids:['benchmark-section']},
   trends:{label:'Trendler',desc:'Rekabet pozisyonu ve rakip hareketlerinin 7/30/90 günlük seyri.',ids:['benchmark-section','changes-section']},
@@ -11,6 +12,7 @@ const routes={
 const icon={
 dashboard:'<svg viewBox="0 0 24 24" fill="none"><path d="M4 13h6V4H4v9Zm10 7h6v-9h-6v9ZM4 20h6v-3H4v3Zm10-13h6V4h-6v3Z" stroke-width="1.7"/></svg>',
 competitor:'<svg viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="6" stroke-width="1.7"/><path d="m16 16 4 4M11 8v6M8 11h6" stroke-width="1.7"/></svg>',
+home:'<svg viewBox="0 0 24 24" fill="none"><path d="M3 11.5 12 4l9 7.5M5.5 10v10h13V10M9 20v-6h6v6" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M16.5 7.7c1.4.6 2.5 1.7 3.1 3.1M15 10c.7.3 1.2.8 1.5 1.5" stroke-width="1.4" stroke-linecap="round"/></svg>',
 compare:'<svg viewBox="0 0 24 24" fill="none"><path d="M8 5h12M4 5h.01M4 12h12M20 12h.01M8 19h12M4 19h.01" stroke-width="1.8" stroke-linecap="round"/></svg>',
 segment:'<svg viewBox="0 0 24 24" fill="none"><circle cx="7" cy="8" r="3" stroke-width="1.7"/><circle cx="17" cy="8" r="3" stroke-width="1.7"/><circle cx="12" cy="17" r="3" stroke-width="1.7"/><path d="m9.5 10.2 1.2 3.6m3.8-3.6-1.2 3.6" stroke-width="1.7"/></svg>',
 trends:'<svg viewBox="0 0 24 24" fill="none"><path d="M4 18 9 12l4 3 7-9M16 6h4v4" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
@@ -96,6 +98,7 @@ function applyRoute(route=currentRoute()){
   if(route==='segment'&&window.setBmSegment)window.setBmSegment('Genel');
   if(route==='trends'&&window.setBmSegment)window.setBmSegment('Tümü');
   if(route==='reports')loadReportStatus();
+  if(route==='home'&&window.HomeInternetUI)window.HomeInternetUI.load();
   window.scrollTo({top:0,behavior:'auto'});
 }
 function go(route){if(!routes[route])route='dashboard';history.replaceState(null,'','#'+route);applyRoute(route)}
