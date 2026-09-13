@@ -9,9 +9,13 @@ function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,m=>({'&':'&amp;',
 
 export function getReportEmailStatus(){
   const recipients=parseList(process.env.REPORT_EMAIL_TO);
-  const configured=Boolean(process.env.SMTP_HOST&&process.env.REPORT_EMAIL_FROM&&recipients.length);
+  const apiConfigured=Boolean(process.env.BREVO_API_KEY&&process.env.REPORT_EMAIL_FROM&&recipients.length);
+  const smtpConfigured=Boolean(process.env.SMTP_HOST&&process.env.REPORT_EMAIL_FROM&&recipients.length);
+  const configured=apiConfigured||smtpConfigured;
   return {
-    configured,recipients,from:process.env.REPORT_EMAIL_FROM||null,smtp_host:process.env.SMTP_HOST||null,
+    configured,api_configured:apiConfigured,smtp_configured:smtpConfigured,
+    delivery_mode:apiConfigured?'brevo-api':smtpConfigured?'smtp':'none',
+    recipients,from:process.env.REPORT_EMAIL_FROM||null,smtp_host:process.env.SMTP_HOST||null,
     daily_cron:process.env.REPORT_DAILY_CRON||'0 8 * * *',
     weekly_cron:process.env.REPORT_WEEKLY_CRON||'15 8 * * 1',
     timezone:REPORT_TZ,max_attachment_mb:Number(process.env.REPORT_EMAIL_MAX_MB||18)
@@ -19,11 +23,56 @@ export function getReportEmailStatus(){
 }
 function transportConfig(){
   const status=getReportEmailStatus();
-  if(!status.configured){const e=new Error('E-posta yapılandırılmadı. SMTP_HOST, REPORT_EMAIL_FROM ve REPORT_EMAIL_TO gerekli.');e.code='EMAIL_NOT_CONFIGURED';throw e;}
+  if(!status.configured){const e=new Error('E-posta yapılandırılmadı. REPORT_EMAIL_FROM, REPORT_EMAIL_TO ve BREVO_API_KEY (önerilen) veya SMTP ayarları gerekli.');e.code='EMAIL_NOT_CONFIGURED';throw e;}
+  if(status.api_configured) return {status,transport:null};
   const port=Number(process.env.SMTP_PORT||587);
   const cfg={host:process.env.SMTP_HOST,port,secure:String(process.env.SMTP_SECURE||'').toLowerCase()==='true'||port===465,connectionTimeout:15000,greetingTimeout:15000,socketTimeout:30000,requireTLS:port===587};
   if(process.env.SMTP_USER)cfg.auth={user:process.env.SMTP_USER,pass:process.env.SMTP_PASS||''};
   return {status,transport:nodemailer.createTransport(cfg)};
+}
+
+function parseSender(v){
+  const raw=String(v||'').trim();
+  const m=raw.match(/^\s*(.*?)\s*<([^>]+)>\s*$/);
+  if(m) return {name:m[1].replace(/^["']|["']$/g,'').trim()||'Markets Pulse',email:m[2].trim()};
+  return {name:'Markets Pulse',email:raw};
+}
+
+async function sendViaBrevoApi({status,subject,textContent,htmlContent,attachments}){
+  const sender=parseSender(status.from);
+  const body={
+    sender,
+    to:status.recipients.map(email=>({email})),
+    subject,
+    htmlContent,
+    textContent,
+    attachment:attachments.map(a=>({name:a.filename,content:Buffer.from(a.content).toString('base64')}))
+  };
+  console.log('[report-email] brevo-api connecting',JSON.stringify({from:sender.email,recipients:status.recipients.length,subject,attachments:attachments.length}));
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),30000);
+  let response;
+  try{
+    response=await fetch('https://api.brevo.com/v3/smtp/email',{
+      method:'POST',
+      headers:{'accept':'application/json','content-type':'application/json','api-key':process.env.BREVO_API_KEY},
+      body:JSON.stringify(body),
+      signal:controller.signal
+    });
+  }catch(e){
+    const err=new Error('Brevo API bağlantı hatası: '+(e?.message||String(e)));
+    err.code='BREVO_API_CONNECTION_ERROR';
+    throw err;
+  }finally{clearTimeout(timer)}
+  const payload=await response.json().catch(()=>({}));
+  if(!response.ok){
+    const err=new Error('Brevo API gönderim hatası ('+response.status+'): '+(payload?.message||JSON.stringify(payload)));
+    err.code='BREVO_API_ERROR';
+    err.httpStatus=response.status;
+    throw err;
+  }
+  console.log('[report-email] brevo-api accepted',JSON.stringify({message_id:payload.messageId||null}));
+  return {messageId:payload.messageId||null,accepted:status.recipients,rejected:[],response:'Brevo API '+response.status};
 }
 function emailHtml(type,ctx){
   const title=REPORT_NAMES[type]||'Markets Pulse Raporu',top=(ctx.market.top_threats||[])[0];
@@ -48,11 +97,21 @@ export async function sendReportEmail(pool,type,options={}){
   const maxBytes=mail.status.max_attachment_mb*1024*1024;
   if(totalBytes>maxBytes){const e=new Error('E-posta eki '+(totalBytes/1024/1024).toFixed(1)+' MB; limit '+mail.status.max_attachment_mb+' MB.');e.code='ATTACHMENT_TOO_LARGE';throw e;}
   const subject='Markets Pulse - '+(REPORT_NAMES[type]||type)+' - '+localDate(ctx.period_end);
-  console.log('[report-email] connecting',JSON.stringify({host:process.env.SMTP_HOST,port:Number(process.env.SMTP_PORT||587),from:mail.status.from,recipients:mail.status.recipients.length,subject,total_bytes:totalBytes}));
-  const info=await mail.transport.sendMail({
-    from:mail.status.from,to:mail.status.recipients.join(', '),subject,
-    text:ctx.market.executive_summary,html:emailHtml(type,ctx),attachments
-  });
-  console.log('[report-email] accepted',JSON.stringify({message_id:info.messageId,accepted:info.accepted,rejected:info.rejected,response:info.response}));
-  return {message_id:info.messageId,recipients:mail.status.recipients,subject,total_bytes:totalBytes,ctx};
+  let info;
+  if(mail.status.api_configured){
+    info=await sendViaBrevoApi({
+      status:mail.status,subject,
+      textContent:ctx.market.executive_summary,
+      htmlContent:emailHtml(type,ctx),
+      attachments
+    });
+  }else{
+    console.log('[report-email] smtp connecting',JSON.stringify({host:process.env.SMTP_HOST,port:Number(process.env.SMTP_PORT||587),from:mail.status.from,recipients:mail.status.recipients.length,subject,total_bytes:totalBytes}));
+    info=await mail.transport.sendMail({
+      from:mail.status.from,to:mail.status.recipients.join(', '),subject,
+      text:ctx.market.executive_summary,html:emailHtml(type,ctx),attachments
+    });
+    console.log('[report-email] smtp accepted',JSON.stringify({message_id:info.messageId,accepted:info.accepted,rejected:info.rejected,response:info.response}));
+  }
+  return {message_id:info.messageId,recipients:mail.status.recipients,subject,total_bytes:totalBytes,ctx,delivery_mode:mail.status.delivery_mode};
 }
