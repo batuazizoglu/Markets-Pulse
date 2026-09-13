@@ -37,7 +37,7 @@ export async function generateEvidencePack(pool,options={}){
   const pdf=await pdfFromHtml(renderReportHtml(summaryCtx));
   const manifest={
     generated_at:ctx.generated_at,period_start:ctx.period_start,period_end:ctx.period_end,days,
-    report:'Market Pulse Evidence Pack',snapshot_count:ctx.evidence.length,change_count:ctx.changes.length,
+    report:'Markets Pulse Evidence Pack',snapshot_count:ctx.evidence.length,change_count:ctx.changes.length,
     note:'Focused package images are included for every available snapshot. Full-page images are included for change/baseline snapshots or when no focused image exists.'
   };
   const buffer=await zipToBuffer(async zip=>{
