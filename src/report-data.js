@@ -50,10 +50,12 @@ async function periodChanges(pool, days) {
   return r.rows;
 }
 
-export async function periodEvidence(pool, days, includeBinary=false) {
-  const cols = includeBinary
+export async function periodEvidence(pool, days, mode='meta') {
+  const cols = mode==='full'
     ? "sn.html_gzip,sn.extracted_json,sn.screenshot_png,sn.focused_screenshot_png,"
-    : "(sn.html_gzip IS NOT NULL) has_html,(sn.extracted_json IS NOT NULL) has_json,(sn.screenshot_png IS NOT NULL) has_screenshot,(sn.focused_screenshot_png IS NOT NULL) has_focus,";
+    : mode==='visual'
+      ? "NULL::bytea html_gzip,NULL::jsonb extracted_json,sn.screenshot_png,sn.focused_screenshot_png,"
+      : "(sn.html_gzip IS NOT NULL) has_html,(sn.extracted_json IS NOT NULL) has_json,(sn.screenshot_png IS NOT NULL) has_screenshot,(sn.focused_screenshot_png IS NOT NULL) has_focus,";
   const r = await pool.query(
     "SELECT sn.id,sn.captured_at,sn.kind,sn.page_hash,sn.screenshot_meta," + cols +
     " s.slug source_slug,s.name source_name,s.url source_url" +
@@ -107,7 +109,7 @@ export async function buildReportContext(pool, type, options={}) {
   const days = type === 'daily' ? 1 : Math.max(1,Math.min(30,Number(options.days||7)));
   const periodEnd = new Date(), periodStart = new Date(periodEnd.getTime()-days*86400000);
   const [market,benchmark,sources,changes,baseline,evidence] = await Promise.all([
-    buildMarketPulse(pool,days),currentBenchmark(pool),sourceHealth(pool),periodChanges(pool,days),scoreBaselines(pool,days),periodEvidence(pool,days,type!=='daily')
+    buildMarketPulse(pool,days),currentBenchmark(pool),sourceHealth(pool),periodChanges(pool,days),scoreBaselines(pool,days),periodEvidence(pool,days,type==='evidence'?'full':type==='daily'?'meta':'visual')
   ]);
   return {
     type,title:REPORT_NAMES[type]||'Market Pulse Raporu',days,
