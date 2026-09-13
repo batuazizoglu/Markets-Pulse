@@ -110,6 +110,40 @@ function homeEmailHtml(type,ctx,attachments=[]){
     '</table></td></tr></table></body></html>';
 }
 
+function dailyHomeEmailBlocks(ctx){
+  const d=ctx.daily_home;if(!d)return '';
+  const money=v=>v==null||Number.isNaN(Number(v))?'—':Number(v).toLocaleString('tr-TR',{maximumFractionDigits:0})+' TL';
+  const fixed=d.fixed||{},fwa=d.fwa||{},fp=fixed.products||[],fw=fwa.products||[];
+  const turkcell=fp.filter(x=>x.provider==='Turkcell Ev İnterneti');
+  const rivals=fp.filter(x=>x.provider!=='Turkcell Ev İnterneti');
+  const superbox=fw.filter(x=>x.brand==='Superbox');
+  const redbox=fw.filter(x=>x.brand==='Red Box');
+  const cheap=arr=>[...arr].filter(x=>x.effective_monthly_try!=null).sort((a,b)=>Number(a.effective_monthly_try)-Number(b.effective_monthly_try))[0]||null;
+  const best=arr=>[...arr].filter(x=>x.mbps_per_100tl!=null).sort((a,b)=>Number(b.mbps_per_100tl)-Number(a.mbps_per_100tl))[0]||null;
+  const tcBest=best(turkcell),rivalBest=best(rivals),sb=cheap(superbox),rb=cheap(redbox),op=(fixed.opportunities||[])[0];
+  const fixedSignal=op?((op.kktcell?.name||'Turkcell Ev İnterneti')+' ↔ '+(op.competitor?.provider||'Rakip')+' '+(op.competitor?.name||'')+' • skor farkı '+((Number(op.score_gap||0)>0?'+':'')+Number(op.score_gap||0))):'Son 24 saatte yeni bir sabit internet rekabet sinyali oluşmadı.';
+  return '<tr><td class="mp-pad" style="padding:0 28px 18px;">'+
+    '<div style="font-size:12px;color:#001484;font-weight:900;margin-bottom:8px;">Turkcell Ev İnterneti • Günlük Özet</div>'+
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>'+
+      '<td class="mp-kpi" width="25%" style="padding-right:5px;vertical-align:top;"><div style="background:#f6f9ff;border:1px solid #dde7f6;border-radius:10px;padding:10px;"><div style="font-size:8px;color:#667399;font-weight:800;text-transform:uppercase;">Turkcell SKU</div><div style="margin-top:4px;font-size:19px;font-weight:900;color:#001484;">'+esc(turkcell.length)+'</div></div></td>'+
+      '<td class="mp-kpi" width="25%" style="padding:0 3px;vertical-align:top;"><div style="background:#f6f9ff;border:1px solid #dde7f6;border-radius:10px;padding:10px;"><div style="font-size:8px;color:#667399;font-weight:800;text-transform:uppercase;">Rakip SKU</div><div style="margin-top:4px;font-size:19px;font-weight:900;color:#001484;">'+esc(rivals.length)+'</div></div></td>'+
+      '<td class="mp-kpi" width="25%" style="padding:0 3px;vertical-align:top;"><div style="background:#f6f9ff;border:1px solid #dde7f6;border-radius:10px;padding:10px;"><div style="font-size:8px;color:#667399;font-weight:800;text-transform:uppercase;">24s Değişiklik</div><div style="margin-top:4px;font-size:19px;font-weight:900;color:#001484;">'+esc(fixed.stats?.total||0)+'</div></div></td>'+
+      '<td class="mp-kpi" width="25%" style="padding-left:5px;vertical-align:top;"><div style="background:#f6f9ff;border:1px solid #dde7f6;border-radius:10px;padding:10px;"><div style="font-size:8px;color:#667399;font-weight:800;text-transform:uppercase;">En İyi Değer</div><div style="margin-top:4px;font-size:17px;font-weight:900;color:#0014f2;">'+esc(tcBest?Number(tcBest.mbps_per_100tl).toLocaleString('tr-TR',{maximumFractionDigits:2}):'—')+'</div><div style="font-size:8px;color:#667399;">Mbps / 100 TL</div></div></td>'+
+    '</tr></table>'+
+    '<div style="margin-top:9px;padding:11px 13px;background:#f4f8ff;border-left:4px solid #1d5aff;border-radius:9px;font-size:11px;line-height:1.55;color:#42526e;"><b style="color:#001484;">Sabit internet sinyali:</b> '+esc(fixedSignal)+(rivalBest?'<br>Rakip en iyi değer: <b>'+esc(rivalBest.provider+' • '+rivalBest.name)+'</b>':'')+'</div>'+
+  '</td></tr>'+
+  '<tr><td class="mp-pad" style="padding:0 28px 18px;">'+
+    '<div style="font-size:12px;color:#001484;font-weight:900;margin-bottom:8px;">Superbox / Red Box • Günlük Özet</div>'+
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>'+
+      '<td class="mp-kpi" width="25%" style="padding-right:5px;vertical-align:top;"><div style="background:#fff9df;border:1px solid #f0df99;border-radius:10px;padding:10px;"><div style="font-size:8px;color:#806700;font-weight:800;text-transform:uppercase;">Superbox</div><div style="margin-top:4px;font-size:19px;font-weight:900;color:#001484;">'+esc(superbox.length)+'</div><div style="font-size:8px;color:#667399;">SKU</div></div></td>'+
+      '<td class="mp-kpi" width="25%" style="padding:0 3px;vertical-align:top;"><div style="background:#fff9df;border:1px solid #f0df99;border-radius:10px;padding:10px;"><div style="font-size:8px;color:#806700;font-weight:800;text-transform:uppercase;">Red Box</div><div style="margin-top:4px;font-size:19px;font-weight:900;color:#001484;">'+esc(redbox.length)+'</div><div style="font-size:8px;color:#667399;">SKU</div></div></td>'+
+      '<td class="mp-kpi" width="25%" style="padding:0 3px;vertical-align:top;"><div style="background:#fff9df;border:1px solid #f0df99;border-radius:10px;padding:10px;"><div style="font-size:8px;color:#806700;font-weight:800;text-transform:uppercase;">Superbox Başlangıç</div><div style="margin-top:4px;font-size:15px;font-weight:900;color:#001484;">'+esc(sb?money(sb.effective_monthly_try):'—')+'</div></div></td>'+
+      '<td class="mp-kpi" width="25%" style="padding-left:5px;vertical-align:top;"><div style="background:#fff9df;border:1px solid #f0df99;border-radius:10px;padding:10px;"><div style="font-size:8px;color:#806700;font-weight:800;text-transform:uppercase;">Red Box Başlangıç</div><div style="margin-top:4px;font-size:15px;font-weight:900;color:#001484;">'+esc(rb?money(rb.effective_monthly_try):'—')+'</div></div></td>'+
+    '</tr></table>'+
+    '<div style="margin-top:9px;padding:11px 13px;background:#fff8de;border-left:4px solid #ffca00;border-radius:9px;font-size:11px;line-height:1.55;color:#5d510f;"><b style="color:#001484;">FWA sinyali:</b> Son 24 saat değişiklik: <b>'+esc(fwa.stats?.total||0)+'</b>.'+(sb&&rb?' Efektif aylık fiyat farkı <b>'+esc(money(Number(sb.effective_monthly_try)-Number(rb.effective_monthly_try)))+'</b> (Superbox − Red Box).':'')+'</div>'+
+  '</td></tr>';
+}
+
 function emailHtml(type,ctx,attachments=[]){
   if(type==='home'||type==='fwa')return homeEmailHtml(type,ctx,attachments);
   const title=REPORT_NAMES[type]||'Markets Pulse Raporu';
@@ -182,6 +216,7 @@ function emailHtml(type,ctx,attachments=[]){
           (segmentRows||'<tr><td colspan="4" style="padding:12px;color:#667399;font-size:12px;">Segment verisi bulunamadı.</td></tr>')+
         '</table>'+
       '</td></tr>'+
+      +(type==='daily'?dailyHomeEmailBlocks(ctx):'')+
       '<tr><td class="mp-pad" style="padding:0 28px 18px;">'+
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f7f9fc;border:1px solid #e2e8f1;border-radius:12px;"><tr><td style="padding:14px 16px;">'+
           '<div style="font-size:11px;font-weight:800;color:#001484;margin-bottom:6px;">Ekli dosyalar</div>'+
