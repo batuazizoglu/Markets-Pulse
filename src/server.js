@@ -347,7 +347,7 @@ app.get('/api/reports/status', async (req,res,next)=>{try{
 
 app.get('/api/reports/:type/download', async (req,res,next)=>{try{
   const type=String(req.params.type||'');
-  if(!['daily','weekly','telsim7','evidence'].includes(type)) return res.status(400).json({error:'Unknown report type'});
+  if(!['daily','weekly','telsim7','evidence','home','fwa'].includes(type)) return res.status(400).json({error:'Unknown report type'});
   const result=type==='evidence'?await generateEvidencePack(pool,{days:7}):await generateReportPdf(pool,type,{days:type==='daily'?1:7});
   await logReportRun({report_type:type,period_start:result.ctx.period_start,period_end:result.ctx.period_end,trigger_type:'manual',delivery_status:'generated',file_name:result.fileName,file_size_bytes:result.buffer.length,meta_json:{download:true}});
   const payload=Buffer.isBuffer(result.buffer)?result.buffer:Buffer.from(result.buffer);res.set('Content-Type',result.contentType);res.set('Content-Disposition','attachment; filename="'+result.fileName+'"');res.set('Content-Length',String(payload.length));res.set('Cache-Control','no-store');res.end(payload);
@@ -355,7 +355,7 @@ app.get('/api/reports/:type/download', async (req,res,next)=>{try{
 
 app.post('/api/reports/:type/email', async (req,res,next)=>{try{
   const type=String(req.params.type||'');
-  if(!['daily','weekly','telsim7','evidence'].includes(type)) return res.status(400).json({error:'Unknown report type'});
+  if(!['daily','weekly','telsim7','evidence','home','fwa'].includes(type)) return res.status(400).json({error:'Unknown report type'});
   const result=await sendReportEmail(pool,type,{days:type==='daily'?1:7});
   await logReportRun({report_type:type,period_start:result.ctx.period_start,period_end:result.ctx.period_end,trigger_type:'manual',delivery_status:'sent',recipients:result.recipients,sent_at:new Date(),file_size_bytes:result.total_bytes,meta_json:{subject:result.subject,message_id:result.message_id}});
   res.json({ok:true,recipients:result.recipients,subject:result.subject,message_id:result.message_id,total_bytes:result.total_bytes});
