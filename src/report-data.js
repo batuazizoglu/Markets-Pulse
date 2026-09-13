@@ -4,7 +4,7 @@ import { getKktcellCatalog, buildBenchmark } from './kktcell-benchmark.js';
 export const REPORT_TZ = 'Asia/Famagusta';
 export const REPORT_NAMES = {
   daily: 'Günlük Yönetici Özeti',
-  weekly: 'Haftalık Market Pulse Raporu',
+  weekly: 'Haftalık Markets Pulse Raporu',
   telsim7: 'Son 7 Günde Telsim Ne Yaptı?',
   evidence: 'Evidence Pack'
 };
@@ -112,7 +112,7 @@ export async function buildReportContext(pool, type, options={}) {
     buildMarketPulse(pool,days),currentBenchmark(pool),sourceHealth(pool),periodChanges(pool,days),scoreBaselines(pool,days),periodEvidence(pool,days,type==='evidence'?'full':type==='daily'?'meta':'visual')
   ]);
   return {
-    type,title:REPORT_NAMES[type]||'Market Pulse Raporu',days,
+    type,title:REPORT_NAMES[type]||'Markets Pulse Raporu',days,
     period_start:periodStart.toISOString(),period_end:periodEnd.toISOString(),generated_at:new Date().toISOString(),
     market,benchmark,sources,changes,stats:changeStats(changes),score_deltas:scoreDeltas(benchmark,baseline),evidence
   };
