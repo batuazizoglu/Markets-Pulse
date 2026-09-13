@@ -76,6 +76,47 @@ function homeBodyHtml(ctx){
     '<h2>Kaynak Sağlığı</h2><table><thead><tr><th>Kaynak</th><th>Sağlayıcı</th><th>Durum</th><th>HTTP</th><th>Okunan</th><th>Yanıt</th></tr></thead><tbody>'+sourceRows+'</tbody></table>';
 }
 
+function dailyHomeSummaryHtml(ctx){
+  const d=ctx.daily_home;if(!d)return '';
+  const fixed=d.fixed||{},fwa=d.fwa||{};
+  const fp=fixed.products||[],fw=fwa.products||[];
+  const turkcell=fp.filter(x=>x.provider==='Turkcell Ev İnterneti');
+  const rivals=fp.filter(x=>x.provider!=='Turkcell Ev İnterneti');
+  const superbox=fw.filter(x=>x.brand==='Superbox');
+  const redbox=fw.filter(x=>x.brand==='Red Box');
+  const cheapest=arr=>[...arr].filter(x=>x.effective_monthly_try!=null).sort((a,b)=>Number(a.effective_monthly_try)-Number(b.effective_monthly_try))[0]||null;
+  const bestValue=arr=>[...arr].filter(x=>x.mbps_per_100tl!=null).sort((a,b)=>Number(b.mbps_per_100tl)-Number(a.mbps_per_100tl))[0]||null;
+  const tcBest=bestValue(turkcell),rivalBest=bestValue(rivals),sbCheap=cheapest(superbox),rbCheap=cheapest(redbox);
+  const fixedChangeRows=(fixed.changes||[]).slice(0,5).map(x=>'<tr><td>'+esc(localStamp(x.detected_at))+'</td><td>'+esc(x.provider||'—')+'</td><td>'+esc(x.product_name||'Paket')+'</td><td>'+esc(changeLabel(x))+'</td></tr>').join('');
+  const fwaChangeRows=(fwa.changes||[]).slice(0,5).map(x=>'<tr><td>'+esc(localStamp(x.detected_at))+'</td><td>'+esc(x.brand||x.provider||'—')+'</td><td>'+esc(x.product_name||'Paket')+'</td><td>'+esc(changeLabel(x))+'</td></tr>').join('');
+  const opportunity=(fixed.opportunities||[])[0];
+  const sbPrice=sbCheap?money(sbCheap.effective_monthly_try):'—',rbPrice=rbCheap?money(rbCheap.effective_monthly_try):'—';
+  return '<div class="pagebreak"></div>'+
+    '<h2>Turkcell Ev İnterneti • Günlük Özet</h2>'+
+    '<div class="grid">'+
+      '<div class="kpi"><span>Turkcell Ev İnterneti</span><strong>'+esc(turkcell.length)+'</strong><small>güncel SKU</small></div>'+
+      '<div class="kpi"><span>Rakip Sabit İnternet</span><strong>'+esc(rivals.length)+'</strong><small>güncel SKU</small></div>'+
+      '<div class="kpi"><span>24 Saat Değişiklik</span><strong>'+esc(fixed.stats?.total||0)+'</strong><small>'+esc(fixed.stats?.high||0)+' yüksek • '+esc(fixed.stats?.critical||0)+' kritik</small></div>'+
+      '<div class="kpi"><span>Turkcell En İyi Değer</span><strong>'+esc(tcBest?nfmt(tcBest.mbps_per_100tl,2):'—')+'</strong><small>'+esc(tcBest?.name||'Mbps / 100 TL')+'</small></div>'+
+    '</div>'+
+    '<div class="callout"><b>Sabit İnternet Sinyali</b><br>'+
+      (opportunity?esc((opportunity.kktcell?.name||'Turkcell Ev İnterneti')+' ↔ '+(opportunity.competitor?.provider||'Rakip')+' '+(opportunity.competitor?.name||'')+' • Home Value Score farkı '+((opportunity.score_gap>0?'+':'')+(opportunity.score_gap??0))):'Bugün karşılaştırılabilir yeni bir sabit internet sinyali oluşmadı.')+
+      (rivalBest?'<br><span class="muted">Rakip en iyi değer: '+esc(rivalBest.provider+' • '+rivalBest.name+' • '+nfmt(rivalBest.mbps_per_100tl,2)+' Mbps/100 TL')+'</span>':'')+
+    '</div>'+
+    '<table><thead><tr><th>Tarih</th><th>Sağlayıcı</th><th>Ürün</th><th>Hareket</th></tr></thead><tbody>'+(fixedChangeRows||'<tr><td colspan="4">Son 24 saatte sabit internet tarafında anlamlı değişiklik yok.</td></tr>')+'</tbody></table>'+
+    '<h2>Superbox / Red Box • Günlük Özet</h2>'+
+    '<div class="grid">'+
+      '<div class="kpi"><span>Superbox</span><strong>'+esc(superbox.length)+'</strong><small>KKTCELL FWA SKU</small></div>'+
+      '<div class="kpi"><span>Red Box</span><strong>'+esc(redbox.length)+'</strong><small>Telsim FWA SKU</small></div>'+
+      '<div class="kpi"><span>24 Saat Değişiklik</span><strong>'+esc(fwa.stats?.total||0)+'</strong><small>'+esc(fwa.stats?.high||0)+' yüksek • '+esc(fwa.stats?.critical||0)+' kritik</small></div>'+
+      '<div class="kpi"><span>Başlangıç Fiyatı</span><strong>'+esc(sbPrice)+'</strong><small>Superbox • Red Box '+esc(rbPrice)+'</small></div>'+
+    '</div>'+
+    '<div class="callout yellow"><b>FWA Sinyali</b><br>Superbox ve Red Box mobil tarifelerden ve sabit genişbanttan ayrı rekabet kümesinde izlenir.'+
+      (sbCheap&&rbCheap?'<br><span class="muted">Efektif aylık fiyat farkı: '+esc(money(Number(sbCheap.effective_monthly_try)-Number(rbCheap.effective_monthly_try)))+' (Superbox − Red Box)</span>':'')+
+    '</div>'+
+    '<table><thead><tr><th>Tarih</th><th>Marka</th><th>Ürün</th><th>Hareket</th></tr></thead><tbody>'+(fwaChangeRows||'<tr><td colspan="4">Son 24 saatte Superbox / Red Box tarafında anlamlı değişiklik yok.</td></tr>')+'</tbody></table>';
+}
+
 function bodyHtml(ctx){
   const m=ctx.market,b=ctx.benchmark,s=ctx.stats;
   const scoreTable=(ctx.score_deltas||[]).map(x=>{const d=x.delta==null?'—':(x.delta>0?'+':'')+x.delta;const cls=x.delta==null?'':x.delta>=0?'good':'bad';return '<tr><td><b>'+esc(x.segment)+'</b></td><td>'+esc(x.current==null?'—':x.current+'/100')+'</td><td>'+esc(x.baseline==null?'—':x.baseline+'/100')+'</td><td class="'+cls+'">'+esc(d)+'</td><td>'+esc(x.level||'—')+'</td><td>'+esc(x.confidence||'—')+'</td></tr>';}).join('');
@@ -87,6 +128,7 @@ function bodyHtml(ctx){
   if(ctx.type!=='daily'){
     html+='<div class="pagebreak"></div><h2>Son '+esc(ctx.days)+' Günde Telsim Ne Yaptı?</h2><table><thead><tr><th>Tarih</th><th>Paket</th><th>Hareket</th><th>Önce</th><th>Sonra</th><th>Önem</th></tr></thead><tbody>'+changes+'</tbody></table>'+evidenceHtml(ctx,ctx.type==='weekly'?4:6);
   }
+  if(ctx.type==='daily')html+=dailyHomeSummaryHtml(ctx);
   html+='<h2>Kaynak Sağlığı</h2><table><thead><tr><th>Kaynak</th><th>Durum</th><th>HTTP</th><th>Okunan</th><th>Aktif</th><th>Yanıt</th></tr></thead><tbody>'+sourceRows+'</tbody></table>';
   return html;
 }
