@@ -333,7 +333,7 @@ app.get('/api/reports/:type/download', async (req,res,next)=>{try{
   if(!['daily','weekly','telsim7','evidence'].includes(type)) return res.status(400).json({error:'Unknown report type'});
   const result=type==='evidence'?await generateEvidencePack(pool,{days:7}):await generateReportPdf(pool,type,{days:type==='daily'?1:7});
   await logReportRun({report_type:type,period_start:result.ctx.period_start,period_end:result.ctx.period_end,trigger_type:'manual',delivery_status:'generated',file_name:result.fileName,file_size_bytes:result.buffer.length,meta_json:{download:true}});
-  res.set('Content-Type',result.contentType);res.set('Content-Disposition','attachment; filename="'+result.fileName+'"');res.set('Cache-Control','no-store');res.send(result.buffer);
+  const payload=Buffer.isBuffer(result.buffer)?result.buffer:Buffer.from(result.buffer);res.set('Content-Type',result.contentType);res.set('Content-Disposition','attachment; filename="'+result.fileName+'"');res.set('Content-Length',String(payload.length));res.set('Cache-Control','no-store');res.end(payload);
 }catch(e){next(e)}});
 
 app.post('/api/reports/:type/email', async (req,res,next)=>{try{
