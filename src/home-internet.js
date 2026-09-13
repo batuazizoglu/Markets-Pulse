@@ -530,7 +530,7 @@ export async function scanHomeInternet(pool){
       const scanId=ins.rows[0].id;
       const changes=fetched.ok&&prev.rows.length?await writeChanges(pool,source,scanId,prev.rows[0].payload_json||[],fetched.products):0;
       results.push({...source,...fetched,changes,captured_at:ins.rows[0].captured_at});
-      console.log('[home-internet]',source.slug,JSON.stringify({ok:fetched.ok,parsed:fetched.products.length,changes,response_ms:fetched.response_ms,error:fetched.error||null}));
+      console.log('[home-internet]',source.slug,JSON.stringify({ok:fetched.ok,parsed:fetched.products.length,changes,response_ms:fetched.response_ms,error:fetched.error||null,meta:fetched.meta||{}}));
     }
     return {ok:results.every(x=>x.ok),scanned_at:new Date().toISOString(),sources:results.map(x=>({slug:x.slug,provider:x.provider,name:x.name,url:x.url,technology:x.technology,ownership_group:x.ownership_group,ok:x.ok,http_status:x.http_status,response_ms:x.response_ms,parsed_count:x.products.length,changes:x.changes,meta:x.meta,error:x.error||null}))};
   }finally{running=false}
