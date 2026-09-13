@@ -70,13 +70,14 @@ function parseKktcell(html,source){
   $('a').each((_,el)=>{
     const raw=clean($(el).text());
     if(!raw||raw.length<12||raw.length>1200)return;
-    if(!/Superbox|Life(?: Extra)?\b|Dedike WiFi|Ev İnterneti/i.test(raw))return;
+    if(!/Superbox|Life(?: Extra)?\b|Dedike WiFi|Ev İnterneti|WiFi|GNÇ|Kıdemli|Oyuncu|Premium/i.test(raw))return;
     const priceM=raw.match(/(\d[\d.]*(?:,\d+)?)\s*TL\s*\/\s*AY/i)||raw.match(/(\d[\d.]*(?:,\d+)?)\s*TL\b/i);
     if(!priceM)return;
     let name=raw.split(/(?=\d+(?:[.,]\d+)?\s*(?:MBPS|GB|INTERNET))/i)[0].trim();
     name=name.replace(/^(Yeni|Popüler)\s+/i,'').replace(/\s+Faturalı$/i,'').trim();
     if(!name||name.length>140)return;
     const speedM=raw.match(/(\d+(?:[.,]\d+)?)\s*MBPS\b/i);
+    if(!/Superbox/i.test(raw)&&!speedM)return;
     const dataM=!speedM?raw.match(/(\d+(?:[.,]\d+)?)\s*GB\b/i):null;
     const durM=raw.match(/(\d+)\s*Aylık Abonelik/i);
     const annual=/YILLIK ABONELİK/i.test(raw);
@@ -373,7 +374,7 @@ function parseDynamicLifecellVariant(source,variant){
       const durationM=raw.match(/(1|3|4|6|12|14|24)\s*Ay/i);
       const duration=durationM?Number(durationM[1]):1;
       rows.push(offer({
-        source_slug:source.slug,provider:source.provider,ownership_group:source.ownership_group,source_url:source.url,
+        source_slug:source.slug,provider:'Turkcell Ev İnterneti',brand:'Turkcell Ev İnterneti',product_family:'fixed',ownership_group:source.ownership_group,source_url:source.url,
         name,technology,speed_down_mbps:speed,speed_up_mbps:null,data_limit_gb:null,unlimited:!/kota|GB\s*kotalı/i.test(raw),
         duration_months:duration,bonus_months:bonusDefault,price_monthly_try:n(priceM[1]),install_fee_try:freeInstall?0:null,
         features:[freeInstall?'Ücretsiz kurulum':null,bonusDefault?bonusDefault+' ay hediye':null,'Hız dropdown fiyatı'].filter(Boolean),
@@ -624,9 +625,15 @@ let migrationCleanupDone=false;
 async function cleanupHomeInternetMigrationNoise(pool){
   if(migrationCleanupDone)return;
   await pool.query(`DELETE FROM home_internet_changes
-    WHERE source_slug='lifecell-digital-home'
+    WHERE (
+      source_slug='lifecell-digital-home'
       AND detected_at >= TIMESTAMPTZ '2026-09-13 13:20:00+00'
-      AND detected_at < TIMESTAMPTZ '2026-09-13 13:45:00+00'`);
+      AND detected_at < TIMESTAMPTZ '2026-09-13 13:45:00+00'
+    ) OR (
+      source_slug='kktcell-home'
+      AND detected_at >= TIMESTAMPTZ '2026-09-13 14:03:00+00'
+      AND detected_at < TIMESTAMPTZ '2026-09-13 14:06:00+00'
+    )`);
   migrationCleanupDone=true;
 }
 export async function scanHomeInternet(pool){
@@ -650,6 +657,15 @@ export async function scanHomeInternet(pool){
       results.push({...source,...fetched,changes,captured_at:ins.rows[0].captured_at});
       console.log('[home-internet]',source.slug,JSON.stringify({ok:fetched.ok,parsed:fetched.products.length,changes,response_ms:fetched.response_ms,error:fetched.error||null,meta:fetched.meta||{}}));
     }
+    const scanProducts=results.flatMap(x=>x.products||[]);
+    console.log('[home-internet-summary]',JSON.stringify({
+      total:scanProducts.length,
+      fixed:scanProducts.filter(x=>(x.product_family||'fixed')==='fixed').length,
+      fwa:scanProducts.filter(x=>x.product_family==='fwa').length,
+      turkcell_home:scanProducts.filter(x=>x.provider==='Turkcell Ev İnterneti'&&x.product_family!=='fwa').length,
+      superbox:scanProducts.filter(x=>x.brand==='Superbox').length,
+      redbox:scanProducts.filter(x=>x.brand==='Red Box').length
+    }));
     return {ok:results.every(x=>x.ok),scanned_at:new Date().toISOString(),sources:results.map(x=>({slug:x.slug,provider:x.provider,name:x.name,url:x.url,technology:x.technology,ownership_group:x.ownership_group,ok:x.ok,http_status:x.http_status,response_ms:x.response_ms,parsed_count:x.products.length,changes:x.changes,meta:x.meta,error:x.error||null}))};
   }finally{running=false}
 }
