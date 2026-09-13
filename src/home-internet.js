@@ -120,8 +120,8 @@ function parseExtendTable(html,source){
 function parseTowernet(html,source){
   const $=cheerio.load(html);$('script,style,noscript,svg').remove();
   const text=clean($.root().text());
-  const adslAt=text.search(/ADSL\s*Paketler/i);
-  const matches=[...text.matchAll(/(\d+)\s*MBIT\s+(\d[\d.]*)\s*\/\s*aylık/ig)];
+  const adslAt=text.search(/A\s*D\s*S\s*L.*P\s*a\s*k\s*e\s*t/i);
+  const matches=[...text.matchAll(/(\d+)\s*M\s*B\s*[Iİıi]\s*T\s*(\d[\d.]*)\s*\/\s*aylık/ig)];
   const out=[];
   for(let i=0;i<matches.length;i++){
     const m=matches[i],start=m.index||0,end=i+1<matches.length?(matches[i+1].index||text.length):text.length;
