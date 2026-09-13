@@ -527,7 +527,7 @@ async function fetchLifecellDynamic(source){
         unique_products:rows.length,
         custom_speed_button_count:customButtonCount,
         custom_options_examined:customOptionsExamined,
-        speed_options:speedSelects.map(s=>s.options.map(o=>o.text).filter(Boolean)).slice(0,30),custom_candidates:customDiagnostic.candidates,body_speed_samples:customDiagnostic.body_speed_samples
+        speed_options:speedSelects.map(s=>s.options.map(o=>o.text).filter(Boolean)).slice(0,30),custom_candidate_count:customDiagnostic.candidates.length
       }
     };
   }catch(e){
@@ -587,10 +587,20 @@ async function writeChanges(pool,source,scanId,prevRows,nextRows){
 }
 
 let running=false;
+let migrationCleanupDone=false;
+async function cleanupHomeInternetMigrationNoise(pool){
+  if(migrationCleanupDone)return;
+  await pool.query(`DELETE FROM home_internet_changes
+    WHERE source_slug='lifecell-digital-home'
+      AND detected_at >= TIMESTAMPTZ '2026-09-13 13:20:00+00'
+      AND detected_at < TIMESTAMPTZ '2026-09-13 13:45:00+00'`);
+  migrationCleanupDone=true;
+}
 export async function scanHomeInternet(pool){
   if(running)return {ok:false,skipped:true,reason:'home internet scan already running'};
   running=true;
   try{
+    await cleanupHomeInternetMigrationNoise(pool);
     const results=[];
     for(const source of HOME_INTERNET_SOURCES){
       const fetched=await fetchSource(source);
@@ -601,7 +611,9 @@ export async function scanHomeInternet(pool){
         fetched.ok?'ok':'error',fetched.http_status,fetched.response_ms,fetched.products.length,JSON.stringify(fetched.products),JSON.stringify(fetched.meta||{}),fetched.error||null
       ]);
       const scanId=ins.rows[0].id;
-      const changes=fetched.ok&&prev.rows.length?await writeChanges(pool,source,scanId,prev.rows[0].payload_json||[],fetched.products):0;
+      const previousProducts=prev.rows.length&&Array.isArray(prev.rows[0].payload_json)?prev.rows[0].payload_json:[];
+      const parserBaseline=previousProducts.length===0&&fetched.products.length>0;
+      const changes=fetched.ok&&prev.rows.length&&!parserBaseline?await writeChanges(pool,source,scanId,previousProducts,fetched.products):0;
       results.push({...source,...fetched,changes,captured_at:ins.rows[0].captured_at});
       console.log('[home-internet]',source.slug,JSON.stringify({ok:fetched.ok,parsed:fetched.products.length,changes,response_ms:fetched.response_ms,error:fetched.error||null,meta:fetched.meta||{}}));
     }
