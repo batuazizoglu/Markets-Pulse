@@ -115,4 +115,22 @@ CREATE TABLE IF NOT EXISTS competitive_position_history (
 );
 CREATE INDEX IF NOT EXISTS idx_comp_position_segment_time ON competitive_position_history(segment,bucket_at DESC);
 CREATE INDEX IF NOT EXISTS idx_comp_position_time ON competitive_position_history(bucket_at DESC);
+
+CREATE TABLE IF NOT EXISTS report_runs (
+  id BIGSERIAL PRIMARY KEY,
+  report_type TEXT NOT NULL,
+  period_start TIMESTAMPTZ,
+  period_end TIMESTAMPTZ,
+  generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  trigger_type TEXT NOT NULL DEFAULT 'manual',
+  delivery_status TEXT NOT NULL DEFAULT 'generated',
+  recipients TEXT[],
+  sent_at TIMESTAMPTZ,
+  file_name TEXT,
+  file_size_bytes BIGINT,
+  error TEXT,
+  meta_json JSONB
+);
+CREATE INDEX IF NOT EXISTS idx_report_runs_type_time ON report_runs(report_type,generated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_report_runs_delivery ON report_runs(delivery_status,generated_at DESC);
 `;
