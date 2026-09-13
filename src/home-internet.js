@@ -6,6 +6,9 @@ export const HOME_INTERNET_SOURCES=[
   {slug:'kktcell-home',provider:'KKTCELL',name:'Kuzey Kıbrıs Turkcell İnternet',url:'https://www.kktcell.com/internet-paketleri',technology:'4.5G / Ev İnterneti',ownership_group:'Kuzey Kıbrıs Turkcell',parser:'kktcell'},
   {slug:'extend-wdsl',provider:'Extend',name:'Extend WDSL',url:'https://www.extendbroadband.com/urunler-wdsl.php',technology:'WDSL',ownership_group:'Aydoğan Communication Ltd.',parser:'extend-table'},
   {slug:'extend-fiber',provider:'Extend',name:'Extend FiberNET',url:'https://www.extendbroadband.com/urunler-fibernet.php',technology:'Fiber',ownership_group:'Aydoğan Communication Ltd.',parser:'extend-table'},
+  {slug:'telsim-home',provider:'Telsim',name:'Vodafone Evde İnternet',url:'https://www.kktctelsim.com/tr/internet/evde-internet-ve-red-box/vodafone-evde-internet',technology:'WDSL / ADSL',ownership_group:'KKTC Telsim',parser:'telsim-home'},
+  {slug:'freenet-home',provider:'FreeNet',name:'FreeNet Ev İnterneti',url:'https://freenetcyp.com/',technology:'WDSL',ownership_group:'FreeNet',parser:'freenet'},
+  {slug:'fixnet-home',provider:'FixNet',name:'FixNet Broadband',url:'https://www.fixnetbroadband.com/',technology:'WDSL / Fiber',ownership_group:'FixNet Broadband',parser:'fixnet'},
   {slug:'towernet-home',provider:'Towernet',name:'Towernet Ev İnterneti',url:'https://towernet.net/paketler/',technology:'WDSL / ADSL',ownership_group:'Towernet',parser:'towernet'},
   {slug:'nethouse-home',provider:'Nethouse',name:'Nethouse Bireysel',url:'https://nethouse.net/tr/',technology:'WDSL / ADSL / VDSL / Fiber',ownership_group:'Netonline Bilişim Şti. Ltd.',parser:'discovery'},
   {slug:'multimax-home',provider:'Multimax',name:'Multimax Bireysel',url:'https://www.mmcyp.com/',technology:'WDSL / Fiber / Apartman',ownership_group:'Netonline Bilişim Şti. Ltd.',parser:'discovery'}
@@ -117,6 +120,86 @@ function parseExtendTable(html,source){
   return out;
 }
 
+function parseTelsimHome(html,source){
+  const $=cheerio.load(html);$('script,style,noscript,svg').remove();
+  const text=clean($.root().text());
+  const hits=[...text.matchAll(/Evde\s+(\d+)\b/ig)];
+  const out=[];
+  for(let i=0;i<hits.length;i++){
+    const start=hits[i].index||0,end=i+1<hits.length?(hits[i+1].index||text.length):text.length;
+    const seg=text.slice(Math.max(0,start-90),Math.min(text.length,end));
+    const speed=n(hits[i][1]);if(!speed)continue;
+    const type=/Tarifeye Ek/i.test(seg)?'Tarifeye Ek':/Peşin/i.test(seg)?'Peşin':'Evde İnternet';
+    const dm=seg.match(/(1|3|6|12)\s*Ay\s*(?:Peşin|Sözünüze|Paket)?/i)||seg.match(/(1|3|6|12)\s*Ay/i);
+    const duration=dm?Number(dm[1]):1;
+    const bm=seg.match(/\+\s*(\d+)\s*Ay\s*Hediye/i);const bonus=bm?Number(bm[1]):0;
+    const pm=seg.match(/₺\s*(\d[\d.]*)\s*\/\s*ay/i);
+    const tm=!pm?seg.match(/₺\s*(\d[\d.]*)/i):null;
+    const price=pm?n(pm[1]):null,total=tm?n(tm[1]):null;
+    if(price==null&&total==null)continue;
+    const tech=/ADSL/i.test(seg)?'ADSL':'WDSL';
+    out.push(offer({
+      source_slug:source.slug,provider:source.provider,ownership_group:source.ownership_group,source_url:source.url,
+      name:type+' Evde '+speed,technology:tech,speed_down_mbps:speed,speed_up_mbps:null,data_limit_gb:null,unlimited:true,
+      duration_months:duration,bonus_months:bonus,price_monthly_try:price,total_price_try:total,
+      install_fee_try:/Kurulum Ücretsiz/i.test(seg)?0:null,
+      features:[type,/Kurulum Ücretsiz/i.test(seg)?'Kurulum ücretsiz':null,bonus?bonus+' ay hediye':null].filter(Boolean),
+      raw_text:seg.slice(0,700),product_key:[source.slug,type,speed,duration,bonus].join('|')
+    }));
+  }
+  const uniq=new Map();for(const x of out)if(!uniq.has(x.product_key))uniq.set(x.product_key,x);return [...uniq.values()];
+}
+
+function parseFreeNet(html,source){
+  const $=cheerio.load(html);$('script,style,noscript,svg').remove();const text=clean($.root().text());
+  const defs=[
+    {label:'Freenet Lite',speed:5},{label:'Freenet Standart',speed:10},{label:'Freenet Platinum',speed:15},
+    {label:'Freenet Premium Plus 20',speed:20},{label:'Freenet Premium Plus 30',speed:30}
+  ];
+  const out=[];
+  for(let i=0;i<defs.length;i++){
+    const d=defs[i],start=text.indexOf(d.label);if(start<0)continue;
+    const next=defs.slice(i+1).map(x=>text.indexOf(x.label,start+1)).filter(x=>x>start).sort((a,b)=>a-b)[0]||Math.min(text.length,start+1200);
+    const seg=text.slice(start,next);
+    const terms=[
+      {d:1,b:0,re:/([\d.]+)₺\s*1\s*Aylık/i},
+      {d:3,b:0,re:/([\d.]+)₺\s*3\s*Aylık/i},
+      {d:6,b:/6\s*Aylık\s*\+1\s*Ay\s*Hediye/i.test(seg)?1:0,re:/([\d.]+)₺\s*6\s*Aylık/i},
+      {d:12,b:/12\s*Aylık\s*\+2\s*Ay\s*Hediye/i.test(seg)?2:0,re:/([\d.]+)₺\s*12\s*Aylık/i}
+    ];
+    for(const t of terms){const m=seg.match(t.re);if(!m)continue;out.push(offer({
+      source_slug:source.slug,provider:source.provider,ownership_group:source.ownership_group,source_url:source.url,
+      name:d.label,technology:'WDSL',speed_down_mbps:d.speed,speed_up_mbps:null,data_limit_gb:null,unlimited:true,
+      duration_months:t.d,bonus_months:t.b,total_price_try:n(m[1]),install_fee_try:null,
+      features:['Sınırsız','Statik IP / VPN avantajı'],raw_text:seg.slice(0,600),
+      product_key:[source.slug,keyPart(d.label),t.d,t.b].join('|')
+    }))}
+  }
+  return out;
+}
+
+function parseFixNet(html,source){
+  const $=cheerio.load(html);$('script,style,noscript,svg').remove();const out=[];
+  $('h3').each((_,el)=>{
+    const name=clean($(el).text());if(!name||!/Flex|Exclusive|Gamer|Streamer|İş/i.test(name))return;
+    let node=$(el),raw=name;
+    for(let i=0;i<5;i++){node=node.parent();const t=clean(node.text());if(t.length>=80&&t.length<=1600){raw=t;if(/Mbps|Mbit/i.test(t)&&/₺/i.test(t))break}}
+    const dm=raw.match(/(\d+)\s*Mbit(?:'e kadar|\s*Sabit|\b)/i)||raw.match(/(\d+)\s*Mbps\s*İndirme/i);
+    const um=raw.match(/(\d+)\s*Mbps\s*Yükleme/i);
+    const priceM=raw.match(/([\d.]+)₺/i);if(!dm||!priceM)return;
+    const durationM=raw.match(/(\d+)\s*Ay\s*Paket/i);const duration=durationM?Number(durationM[1]):1;
+    const bonusM=raw.match(/\+\s*(\d+)\s*AY\s*HEDİYE/i);const bonus=bonusM?Number(bonusM[1]):0;
+    out.push(offer({
+      source_slug:source.slug,provider:source.provider,ownership_group:source.ownership_group,source_url:source.url,
+      name,technology:'WDSL / Fiber',speed_down_mbps:n(dm[1]),speed_up_mbps:um?n(um[1]):null,data_limit_gb:null,unlimited:/Limitsiz|Kotasız/i.test(raw),
+      duration_months:duration,bonus_months:bonus,total_price_try:n(priceM[1]),install_fee_try:null,
+      features:[/Sabit Hız Garantisi/i.test(raw)?'Sabit hız garantisi':null,/Düşük Ping/i.test(raw)?'Düşük ping':null,/Yüksek Upload/i.test(raw)?'Yüksek upload':null].filter(Boolean),
+      raw_text:raw.slice(0,900),product_key:[source.slug,keyPart(name),duration,bonus].join('|')
+    }));
+  });
+  const uniq=new Map();for(const x of out)if(!uniq.has(x.product_key))uniq.set(x.product_key,x);return [...uniq.values()];
+}
+
 function parseTowernet(html,source){
   const $=cheerio.load(html);$('script,style,noscript,svg').remove();
   const text=clean($.root().text());
@@ -161,6 +244,9 @@ function discoveryMeta(html,source){
 function parserFor(source,html){
   if(source.parser==='kktcell')return {products:parseKktcell(html,source),meta:discoveryMeta(html,source)};
   if(source.parser==='extend-table')return {products:parseExtendTable(html,source),meta:discoveryMeta(html,source)};
+  if(source.parser==='telsim-home')return {products:parseTelsimHome(html,source),meta:discoveryMeta(html,source)};
+  if(source.parser==='freenet')return {products:parseFreeNet(html,source),meta:discoveryMeta(html,source)};
+  if(source.parser==='fixnet')return {products:parseFixNet(html,source),meta:discoveryMeta(html,source)};
   if(source.parser==='towernet')return {products:parseTowernet(html,source),meta:discoveryMeta(html,source)};
   return {products:[],meta:discoveryMeta(html,source)};
 }
