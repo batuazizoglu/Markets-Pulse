@@ -23,7 +23,7 @@ function auth(req,res,next){
     const [u,p]=Buffer.from(hdr.slice(6),'base64').toString().split(':');
     if (u===user && p===pass) return next();
   }
-  res.set('WWW-Authenticate','Basic realm="Market Pulse"');
+  res.set('WWW-Authenticate','Basic realm="Markets Pulse"');
   return res.status(401).send('Authentication required');
 }
 app.use(auth);
@@ -357,7 +357,7 @@ app.use((err,req,res,next)=>{console.error(err);res.status(500).json({error:err?
 
 const port=Number(process.env.PORT||3000);
 await initDb();
-app.listen(port,()=>console.log(`Market Pulse / Telsim Watch listening on ${port}`));
+app.listen(port,()=>console.log(`Markets Pulse / Telsim Watch listening on ${port}`));
 const timezone=process.env.TZ||'Asia/Famagusta';
 const schedule=process.env.SCAN_CRON || '0 * * * *';
 cron.schedule(schedule,()=>scanAll().catch(e=>console.error('scheduled scan failed',e)),{timezone});
