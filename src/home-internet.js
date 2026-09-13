@@ -456,7 +456,7 @@ async function fetchLifecellDynamic(source){
       }
     }
 
-    const customButtonCount=await page.$eval('button.speed-button',els=>els.length).catch(()=>0);
+    const customButtonCount=await page.$$eval('button.speed-button',els=>els.length).catch(()=>0);
     let customOptionsExamined=0;
     if(customButtonCount){
       const readCard=async idx=>page.evaluate(idx=>{
