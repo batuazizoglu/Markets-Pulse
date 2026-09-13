@@ -10,7 +10,7 @@ function slugStamp(v=new Date()){return new Intl.DateTimeFormat('sv-SE',{timeZon
 function changeLabel(c){if(c.change_type==='added')return 'Yeni paket';if(c.change_type==='removed')return 'Paket kaldırıldı';return c.field_name||'Alan değişikliği';}
 
 function logoSvg(){
-  return '<svg width="210" height="48" viewBox="0 0 420 82" xmlns="http://www.w3.org/2000/svg"><g transform="translate(4 13)"><circle cx="7" cy="45" r="6" fill="#0014F2"/><rect x="20" y="31" width="13" height="20" rx="6.5" fill="#1D5AFF"/><rect x="39" y="19" width="13" height="32" rx="6.5" fill="#1D5AFF"/><rect x="58" y="5" width="13" height="46" rx="6.5" fill="#00C2FF"/><circle cx="82" cy="45" r="7" fill="#FFCA00"/></g><text x="106" y="48" font-family="Arial,sans-serif" font-size="34" font-weight="800" letter-spacing="-1.5" fill="#001484">Market</text><text x="217" y="48" font-family="Arial,sans-serif" font-size="34" font-weight="800" letter-spacing="-1.5" fill="#00C2FF">Pulse</text><text x="218" y="68" font-family="Arial,sans-serif" font-size="9.5" font-weight="700" letter-spacing="4.8" fill="#001484">BY TURKCELL</text></svg>';
+  return '<svg width="210" height="48" viewBox="0 0 420 82" xmlns="http://www.w3.org/2000/svg"><g transform="translate(4 13)"><circle cx="7" cy="45" r="6" fill="#0014F2"/><rect x="20" y="31" width="13" height="20" rx="6.5" fill="#1D5AFF"/><rect x="39" y="19" width="13" height="32" rx="6.5" fill="#1D5AFF"/><rect x="58" y="5" width="13" height="46" rx="6.5" fill="#00C2FF"/><circle cx="82" cy="45" r="7" fill="#FFCA00"/></g><text x="106" y="48" font-family="Arial,sans-serif" font-size="34" font-weight="800" letter-spacing="-1.5" fill="#001484">Markets</text><text x="217" y="48" font-family="Arial,sans-serif" font-size="34" font-weight="800" letter-spacing="-1.5" fill="#00C2FF">Pulse</text><text x="218" y="68" font-family="Arial,sans-serif" font-size="9.5" font-weight="700" letter-spacing="4.8" fill="#001484">BY TURKCELL</text></svg>';
 }
 function css(){
   return '@page{size:A4;margin:14mm 13mm 15mm}*{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;margin:0;color:#001484;background:#fff;font-size:10px;line-height:1.42}.header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #00C2FF;padding-bottom:9px;margin-bottom:14px}.meta{text-align:right;color:#667399;font-size:8.5px}.meta b{display:block;color:#001484;font-size:10px}h1{font-size:22px;margin:0 0 4px;color:#001484}h2{font-size:13px;margin:17px 0 8px;color:#001484}h3{font-size:10px;margin:0 0 4px}.sub{color:#667399;margin-bottom:8px}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}.kpi{border:1px solid #dce5f2;border-radius:8px;padding:8px;background:#f7f9fc;min-height:58px}.kpi span{display:block;font-size:7.5px;text-transform:uppercase;color:#667399;font-weight:700}.kpi strong{display:block;font-size:17px;margin-top:3px;color:#001484}.kpi small{color:#667399;font-size:7px}.callout{border-left:4px solid #1D5AFF;background:#f4f8ff;padding:9px 10px;border-radius:6px;margin:9px 0}.callout.yellow{border-left-color:#FFCA00;background:#fff9df}table{width:100%;border-collapse:collapse;margin:5px 0 11px;font-size:8px}th{background:#001484;color:#fff;text-align:left;padding:5px 6px}td{border-bottom:1px solid #e3e9f2;padding:5px 6px;vertical-align:top}.good{color:#00835f;font-weight:700}.bad{color:#c7342d;font-weight:700}.muted{color:#667399}.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}.pill{display:inline-block;padding:2px 5px;border-radius:999px;background:#eef4ff;color:#0014F2;font-size:7px;font-weight:700;margin-right:3px}.item{border-bottom:1px solid #e5eaf1;padding:6px 0}.item:last-child{border-bottom:0}.score{font-size:16px;font-weight:800;color:#0014F2}.pagebreak{break-before:page}.evidence{display:grid;grid-template-columns:1fr 1fr;gap:8px}.evidence-card{border:1px solid #dce5f2;border-radius:7px;overflow:hidden}.evidence-card img{width:100%;height:150px;object-fit:cover;object-position:top;display:block}.evidence-card div{padding:5px 7px;color:#667399;font-size:7.5px}.footer{position:fixed;bottom:5mm;left:13mm;right:13mm;font-size:7px;color:#8190ad;display:flex;justify-content:space-between;border-top:1px solid #e5eaf1;padding-top:3px}';
@@ -46,7 +46,20 @@ export async function generateReportPdf(pool,type,options={}){
   const ctx=await buildReportContext(pool,type,options),html=renderReportHtml(ctx),browser=await getBrowser(),page=await browser.newPage();
   try{
     await page.setContent(html,{waitUntil:'networkidle0',timeout:60000});
-    const buffer=await page.pdf({format:'A4',printBackground:true,preferCSSPageSize:true,margin:{top:'0',right:'0',bottom:'0',left:'0'}});
-    return {buffer,ctx,fileName:'market-pulse-'+type+'-'+slugStamp(ctx.period_end)+'.pdf',contentType:'application/pdf'};
+    await page.emulateMediaType('screen');
+    await page.evaluate(async()=>{if(document.fonts&&document.fonts.ready)await document.fonts.ready});
+    const metrics=await page.evaluate(()=>({
+      textLength:(document.body?.innerText||'').trim().length,
+      htmlLength:(document.body?.innerHTML||'').length,
+      height:document.documentElement?.scrollHeight||0
+    }));
+    if(metrics.textLength<80 || metrics.htmlLength<200){
+      throw new Error('PDF render content is unexpectedly empty: '+JSON.stringify(metrics));
+    }
+    const pdfBytes=await page.pdf({format:'A4',printBackground:true,preferCSSPageSize:true,margin:{top:'0',right:'0',bottom:'0',left:'0'}});
+    const buffer=Buffer.isBuffer(pdfBytes)?pdfBytes:Buffer.from(pdfBytes);
+    if(buffer.length<5000) throw new Error('Generated PDF is unexpectedly small: '+buffer.length+' bytes');
+    console.log('[report-pdf]',JSON.stringify({type,file_size_bytes:buffer.length,...metrics}));
+    return {buffer,ctx,fileName:'markets-pulse-'+type+'-'+slugStamp(ctx.period_end)+'.pdf',contentType:'application/pdf'};
   }finally{await page.close().catch(()=>{});}
 }
