@@ -4,6 +4,7 @@ const UA='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KH
 
 export const HOME_INTERNET_SOURCES=[
   {slug:'kktcell-home',provider:'KKTCELL',name:'Kuzey Kıbrıs Turkcell İnternet',url:'https://www.kktcell.com/internet-paketleri',technology:'4.5G / Ev İnterneti',ownership_group:'Kuzey Kıbrıs Turkcell',parser:'kktcell'},
+  {slug:'lifecell-digital-home',provider:'Turkcell Ev İnterneti',name:'Lifecell Digital Ev İnterneti',url:'https://tsurvey.lifecelldigital.com/kurumsal/paketler',technology:'WDSL / Sabit Genişbant',ownership_group:'Lifecell Digital Ltd.',parser:'lifecell-digital'},
   {slug:'extend-wdsl',provider:'Extend',name:'Extend WDSL',url:'https://www.extendbroadband.com/urunler-wdsl.php',technology:'WDSL',ownership_group:'Aydoğan Communication Ltd.',parser:'extend-table'},
   {slug:'extend-fiber',provider:'Extend',name:'Extend FiberNET',url:'https://www.extendbroadband.com/urunler-fibernet.php',technology:'Fiber',ownership_group:'Aydoğan Communication Ltd.',parser:'extend-table'},
   {slug:'telsim-home',provider:'Telsim',name:'Vodafone Evde İnternet',url:'https://www.kktctelsim.com/tr/internet/evde-internet-ve-red-box/vodafone-evde-internet',technology:'WDSL / ADSL',ownership_group:'KKTC Telsim',parser:'telsim-home'},
@@ -118,6 +119,34 @@ function parseExtendTable(html,source){
     }
   });
   return out;
+}
+
+function parseLifecellDigital(html,source){
+  const $=cheerio.load(html);$('script,style,noscript,svg').remove();const text=clean($.root().text());
+  const out=[],re=/(GNÇ'lilere Özel 20|Merkezi 10|Merkezi 20|Merkezi 30|Standart Paket 10|Aile Paketi 20|Pro Paket 30|Oyuncu Paketi 10)\s+(\d+)Mbps'e kadar\s+([\s\S]{0,100}?)(?=(?:GNÇ'lilere Özel 20|Merkezi 10|Merkezi 20|Merkezi 30|Standart Paket 10|Aile Paketi 20|Pro Paket 30|Oyuncu Paketi 10|Paket Türü|ÜCRETSİZ KURULUM|$))/ig;
+  for(const m of text.matchAll(re)){
+    const name=clean(m[1]),speed=n(m[2]),seg=clean(m[3]);
+    const pairs=[...seg.matchAll(/(1|4|12|14)\s*Ay\s+([\d.]+)\s*TL(?:\/Ay)?/ig)];
+    if(pairs.length){
+      for(const p of pairs){const duration=Number(p[1]),price=n(p[2]);out.push(offer({
+        source_slug:source.slug,provider:source.provider,ownership_group:source.ownership_group,source_url:source.url,
+        name,technology:'WDSL / Sabit Genişbant',speed_down_mbps:speed,speed_up_mbps:null,data_limit_gb:null,unlimited:true,
+        duration_months:duration,bonus_months:0,total_price_try:/TL\/Ay/i.test(p[0])?null:price,price_monthly_try:/TL\/Ay/i.test(p[0])?price:null,
+        install_fee_try:duration===12?0:null,features:[duration===12?'12 ay kontratta ücretsiz kurulum':null].filter(Boolean),
+        raw_text:(name+' '+speed+'Mbps '+seg).slice(0,700),product_key:[source.slug,keyPart(name),speed,duration].join('|')
+      }))}
+    }else{
+      const d=seg.match(/(12)\s*Ay/i),p=seg.match(/([\d.]+)\s*TL\/Ay/i);
+      if(d&&p)out.push(offer({
+        source_slug:source.slug,provider:source.provider,ownership_group:source.ownership_group,source_url:source.url,
+        name,technology:'WDSL / Sabit Genişbant',speed_down_mbps:speed,speed_up_mbps:null,data_limit_gb:null,unlimited:true,
+        duration_months:Number(d[1]),bonus_months:0,price_monthly_try:n(p[1]),install_fee_try:0,
+        features:['12 ay kontratta ücretsiz kurulum'],raw_text:(name+' '+speed+'Mbps '+seg).slice(0,700),
+        product_key:[source.slug,keyPart(name),speed,12].join('|')
+      }));
+    }
+  }
+  const uniq=new Map();for(const x of out)if(!uniq.has(x.product_key))uniq.set(x.product_key,x);return [...uniq.values()];
 }
 
 function parseTelsimHome(html,source){
@@ -244,6 +273,7 @@ function discoveryMeta(html,source){
 function parserFor(source,html){
   if(source.parser==='kktcell')return {products:parseKktcell(html,source),meta:discoveryMeta(html,source)};
   if(source.parser==='extend-table')return {products:parseExtendTable(html,source),meta:discoveryMeta(html,source)};
+  if(source.parser==='lifecell-digital')return {products:parseLifecellDigital(html,source),meta:discoveryMeta(html,source)};
   if(source.parser==='telsim-home')return {products:parseTelsimHome(html,source),meta:discoveryMeta(html,source)};
   if(source.parser==='freenet')return {products:parseFreeNet(html,source),meta:discoveryMeta(html,source)};
   if(source.parser==='fixnet')return {products:parseFixNet(html,source),meta:discoveryMeta(html,source)};
