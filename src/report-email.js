@@ -82,7 +82,36 @@ function pctColor(v){
   if(v==null)return '#667399';
   return Number(v)>=0?'#00835f':'#c7342d';
 }
+function homeEmailHtml(type,ctx,attachments=[]){
+  const h=ctx.home||{},isFwa=type==='fwa',products=h.products||[];
+  const money=v=>v==null||Number.isNaN(Number(v))?'—':Number(v).toLocaleString('tr-TR',{maximumFractionDigits:0})+' TL';
+  const turkcell=products.filter(x=>x.provider==='Turkcell Ev İnterneti');
+  const rivals=products.filter(x=>x.provider!=='Turkcell Ev İnterneti');
+  const sb=products.filter(x=>x.brand==='Superbox');
+  const rb=products.filter(x=>x.brand==='Red Box');
+  const cheap=arr=>[...arr].filter(x=>x.effective_monthly_try!=null).sort((a,b)=>a.effective_monthly_try-b.effective_monthly_try)[0]||null;
+  const cards=isFwa?[
+    ['Superbox',sb.length+' SKU'],['Red Box',rb.length+' SKU'],['Superbox başlangıç',money(cheap(sb)?.effective_monthly_try)],['Red Box başlangıç',money(cheap(rb)?.effective_monthly_try)]
+  ]:[
+    ['Turkcell Ev İnterneti',turkcell.length+' SKU'],['Rakip teklif',rivals.length+' SKU'],['Resmi kaynak',(h.sources||[]).length],['7 günlük değişiklik',(h.changes||[]).filter(x=>new Date(x.detected_at)>Date.now()-7*86400000).length]
+  ];
+  const attachmentList=attachments.map(a=>'<div style="padding:4px 0;font-size:12px;color:#42526e;">📎 '+esc(a.filename)+'</div>').join('');
+  const rows=[...products].sort((a,b)=>(a.effective_monthly_try||Infinity)-(b.effective_monthly_try||Infinity)).slice(0,8).map(x=>
+    '<tr><td style="padding:8px;border-bottom:1px solid #e7edf6;font-size:11px;"><b>'+esc(x.brand||x.provider)+'</b></td><td style="padding:8px;border-bottom:1px solid #e7edf6;font-size:11px;">'+esc(x.name)+'</td><td style="padding:8px;border-bottom:1px solid #e7edf6;font-size:11px;">'+esc(x.speed_down_mbps?x.speed_down_mbps+' Mbps':x.data_limit_gb?x.data_limit_gb+' GB':'—')+'</td><td style="padding:8px;border-bottom:1px solid #e7edf6;font-size:11px;text-align:right;"><b>'+esc(money(x.effective_monthly_try))+'</b></td></tr>'
+  ).join('');
+  return '<!doctype html><html lang="tr"><body style="margin:0;background:#f3f6fb;font-family:Arial,Helvetica,sans-serif;color:#001484;">'+
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:24px 12px;"><table role="presentation" width="680" cellpadding="0" cellspacing="0" style="max-width:680px;width:100%;background:#fff;border-radius:16px;overflow:hidden;">'+
+    '<tr><td style="background:#000f64;padding:22px 28px;"><div style="font-size:26px;font-weight:900;color:#fff;">Markets <span style="color:#00c2ff;">Pulse</span></div><div style="margin-top:6px;font-size:9px;letter-spacing:.18em;color:#b9ccff;font-weight:700;">BY TURKCELL • '+(isFwa?'FWA INTELLIGENCE':'HOME INTERNET INTELLIGENCE')+'</div></td></tr>'+
+    '<tr><td style="padding:24px 28px 10px;"><div style="font-size:20px;font-weight:900;color:#001484;">'+esc(REPORT_NAMES[type])+'</div><div style="margin-top:7px;color:#42526e;font-size:13px;line-height:1.6;">'+(isFwa?'Superbox ve Telsim Red Box ayrı FWA ürün ailesi olarak karşılaştırılmıştır.':'KKTCELL ve Lifecell Digital sabit internet katalogları tek Turkcell Ev İnterneti ürün ailesinde birleştirilmiştir.')+'</div></td></tr>'+
+    '<tr><td style="padding:10px 28px 18px;"><table role="presentation" width="100%"><tr>'+cards.map(x=>'<td width="25%" style="padding:4px;vertical-align:top;"><div style="border:1px solid #dde7f6;border-radius:10px;background:#f6f9ff;padding:11px;"><div style="font-size:9px;color:#667399;font-weight:800;text-transform:uppercase;">'+esc(x[0])+'</div><div style="margin-top:5px;font-size:17px;font-weight:900;color:#001484;">'+esc(x[1])+'</div></div></td>').join('')+'</tr></table></td></tr>'+
+    '<tr><td style="padding:0 28px 18px;"><div style="font-size:12px;font-weight:800;margin-bottom:8px;">Öne Çıkan Teklifler</div><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e1e8f2;border-radius:10px;border-collapse:separate;border-spacing:0;"><tr style="background:#001484;"><th align="left" style="padding:8px;color:#fff;font-size:10px;">Marka</th><th align="left" style="padding:8px;color:#fff;font-size:10px;">Ürün</th><th align="left" style="padding:8px;color:#fff;font-size:10px;">Hız/Kota</th><th align="right" style="padding:8px;color:#fff;font-size:10px;">Efektif Aylık</th></tr>'+rows+'</table></td></tr>'+
+    '<tr><td style="padding:0 28px 20px;"><div style="background:#f7f9fc;border:1px solid #e2e8f1;border-radius:10px;padding:13px;"><b style="font-size:11px;">Ekli rapor</b>'+attachmentList+'</div></td></tr>'+
+    '<tr><td align="center" style="padding:0 28px 26px;"><a href="https://www.marketspulse.cloud/#home" style="display:inline-block;background:#0014f2;color:#fff;text-decoration:none;font-size:12px;font-weight:800;padding:12px 20px;border-radius:9px;">Ev İnterneti Dashboard’unu Aç</a></td></tr>'+
+    '</table></td></tr></table></body></html>';
+}
+
 function emailHtml(type,ctx,attachments=[]){
+  if(type==='home'||type==='fwa')return homeEmailHtml(type,ctx,attachments);
   const title=REPORT_NAMES[type]||'Markets Pulse Raporu';
   const m=ctx.market||{},b=ctx.benchmark||{},s=ctx.stats||{};
   const top=(m.top_threats||[])[0];
@@ -197,7 +226,7 @@ export async function sendReportEmail(pool,type,options={}){
   if(mail.status.api_configured){
     info=await sendViaBrevoApi({
       status:mail.status,subject,
-      textContent:ctx.market.executive_summary,
+      textContent:(ctx.market?.executive_summary||(type==='fwa'?'Markets Pulse Superbox / Red Box rekabet raporu':'Markets Pulse Turkcell Ev İnterneti rekabet raporu')),
       htmlContent:emailHtml(type,ctx,attachments),
       attachments
     });
@@ -205,7 +234,7 @@ export async function sendReportEmail(pool,type,options={}){
     console.log('[report-email] smtp connecting',JSON.stringify({host:process.env.SMTP_HOST,port:Number(process.env.SMTP_PORT||587),from:mail.status.from,recipients:mail.status.recipients.length,subject,total_bytes:totalBytes}));
     info=await mail.transport.sendMail({
       from:mail.status.from,to:mail.status.recipients.join(', '),subject,
-      text:ctx.market.executive_summary,html:emailHtml(type,ctx,attachments),attachments
+      text:(ctx.market?.executive_summary||(type==='fwa'?'Markets Pulse Superbox / Red Box rekabet raporu':'Markets Pulse Turkcell Ev İnterneti rekabet raporu')),html:emailHtml(type,ctx,attachments),attachments
     });
     console.log('[report-email] smtp accepted',JSON.stringify({message_id:info.messageId,accepted:info.accepted,rejected:info.rejected,response:info.response}));
   }
