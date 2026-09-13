@@ -1,5 +1,5 @@
 (()=>{
-let state={data:null,provider:'Tümü',tech:'Tümü',duration:'Tümü',bestOnly:true,loading:false};
+let state={data:null,family:'fixed',provider:'Tümü',tech:'Tümü',duration:'Tümü',bestOnly:true,loading:false};
 
 function money(v){if(v==null||Number.isNaN(Number(v)))return '—';return Number(v).toLocaleString('tr-TR',{maximumFractionDigits:0})+' TL'}
 function num(v,d=0){if(v==null||Number.isNaN(Number(v)))return '—';return Number(v).toLocaleString('tr-TR',{maximumFractionDigits:d})}
@@ -12,6 +12,7 @@ function ensure(){
   shell.insertAdjacentHTML('beforeend',`
   <section id="home-internet-section" class="section hi-section">
     <div class="section-title hi-title"><div><h2>Ev İnterneti Market Intelligence</h2><p>KKTC sabit internet pazarı • fiyat, hız, teknoloji, sözleşme ekonomisi ve rakip değişiklikleri</p></div><div class="hi-actions"><span id="hiUpdated" class="view-chip">Veri bekleniyor</span><button class="btn" id="hiScanBtn" onclick="HomeInternetUI.scan()">Şimdi Tara</button></div></div>
+    <div class="hi-family-tabs"><button class="hi-family-tab active" data-family="fixed" onclick="HomeInternetUI.setFamily('fixed')">Sabit Ev İnterneti</button><button class="hi-family-tab" data-family="fwa" onclick="HomeInternetUI.setFamily('fwa')">Superbox / Red Box</button></div>
     <div id="hiKpis" class="hi-kpis"><article class="hi-kpi"><span>Sağlayıcı</span><strong>—</strong><small>Yükleniyor</small></article><article class="hi-kpi"><span>Normalize Teklif</span><strong>—</strong><small>Yükleniyor</small></article><article class="hi-kpi"><span>En İyi Değer</span><strong>—</strong><small>Yükleniyor</small></article><article class="hi-kpi"><span>7 Günlük Değişiklik</span><strong>—</strong><small>Yükleniyor</small></article></div>
     <div id="hiOpportunity" class="hi-opportunity"></div>
     <div class="hi-toolbar">
@@ -40,7 +41,7 @@ function bestRows(rows){
 }
 
 function filtered(){
-  let rows=state.data?.products||[];
+  let rows=(state.data?.products||[]).filter(x=>(x.product_family||'fixed')===state.family);
   if(state.provider!=='Tümü')rows=rows.filter(x=>x.provider===state.provider);
   if(state.tech!=='Tümü')rows=rows.filter(x=>x.technology===state.tech);
   if(state.duration!=='Tümü')rows=rows.filter(x=>String(x.duration_months)===String(state.duration));
@@ -49,10 +50,20 @@ function filtered(){
 }
 
 function renderKpis(){
-  const d=state.data,m=d?.metrics||{},best=m.best_value,fast=m.fastest;
-  const cards=[
-    ['Sağlayıcı',m.providers??'—',(m.sources??0)+' kaynak izleniyor'],
-    ['Normalize Teklif',m.products??'—',(m.priced_products??0)+' fiyatlı teklif'],
+  const d=state.data,m=d?.metrics||{};
+  const fam=(d?.products||[]).filter(x=>(x.product_family||'fixed')===state.family);
+  const priced=fam.filter(x=>x.effective_monthly_try!=null);
+  const speed=fam.filter(x=>x.speed_down_mbps>0&&x.effective_monthly_try>0).sort((a,b)=>(b.mbps_per_100tl||0)-(a.mbps_per_100tl||0));
+  const best=speed[0]||null,fast=[...fam].filter(x=>x.speed_down_mbps>0).sort((a,b)=>b.speed_down_mbps-a.speed_down_mbps)[0]||null;
+  const providers=new Set(fam.map(x=>x.provider));
+  const cards=state.family==='fwa'?[
+    ['Ürün Ailesi','FWA','SIM tabanlı ev interneti'],
+    ['Superbox',m.superbox_products??0,'KKTCELL 4.5G FWA'],
+    ['Red Box',m.redbox_products??0,'Telsim 5G FWA'],
+    ['7 Günlük Değişiklik',m.changes_7d??0,'FWA hareketleri ayrı izleniyor']
+  ]:[
+    ['Sağlayıcı',providers.size,(m.sources??0)+' resmi kaynak izleniyor'],
+    ['Normalize Teklif',fam.length,priced.length+' fiyatlı teklif'],
     ['En İyi Değer',best?num(best.mbps_per_100tl,2):'—',best?(best.provider+' • '+best.name):'Fiyat/hız verisi bekleniyor'],
     ['7 Günlük Değişiklik',m.changes_7d??0,fast?('En yüksek hız: '+num(fast.speed_down_mbps)+' Mbps'):'Değişiklik izleniyor']
   ];
@@ -60,10 +71,17 @@ function renderKpis(){
 }
 
 function renderOpportunity(){
-  const box=document.getElementById('hiOpportunity'),o=(state.data?.opportunities||[])[0];
-  if(!o){box.innerHTML='<article class="hi-op-card neutral"><span>Benchmark sinyali</span><strong>KKTCELL için karşılaştırılabilir hız eşleşmesi henüz oluşmadı.</strong><small>Yeni kaynaklar ve paketler geldikçe otomatik hesaplanacak.</small></article>';return}
+  const box=document.getElementById('hiOpportunity');
+  if(state.family==='fwa'){
+    const f=state.data?.fwa_comparison||{},sb=(f.superbox||[])[0],rb=(f.redbox||[])[0];
+    if(!sb&&!rb){box.innerHTML='<article class="hi-op-card neutral"><span>FWA Benchmark</span><strong>Superbox / Red Box verisi bekleniyor.</strong><small>İki ürün ailesi ayrı kaynaklardan izleniyor.</small></article>';return}
+    box.innerHTML='<article class="hi-op-card '+(sb&&rb?'good':'neutral')+'"><span>SUPERBOX / RED BOX BENCHMARK</span><strong>'+esc(sb?('Superbox • '+sb.name):'Superbox verisi bekleniyor')+' ↔ '+esc(rb?('Red Box • '+rb.name):'Red Box verisi bekleniyor')+'</strong><small>'+(sb?('Superbox efektif '+money(sb.effective_monthly_try)):'')+(sb&&rb?' • ':'')+(rb?('Red Box efektif '+money(rb.effective_monthly_try)):'')+'</small></article>';
+    return;
+  }
+  const o=(state.data?.opportunities||[])[0];
+  if(!o){box.innerHTML='<article class="hi-op-card neutral"><span>Benchmark sinyali</span><strong>Turkcell Ev İnterneti için karşılaştırılabilir hız eşleşmesi henüz oluşmadı.</strong><small>Yeni kaynaklar ve paketler geldikçe otomatik hesaplanacak.</small></article>';return}
   const gap=Number(o.score_gap||0),risk=gap<0;
-  box.innerHTML='<article class="hi-op-card '+(risk?'risk':'good')+'"><span>'+(risk?'ÖNCELİKLİ REKABET RİSKİ':'KKTCELL AVANTAJI')+'</span><strong>'+esc(o.kktcell.name)+' ↔ '+esc(o.competitor.provider+' '+o.competitor.name)+'</strong><small>Home Value Score farkı <b>'+(gap>0?'+':'')+num(gap)+'</b> • Efektif aylık fark <b>'+money(o.monthly_gap_try)+'</b> • Mbps/100 TL farkı <b>'+num(o.value_gap,2)+'</b></small></article>';
+  box.innerHTML='<article class="hi-op-card '+(risk?'risk':'good')+'"><span>'+(risk?'ÖNCELİKLİ REKABET RİSKİ':'TURKCELL EV İNTERNETİ AVANTAJI')+'</span><strong>'+esc(o.kktcell.name)+' ↔ '+esc(o.competitor.provider+' '+o.competitor.name)+'</strong><small>Home Value Score farkı <b>'+(gap>0?'+':'')+num(gap)+'</b> • Efektif aylık fark <b>'+money(o.monthly_gap_try)+'</b> • Mbps/100 TL farkı <b>'+num(o.value_gap,2)+'</b></small></article>';
 }
 
 function renderProducts(){
@@ -71,12 +89,13 @@ function renderProducts(){
   body.innerHTML=rows.length?rows.map(x=>{
     const speed=x.speed_down_mbps?num(x.speed_down_mbps)+' Mbps':(x.data_limit_gb?num(x.data_limit_gb)+' GB':'—');
     const duration=x.duration_months+(x.bonus_months?(' + '+x.bonus_months+' hediye'):'')+' ay';
-    return '<tr class="'+(x.provider==='KKTCELL'?'hi-own':'')+'"><td><b>'+esc(x.provider)+'</b></td><td><div class="hi-product-name">'+esc(x.name)+'</div><small>'+esc((x.features||[]).slice(0,2).join(' • '))+'</small></td><td><span class="hi-tech">'+esc(x.technology||'—')+'</span></td><td><b>'+esc(speed)+'</b></td><td>'+esc(duration)+'</td><td><b>'+money(x.effective_monthly_try)+'</b>'+(x.install_fee_try?'<small>Kurulum '+money(x.install_fee_try)+'</small>':'')+'</td><td>'+money(x.first_year_equiv_try)+'</td><td>'+num(x.mbps_per_100tl,2)+'</td><td><span class="hi-score '+scoreClass(x.market_score)+'">'+(x.market_score??'—')+'</span></td></tr>';
+    return '<tr class="'+((x.provider==='Turkcell Ev İnterneti'||x.brand==='Superbox')?'hi-own':'')+'"><td><b>'+esc(x.provider)+'</b></td><td><div class="hi-product-name">'+esc(x.name)+'</div><small>'+esc((x.features||[]).slice(0,2).join(' • '))+'</small></td><td><span class="hi-tech">'+esc(x.technology||'—')+'</span></td><td><b>'+esc(speed)+'</b></td><td>'+esc(duration)+'</td><td><b>'+money(x.effective_monthly_try)+'</b>'+(x.install_fee_try?'<small>Kurulum '+money(x.install_fee_try)+'</small>':'')+'</td><td>'+money(x.first_year_equiv_try)+'</td><td>'+num(x.mbps_per_100tl,2)+'</td><td><span class="hi-score '+scoreClass(x.market_score)+'">'+(x.market_score??'—')+'</span></td></tr>';
   }).join(''):'<tr><td colspan="9" class="empty">Filtreye uygun teklif bulunamadı.</td></tr>';
 }
 
 function renderSources(){
-  const rows=state.data?.sources||[],box=document.getElementById('hiSources');
+  let rows=state.data?.sources||[];const box=document.getElementById('hiSources');
+  if(state.family==='fwa')rows=rows.filter(s=>['kktcell-home','telsim-redbox'].includes(s.slug));
   box.innerHTML=rows.map(s=>{
     const ok=s.status==='ok',dynamic=Number(s.parsed_count||0)===0;
     return '<div class="hi-source"><div><b>'+esc(s.name)+'</b><small>'+esc(s.provider)+' • '+esc(s.technology||'')+(s.ownership_group&&s.ownership_group!==s.provider?' • '+esc(s.ownership_group):'')+'</small></div><div class="hi-source-meta"><span class="status '+(ok?'ok':'err')+'">'+(ok?(dynamic?'Kaynak aktif':'Sağlıklı'):'Hata')+'</span><small>'+num(s.response_ms)+' ms • '+num(s.parsed_count)+' teklif</small></div></div>';
@@ -89,16 +108,18 @@ function renderChanges(){
 }
 
 function populateFilters(){
-  const d=state.data||{};
-  const providers=[...new Set((d.products||[]).map(x=>x.provider).concat((d.sources||[]).map(x=>x.provider)).filter(Boolean))].sort();
-  const tech=[...new Set((d.products||[]).map(x=>x.technology).filter(Boolean))].sort();
+  const d=state.data||{},fam=(d.products||[]).filter(x=>(x.product_family||'fixed')===state.family);
+  const providers=[...new Set(fam.map(x=>x.provider).filter(Boolean))].sort();
+  const tech=[...new Set(fam.map(x=>x.technology).filter(Boolean))].sort();
   const p=document.getElementById('hiProvider'),t=document.getElementById('hiTech');
   p.innerHTML='<option>Tümü</option>'+providers.map(x=>'<option '+(state.provider===x?'selected':'')+'>'+esc(x)+'</option>').join('');
   t.innerHTML='<option>Tümü</option>'+tech.map(x=>'<option '+(state.tech===x?'selected':'')+'>'+esc(x)+'</option>').join('');
 }
 
 function render(){
-  if(!state.data)return;renderKpis();renderOpportunity();populateFilters();renderProducts();renderSources();renderChanges();
+  if(!state.data)return;
+  document.querySelectorAll('.hi-family-tab').forEach(b=>b.classList.toggle('active',b.dataset.family===state.family));
+  renderKpis();renderOpportunity();populateFilters();renderProducts();renderSources();renderChanges();
   document.getElementById('hiUpdated').textContent='Son güncelleme '+dt(state.data.generated_at);
 }
 
@@ -113,10 +134,11 @@ async function load(force=false){
   finally{state.loading=false;if(btn){btn.disabled=false;btn.textContent='Şimdi Tara'}}
 }
 function scan(){return load(true)}
+function setFamily(v){state.family=v==='fwa'?'fwa':'fixed';state.provider='Tümü';state.tech='Tümü';state.duration='Tümü';render()}
 function filter(k,v){state[k]=v;renderProducts()}
 function toggleBest(v){state.bestOnly=!!v;renderProducts()}
 
 function init(){ensure();if(location.hash==='#home')load(false)}
-window.HomeInternetUI={ensure,load,scan,filter,toggleBest};
+window.HomeInternetUI={ensure,load,scan,setFamily,filter,toggleBest};
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
 })();
