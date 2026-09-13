@@ -1,12 +1,15 @@
 import { buildMarketPulse } from './intelligence.js';
 import { getKktcellCatalog, buildBenchmark } from './kktcell-benchmark.js';
+import { getHomeInternetMarket } from './home-internet.js';
 
 export const REPORT_TZ = 'Asia/Famagusta';
 export const REPORT_NAMES = {
   daily: 'Günlük Yönetici Özeti',
   weekly: 'Haftalık Markets Pulse Raporu',
   telsim7: 'Son 7 Günde Telsim Ne Yaptı?',
-  evidence: 'Evidence Pack'
+  evidence: 'Evidence Pack',
+  home: 'Turkcell Ev İnterneti Rekabet Raporu',
+  fwa: 'Superbox / Red Box Rekabet Raporu'
 };
 
 function latestPackagesSql() {
@@ -108,6 +111,27 @@ function scoreDeltas(benchmark, baseline) {
 export async function buildReportContext(pool, type, options={}) {
   const days = type === 'daily' ? 1 : Math.max(1,Math.min(30,Number(options.days||7)));
   const periodEnd = new Date(), periodStart = new Date(periodEnd.getTime()-days*86400000);
+
+  if(type==='home'||type==='fwa'){
+    const home=await getHomeInternetMarket(pool,{refresh:false});
+    const family=type==='fwa'?'fwa':'fixed';
+    const products=(home.products||[]).filter(x=>(x.product_family||'fixed')===family);
+    const productMap=new Map((home.products||[]).map(x=>[x.product_key,x]));
+    const changes=(home.changes||[]).filter(ch=>{
+      const p=productMap.get(ch.product_key);
+      if(p)return (p.product_family||'fixed')===family;
+      if(type==='fwa')return ch.source_slug==='telsim-redbox'||/superbox|red box/i.test(ch.product_name||'');
+      return ch.source_slug!=='telsim-redbox'&&!/superbox|red box/i.test(ch.product_name||'');
+    });
+    const sources=(home.sources||[]).filter(s=>type==='fwa'?['kktcell-home','telsim-redbox'].includes(s.slug):s.slug!=='telsim-redbox');
+    return {
+      type,title:REPORT_NAMES[type],days,
+      period_start:periodStart.toISOString(),period_end:periodEnd.toISOString(),generated_at:new Date().toISOString(),
+      home:{...home,products,changes,sources},
+      changes,stats:changeStats(changes),sources
+    };
+  }
+
   const [market,benchmark,sources,changes,baseline,evidence] = await Promise.all([
     buildMarketPulse(pool,days),currentBenchmark(pool),sourceHealth(pool),periodChanges(pool,days),scoreBaselines(pool,days),periodEvidence(pool,days,type==='evidence'?'full':type==='daily'?'meta':'visual')
   ]);
