@@ -103,7 +103,7 @@ html[data-theme="dark"] .modal-image{background:#061438}
 
 /* Dynamic Market Pulse modules */
 html[data-theme="dark"] :is(.mp-pressure,.mp-summary,.mp-mini,.mp-threats,.mp-mix,.bm-score-card,.bm-trend,.bm-kpi,.bm-panel,.bm-seg-mini){background:var(--surface)!important;border-color:var(--line)!important;color:var(--ink)!important}
-html[data-theme="dark"] :is(.mp-ring:after){background:var(--surface)!important}
+html[data-theme="dark"] .mp-ring::after{background:var(--surface)!important;border-color:var(--line)!important}
 html[data-theme="dark"] :is(.mp-badge,.mp-reason,.mp-action,.bm-rec,.bm-method,.bm-badge,.bm-seg-summary,.bm-chart,.bm-side){background:var(--surface2)!important;color:var(--ink)!important;border-color:var(--line)!important}
 html[data-theme="dark"] :is(.mp-window button,.bm-tab,.bm-horizon,.bm-refresh){background:var(--surface)!important;color:var(--muted)!important;border-color:var(--line)!important}
 html[data-theme="dark"] :is(.mp-window button.active,.bm-tab.active,.bm-horizon.active){background:var(--mp-electric)!important;color:#fff!important;border-color:var(--mp-electric)!important}
@@ -311,3 +311,53 @@ html[data-theme="dark"] .hi-filter select,html[data-theme="dark"] .hi-toggle{bac
 .user-main{min-width:0}.user-main b{display:block;font-size:10px;color:var(--ink)}.user-main span{display:block;margin-top:3px;font-size:9px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.user-main small{display:block;margin-top:3px;font-size:8px;color:var(--muted)}
 .user-actions{display:flex;align-items:center;justify-content:flex-end;gap:6px;flex-wrap:wrap}.role-badge{font-size:8px;font-weight:900;padding:5px 7px;border-radius:999px;background:var(--surface2);color:var(--muted);border:1px solid var(--line)}.role-badge.admin{background:rgba(0,194,255,.12);color:var(--mp-cyan);border-color:rgba(0,194,255,.3)}
 @media(max-width:760px){.user-chip{display:none}.user-add-form{grid-template-columns:1fr}.user-add-form .btn{grid-column:1}.user-row{grid-template-columns:34px 1fr}.user-actions{grid-column:1/-1;justify-content:flex-start;padding-left:44px}.app-user-mini,.app-logout{display:none}}
+
+
+/* UI contrast hardening v3 */
+body.branded-app .mp-shell,
+body.branded-app .mp-hero,
+body.branded-app .mp-main,
+body.branded-app .mp-hero>*,
+body.branded-app .mp-main>*{min-width:0;max-width:100%}
+
+body.branded-app .mp-ring::after{
+  background:var(--surface)!important;
+  border:1px solid var(--line)!important;
+}
+body.branded-app .mp-ring strong{
+  color:var(--ink)!important;
+  font-weight:900!important;
+  text-shadow:none!important;
+  opacity:1!important;
+}
+html[data-theme="dark"] body.branded-app .mp-ring strong{color:#fff!important}
+html[data-theme="light"] body.branded-app .mp-ring strong{color:#001484!important}
+
+body.branded-app :is(.mp-summary h2,.mp-pressure-copy b,.mp-mini strong,.mp-move-title,.bm-score-main strong,.bm-trend-stat strong,.bm-kpi strong){
+  color:var(--ink)!important;
+}
+body.branded-app :is(.mp-summary,.mp-pressure-copy,.mp-mini,.mp-move,.bm-score-card,.bm-kpi){min-width:0}
+body.branded-app :is(.mp-summary h2,.mp-summary p,.mp-pressure-copy b,.mp-pressure-copy small,.mp-badge,.mp-move-title,.mp-action,.bm-score-meta,.bm-status){
+  overflow-wrap:anywhere;
+  word-break:normal;
+}
+body.branded-app .mp-badge{white-space:normal}
+body.branded-app :is(.mp-meta,.mp-note,.mp-pressure-copy small,.mp-mini small,.bm-score-meta,.bm-status,.bm-trend-sub,.bm-trend-stat small){
+  color:var(--muted)!important;
+}
+html[data-theme="dark"] body.branded-app :is(.mp-meta,.mp-note,.mp-pressure-copy small,.mp-mini small,.bm-score-meta,.bm-status,.bm-trend-sub,.bm-trend-stat small){
+  color:#c3d1ec!important;
+}
+body.branded-app .bm-chart svg text{fill:var(--muted)!important}
+body.branded-app .bm-chart svg circle{stroke:var(--surface)!important;stroke-width:2!important}
+body.branded-app :is(.mp-score,.hi-score,.bm-pos,.status){filter:none!important}
+
+@media(max-width:1120px){
+  body.branded-app .mp-hero,
+  body.branded-app .mp-main{grid-template-columns:1fr!important}
+}
+@media(max-width:720px){
+  body.branded-app .mp-ring{width:84px!important;height:84px!important}
+  body.branded-app .mp-ring strong{font-size:22px!important}
+  body.branded-app .mp-pressure{gap:13px!important}
+}
