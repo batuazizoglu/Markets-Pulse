@@ -18,6 +18,8 @@ function billingTelsim(p){return p.source_slug==='faturasiz'?'prepaid':'postpaid
 function textTelsim(p){return norm(`${p.current_name||p.name||''} ${JSON.stringify(p.extras_json||[])} ${p.raw_text||''}`)}
 function textKktcell(p){return norm(`${p.name||''} ${p.raw_text||''}`)}
 function productKey(p){return p.product_url||`${p.source_slug}|${p.name}|${p.price_try??''}`}
+function detectAddon(text){const t=norm(text);return /\bek\b|tek numara|aşım|asim|devir|favorim|sadece sms|dakika paketi|internet ek|platinum'a ek|gnç ek|gnc ek|tv\+ paketi|türkiye \d+\s*dk|dakika faturasız/i.test(t)}
+function detectClosed(text){return /yeni abone alımına kapalı|abone alımına kapalı|sonlanmıştır|sona ermiştir|kullanıma kapalı/i.test(norm(text))}
 
 function eligibility(name){
   const t=norm(name);
@@ -60,8 +62,8 @@ function parseKktAllowances(raw,fallbackCore,fallbackBonus){
 function validityT(p,billing,name){const v=num(p.validity_days);if(v&&v>0)return v;const n=norm(name);if(billing==='postpaid')return 30;if(/super databol\s*3\b/.test(n))return 90;if(/super databol\s*5\b/.test(n))return 150;if(/super databol (?:xsmall|small|medium|large|digital)|super world (?:xsmall|small|medium|large|digital)|uni[- ]?pack/.test(n))return 30;return null}
 function validityK(p,billing){const v=num(p.validity_days);if(v&&v>0)return v;return billing==='postpaid'?30:null}
 
-function fpT(p){const name=p.current_name||p.name||'',e=eligibility(name),billing=billingTelsim(p),core=num(p.data_gb)||0,bonus=num(p.bonus_data_gb)||0,eff=core+bonus,text=textTelsim(p);return{provider:'Telsim',id:Number(p.id),key:String(p.id),name,billing,eligibility:e,segment:segment(e),family:family('Telsim',name,e),core,bonus,eff,minutes:num(p.local_tr_minutes),intl:num(p.international_minutes),sms:num(p.sms),days:validityT(p,billing,name),price:num(p.price_try),benefits:benefits(text),acquisition:acquisition(text),channel:channel(text),intent:tier(eff,e)}}
-function fpK(p){const name=p.name||'',e=eligibility(name),billing=p.type,parsed=parseKktAllowances(p.raw_text,p.data_gb,p.bonus_data_gb),core=parsed.core,bonus=parsed.bonus,eff=core+bonus,text=textKktcell(p);return{provider:'KKTCELL',id:productKey(p),key:productKey(p),name,billing,eligibility:e,segment:segment(e),family:family('KKTCELL',name,e),core,bonus,eff,minutes:num(p.local_tr_minutes),intl:num(p.international_minutes),sms:num(p.sms),days:validityK(p,billing),price:num(p.price_try),benefits:benefits(text),acquisition:p.acquisition||acquisition(text),channel:p.channel||channel(text),intent:tier(eff,e)}}
+function fpT(p){const name=p.current_name||p.name||'',e=eligibility(name),billing=billingTelsim(p),core=num(p.data_gb)||0,bonus=num(p.bonus_data_gb)||0,eff=core+bonus,text=textTelsim(p);return{provider:'Telsim',id:Number(p.id),key:String(p.id),name,billing,eligibility:e,segment:segment(e),family:family('Telsim',name,e),core,bonus,eff,minutes:num(p.local_tr_minutes),intl:num(p.international_minutes),sms:num(p.sms),days:validityT(p,billing,name),price:num(p.price_try),benefits:benefits(text),acquisition:acquisition(text),channel:channel(text),intent:tier(eff,e),addon:detectAddon(text),closed:detectClosed(text)||p.active===false}}
+function fpK(p){const name=p.name||'',e=eligibility(name),billing=p.type,parsed=parseKktAllowances(p.raw_text,p.data_gb,p.bonus_data_gb),core=parsed.core,bonus=parsed.bonus,eff=core+bonus,text=textKktcell(p);return{provider:'KKTCELL',id:productKey(p),key:productKey(p),name,billing,eligibility:e,segment:segment(e),family:family('KKTCELL',name,e),core,bonus,eff,minutes:num(p.local_tr_minutes),intl:num(p.international_minutes),sms:num(p.sms),days:validityK(p,billing),price:num(p.price_try),benefits:benefits(text),acquisition:p.acquisition||acquisition(text),channel:p.channel||channel(text),intent:tier(eff,e),addon:p.is_core===false||detectAddon(text),closed:!!p.is_closed||detectClosed(text)}}
 
 function gate(t,k){const reasons=[];if(t.billing!==k.billing)reasons.push('billing');if(t.eligibility!==k.eligibility)reasons.push('eligibility');if(t.family&&(!k.family||t.family!==k.family))reasons.push('product_family');return{ok:!reasons.length,reasons}}
 function pair(t,k){
@@ -100,7 +102,7 @@ export async function ensureMatchReviewSchema(pool){
 export async function buildMatchReviewSnapshot(pool,{refresh=false}={}){
   await ensureMatchReviewSchema(pool);
   const [tr,catalog,ov]=await Promise.all([pool.query(LATEST_SQL),getKktcellCatalog(refresh),pool.query(`SELECT o.*,u.first_name,u.last_name,u.email FROM product_match_overrides o LEFT JOIN app_users u ON u.id=o.updated_by ORDER BY o.updated_at DESC`)]);
-  const T=tr.rows.map(fpT).filter(x=>x.price!=null&&x.core>0),K=catalog.rows.filter(x=>x.is_core).map(fpK).filter(x=>x.price!=null&&x.core>0),pairs=[];
+  const T=tr.rows.map(fpT).filter(x=>!x.closed&&!x.addon&&x.price!=null&&x.core>0),K=catalog.rows.map(fpK).filter(x=>!x.closed&&!x.addon&&x.price!=null&&x.core>0),pairs=[];
   for(const t of T)for(const k of K){const p=pair(t,k);pairs.push({t,k,...p})}
   const bestT=new Map(),bestK=new Map();for(const p of pairs){if(!p.eligible)continue;const a=bestT.get(p.t.id),b=bestK.get(p.k.key);if(!a||p.score>a.score)bestT.set(p.t.id,p);if(!b||p.score>b.score)bestK.set(p.k.key,p)}
   const overrides=new Map(ov.rows.map(x=>[Number(x.telsim_product_id),x]));const rows=[];
