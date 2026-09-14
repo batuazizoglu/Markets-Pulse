@@ -156,10 +156,10 @@ export async function buildReportContext(pool, type, options={}) {
   const tasks=[
     buildMarketPulse(pool,days),currentBenchmark(pool),sourceHealth(pool),periodChanges(pool,days),scoreBaselines(pool,days),periodEvidence(pool,days,type==='evidence'?'full':type==='daily'?'meta':'visual')
   ];
-  if(type==='daily')tasks.push(getHomeInternetMarket(pool,{refresh:false}));
+  if(type==='daily'||type==='weekly')tasks.push(getHomeInternetMarket(pool,{refresh:false}));
   const results=await Promise.all(tasks);
   const [market,benchmark,sources,changes,baseline,evidence]=results;
-  const daily_home=type==='daily'?dailyHomeSections(results[6],days):null;
+  const daily_home=(type==='daily'||type==='weekly')?dailyHomeSections(results[6],days):null;
   return {
     type,title:REPORT_NAMES[type]||'Markets Pulse Raporu',days,
     period_start:periodStart.toISOString(),period_end:periodEnd.toISOString(),generated_at:new Date().toISOString(),
