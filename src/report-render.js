@@ -128,7 +128,7 @@ function bodyHtml(ctx){
   if(ctx.type!=='daily'){
     html+='<div class="pagebreak"></div><h2>Son '+esc(ctx.days)+' Günde Telsim Ne Yaptı?</h2><table><thead><tr><th>Tarih</th><th>Paket</th><th>Hareket</th><th>Önce</th><th>Sonra</th><th>Önem</th></tr></thead><tbody>'+changes+'</tbody></table>'+evidenceHtml(ctx,ctx.type==='weekly'?4:6);
   }
-  if(ctx.type==='daily')html+=dailyHomeSummaryHtml(ctx);
+  if(ctx.type==='daily'||ctx.type==='weekly')html+=dailyHomeSummaryHtml(ctx);
   html+='<h2>Kaynak Sağlığı</h2><table><thead><tr><th>Kaynak</th><th>Durum</th><th>HTTP</th><th>Okunan</th><th>Aktif</th><th>Yanıt</th></tr></thead><tbody>'+sourceRows+'</tbody></table>';
   return html;
 }
