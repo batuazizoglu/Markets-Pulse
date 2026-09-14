@@ -12,21 +12,21 @@ c=c.replace("segment:segmentLabel(eligibility),acquisition:p.acquisition||acquis
 
 c=c.replace(
 "function hardGate(t,k){const reasons=[];if(t.billing_type!==k.billing_type)reasons.push('billing_type');if(t.closed||k.closed)reasons.push('closed');if(t.addon||k.addon)reasons.push('non_core');if(t.eligibility!==k.eligibility)reasons.push(`eligibility:${t.eligibility}≠${k.eligibility}`);return {ok:reasons.length===0,reasons}}",
-"function hardGate(t,k){const reasons=[];if(t.billing_type!==k.billing_type)reasons.push('billing_type');if(t.closed||k.closed)reasons.push('closed');if(t.addon||k.addon)reasons.push('non_core');if(t.eligibility!==k.eligibility)reasons.push(`eligibility:${t.eligibility}≠${k.eligibility}`);if(t.product_family&&k.product_family&&t.product_family!==k.product_family)reasons.push(`product_family:${t.product_family}≠${k.product_family}`);return {ok:reasons.length===0,reasons}}"
+"function hardGate(t,k){const reasons=[];if(t.billing_type!==k.billing_type)reasons.push('billing_type');if(t.closed||k.closed)reasons.push('closed');if(t.addon||k.addon)reasons.push('non_core');if(t.eligibility!==k.eligibility)reasons.push(`eligibility:${t.eligibility}≠${k.eligibility}`);if(t.product_family&&k.product_family&&t.product_family!==k.product_family)reasons.push(`product_family:${t.product_family}≠${k.product_family}`);if(t.product_family&&!k.product_family)reasons.push(`product_family_missing:${t.product_family}`);return {ok:reasons.length===0,reasons}}"
 );
 
 c=c.replace("const reasons=[`aynı erişim: ${t.segment}`", "const reasons=[`aynı erişim: ${t.segment}`,`ürün ailesi: ${t.product_family||'belirsiz'} ↔ ${k.product_family||'belirsiz'}`");
 
 c=c.replace(
 "  {kind:'negative',t:/super databol 3/i,k:/yeni go.*l\\b/i,label:'Super Databol 3 (90 gün) ↔ Yeni GO L (30 gün)'},",
-"  {kind:'negative',t:/super databol xsmall/i,k:/yeni go.*world/i,label:'Super Databol XSmall ↔ GO World (family mismatch)'},\n  {kind:'negative',t:/super world xsmall/i,k:/yeni go.*xs/i,label:'Super World XSmall ↔ GO XS (family mismatch)'},\n  {kind:'negative',t:/super databol 3/i,k:/yeni go.*l\\b/i,label:'Super Databol 3 (90 gün) ↔ Yeni GO L (30 gün)'},"
+"  {kind:'negative',t:/super databol xsmall/i,k:/yeni go.*world/i,label:'Super Databol XSmall ↔ GO World (family mismatch)'},\n  {kind:'negative',t:/super world xsmall/i,k:/yeni go.*xs/i,label:'Super World XSmall ↔ GO XS (family mismatch)'},\n  {kind:'negative',t:/super world xsmall/i,k:/hos geldin s|hoş geldin s/i,label:'Super World XSmall ↔ Hoş Geldin S (family missing)'},\n  {kind:'negative',t:/super databol 3/i,k:/yeni go.*l\\b/i,label:'Super Databol 3 (90 gün) ↔ Yeni GO L (30 gün)'},"
 );
 
-c=c.replace("engine_version:'2.2-shadow'","engine_version:'2.3-shadow-family'");
+c=c.replace("engine_version:'2.2-shadow'","engine_version:'2.4-shadow-family-precedence'");
 
 if(!c.includes("productFamily('Telsim'"))throw new Error('Telsim family injection failed');
 if(!c.includes("productFamily('KKTCELL'"))throw new Error('KKTCELL family injection failed');
-if(!c.includes('product_family:${t.product_family}'))throw new Error('family hard gate injection failed');
+if(!c.includes('product_family_missing:${t.product_family}'))throw new Error('family precedence gate injection failed');
 
 fs.writeFileSync(path,c);
-console.log('[shadow-family-patch] applied v2.3 product-family gate');
+console.log('[shadow-family-patch] applied v2.4 family precedence gate');
