@@ -216,7 +216,7 @@ function emailHtml(type,ctx,attachments=[]){
           (segmentRows||'<tr><td colspan="4" style="padding:12px;color:#667399;font-size:12px;">Segment verisi bulunamadı.</td></tr>')+
         '</table>'+
       '</td></tr>'+
-      +(type==='daily'?dailyHomeEmailBlocks(ctx):'')+
+      +(type==='daily'||type==='weekly'?dailyHomeEmailBlocks(ctx):'')+
       '<tr><td class="mp-pad" style="padding:0 28px 18px;">'+
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f7f9fc;border:1px solid #e2e8f1;border-radius:12px;"><tr><td style="padding:14px 16px;">'+
           '<div style="font-size:11px;font-weight:800;color:#001484;margin-bottom:6px;">Ekli dosyalar</div>'+
