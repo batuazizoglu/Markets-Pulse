@@ -57,12 +57,17 @@ Markets Pulse generates and distributes:
 
 - Daily Executive Summary
 - Weekly Executive Summary
+- Monthly Consolidated Executive Report (rolling last 30 days)
 - Last 7 Days: What Did Telsim Do?
 - Evidence Pack
 - Turkcell Home Internet Competition Report
 - Superbox / Red Box Competition Report
 
 Daily and weekly executive e-mails include **mobile**, **Turkcell Home Internet** and **Superbox / Red Box** as separate management sections.
+
+The **Aylık Birleşik Yönetici Raporu** card in Reports combines all report families into one PDF and an HTML e-mail summary: mobile pressure/position and segment trends, Telsim package changes, fixed home-internet benchmarking, Superbox/Red Box, evidence coverage, source health and suggested next-period actions. Download via `GET /api/reports/monthly/download`; `POST /api/reports/monthly/email` uses the existing signed-in-user delivery path.
+
+Monthly means the **rolling last 30 days**, not the previous calendar month. Event totals use original database records without adding overlapping daily/weekly reports, with one frozen half-open time window. Current catalogs and benchmark scores are explicitly distinguished from historical changes and weekly recorded-score averages. Missing baseline/history is disclosed, never filled with invented deltas. Detail tables and visual evidence are selected subsets; totals cover all matching events. No new monthly email schedule is enabled, and generating/downloading a report does not send mail.
 
 ## Evidence Archive
 
