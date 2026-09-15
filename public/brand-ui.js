@@ -1,11 +1,12 @@
 (()=>{
 const routes={
   dashboard:{label:'Dashboard',desc:'Pazarın nabzı, kritik gelişmeler, aksiyonlar ve yönetici özeti.',ids:['market-pulse-section','dashboard-insights-section','overview']},
-  competitor:{label:'Rakip Takip',desc:'Kaynak sağlığı, günlük değişim, Telsim paketleri, kanıt ve değişiklik akışı.',ids:['source-health-section','daily-market-section','packages-section','historySection','changes-section','evidence-section','sources-section']},
+  competitor:{label:'Rakip Takip',desc:'Kaynak sağlığı, günlük değişim, Telsim paketleri ve değişiklik akışı.',ids:['source-health-section','daily-market-section','packages-section','historySection','changes-section','sources-section']},
   home:{label:'Ev İnterneti',desc:'KKTC sabit internet pazarında fiyat, hız, teknoloji, TCO ve rakip hareketleri.',ids:['home-internet-section']},
   compare:{label:'Ürün Karşılaştırma',desc:'Telsim ve KKTCELL ürünlerini segment bazında karşılaştırın.',ids:['benchmark-section']},
   segment:{label:'Segment Analizi',desc:'Genel, Asker, Öğrenci/Genç, Turist ve Premium/Platinum pozisyonu.',ids:['benchmark-section']},
   trends:{label:'Trendler',desc:'Rekabet pozisyonu ve rakip hareketlerinin 7/30/90 günlük seyri.',ids:['benchmark-section','changes-section']},
+  evidence:{label:'Kanıt Arşivi',desc:'Telsim tarife sayfalarının tarihli kayıtlarını bulun, karşılaştırın ve indirin.',ids:['evidence-section']},
   reports:{label:'Raporlar',desc:'Yönetici, ürün ve değişiklik verilerini dışa aktarın.',ids:['reports-section']},
   settings:{label:'Ayarlar',desc:'Tema planı, tarama ve arayüz tercihleri.',ids:['settings-section']}
 };
@@ -16,6 +17,7 @@ home:'<svg viewBox="0 0 24 24" fill="none"><path d="M3 11.5 12 4l9 7.5M5.5 10v10
 compare:'<svg viewBox="0 0 24 24" fill="none"><path d="M8 5h12M4 5h.01M4 12h12M20 12h.01M8 19h12M4 19h.01" stroke-width="1.8" stroke-linecap="round"/></svg>',
 segment:'<svg viewBox="0 0 24 24" fill="none"><circle cx="7" cy="8" r="3" stroke-width="1.7"/><circle cx="17" cy="8" r="3" stroke-width="1.7"/><circle cx="12" cy="17" r="3" stroke-width="1.7"/><path d="m9.5 10.2 1.2 3.6m3.8-3.6-1.2 3.6" stroke-width="1.7"/></svg>',
 trends:'<svg viewBox="0 0 24 24" fill="none"><path d="M4 18 9 12l4 3 7-9M16 6h4v4" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+evidence:'<svg viewBox="0 0 24 24" fill="none"><path d="M4 7h16v14H4V7ZM3 3h18v4H3V3Zm6 9h6" stroke-width="1.7" stroke-linejoin="round"/></svg>',
 reports:'<svg viewBox="0 0 24 24" fill="none"><path d="M6 3h9l3 3v15H6V3Z" stroke-width="1.7"/><path d="M15 3v4h4M9 12h6M9 16h6" stroke-width="1.7" stroke-linecap="round"/></svg>',
 settings:'<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke-width="1.7"/><path d="M19 13.5v-3l-2-.7a7 7 0 0 0-.7-1.7l.9-1.9-2.1-2.1-1.9.9a7 7 0 0 0-1.7-.7L10.5 2h-3l-.7 2.3a7 7 0 0 0-1.7.7l-1.9-.9-2.1 2.1.9 1.9a7 7 0 0 0-.7 1.7L0 10.5v3l2.3.7a7 7 0 0 0 .7 1.7l-.9 1.9 2.1 2.1 1.9-.9a7 7 0 0 0 1.7.7l.7 2.3h3l.7-2.3a7 7 0 0 0 1.7-.7l1.9.9 2.1-2.1-.9-1.9a7 7 0 0 0 .7-1.7l2.3-.7Z" stroke-width="1.2" transform="translate(2 1) scale(.83)"/></svg>'
 };
@@ -98,7 +100,7 @@ function organizeContent(){
   if(mp&&insights&&mp.nextElementSibling!==insights)mp.insertAdjacentElement('afterend',insights);
 }
 function allRouteIds(){return [...new Set(Object.values(routes).flatMap(r=>r.ids))]}
-function currentRoute(){const h=location.hash.replace('#','');return routes[h]?h:'dashboard'}
+function currentRoute(){const h=location.hash.replace('#','');return h==='evidence-section'?'evidence':routes[h]?h:'dashboard'}
 function applyRoute(route=currentRoute()){
   organizeContent();
   if(!routes[route])route='dashboard';if(route==='settings'&&currentUser?.role!=='admin')route='dashboard';document.body.dataset.view=route;
@@ -108,6 +110,7 @@ function applyRoute(route=currentRoute()){
   const vt=document.getElementById('viewTitle');if(vt)vt.innerHTML='<div><h2>'+routes[route].label+'</h2><p>'+routes[route].desc+'</p></div><span class="view-chip">Markets Pulse • Live</span>';
   if(route==='segment'&&window.setBmSegment)window.setBmSegment('Genel');
   if(route==='trends'&&window.setBmSegment)window.setBmSegment('Tümü');
+  if(route==='evidence'&&window.EvidenceArchive)window.EvidenceArchive.activate();
   if(route==='reports')loadReportStatus();
   if(route==='settings'&&currentUser?.role==='admin')loadUsers();
   if(route==='home'&&window.HomeInternetUI)window.HomeInternetUI.load();

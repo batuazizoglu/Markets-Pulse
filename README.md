@@ -74,7 +74,17 @@ For monitored competitor pages, Markets Pulse can store multiple layers of evide
 - Parsed JSON
 - Scan and source metadata
 
-The goal is not only to detect a change, but also to retain enough evidence to verify what was visible at the time of detection.
+Open **Kanıt Arşivi** from the sidebar to browse the saved Telsim tariff-page records:
+
+- Search by package name, source name or record ID, including Turkish characters.
+- Filter by source, date range in KKTC time (`Asia/Famagusta`), record type and missing files.
+- Browse all matching records in pages of 24 with card or list views.
+- Inspect focused/full-page images with zoom, searchable package data and scan changes.
+- Compare a record with the preceding saved record of the same source; it may be older than the previous day.
+- Download individual files or select up to 10 records across pages for a ZIP containing all available originals, changes and a SHA-256 manifest. Missing files are listed explicitly.
+- Copy a record link with the current filters. Opening it requires a platform session.
+
+Records are captured at baseline, on changes and approximately once per day. The archive currently covers the three Telsim tariff sources; file availability varies by record. Existing records are preserved and do not need recapturing.
 
 ## Architecture
 
@@ -201,6 +211,16 @@ npm start
 
 Requires Node.js 20+ and a PostgreSQL database.
 
+Archive tests and a local preview use an in-memory PostgreSQL fixture with synthetic records. They do not connect to production or start scan/e-mail jobs:
+
+```bash
+npm test
+npm run preview:evidence
+# Open http://127.0.0.1:4173/#evidence
+```
+
+Install development dependencies first. Tests also require `python3` (standard-library ZIP/hash verification). API tests exercise real SQL; DOM tests cover archive interactions. DOM tests do not verify rendered layout or native browser dialog behavior.
+
 ## API overview
 
 Selected endpoints include:
@@ -212,6 +232,13 @@ GET  /api/packages
 GET  /api/changes
 GET  /api/scans
 GET  /api/snapshots
+GET  /api/evidence?q=&source=&from=&to=&kind=&availability=&page=1&limit=24
+GET  /api/evidence/:id
+GET  /api/evidence/export?ids=1,2
+GET  /api/snapshots/:id/focus?download=1
+GET  /api/snapshots/:id/image?download=1
+GET  /api/snapshots/:id/html?download=1
+GET  /api/snapshots/:id/json?download=1
 GET  /api/market-pulse
 GET  /api/kktcell-catalog
 GET  /api/benchmark

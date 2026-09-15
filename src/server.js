@@ -1,7 +1,6 @@
 import express from 'express';
 import cron from 'node-cron';
 import path from 'path';
-import zlib from 'zlib';
 import { fileURLToPath } from 'url';
 import { initDb, pool } from './db.js';
 import { scanAll } from './scanner.js';
@@ -13,6 +12,7 @@ import { getReportEmailStatus, sendReportEmail } from './report-email.js';
 import { sendPersonalReportEmail } from './manual-report-email.js';
 import { getHomeInternetMarket, scanHomeInternet } from './home-internet.js';
 import { registerAuth, bootstrapInitialUsers } from './auth.js';
+import { registerEvidenceRoutes } from './evidence-archive.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -296,40 +296,7 @@ app.get('/api/product/:id/history', async (req,res,next)=>{try{
   res.json((await pool.query(`SELECT * FROM product_versions WHERE product_id=$1 ORDER BY captured_at DESC,id DESC LIMIT 200`,[req.params.id])).rows);
 }catch(e){next(e)}});
 
-app.get('/api/snapshots', async (req,res,next)=>{try{
-  const r=await pool.query(`SELECT sn.id,sn.captured_at,sn.kind,sn.page_hash,sn.screenshot_error,sn.focused_screenshot_error,sn.screenshot_meta,
-    (sn.screenshot_png IS NOT NULL) has_screenshot,(sn.focused_screenshot_png IS NOT NULL) has_focus,
-    (sn.html_gzip IS NOT NULL) has_html,(sn.extracted_json IS NOT NULL) has_json,
-    s.slug source_slug,s.name source_name,s.url source_url,sc.parsed_count
-    FROM snapshots sn JOIN sources s ON s.id=sn.source_id JOIN scans sc ON sc.id=sn.scan_id
-    ORDER BY sn.captured_at DESC LIMIT 100`);
-  res.json(r.rows);
-}catch(e){next(e)}});
-
-app.get('/api/snapshots/:id/image', async (req,res,next)=>{try{
-  const r=await pool.query('SELECT screenshot_png FROM snapshots WHERE id=$1',[req.params.id]);
-  if(!r.rows.length || !r.rows[0].screenshot_png) return res.status(404).send('Screenshot not available');
-  res.set('Content-Type','image/png');res.set('Cache-Control','private, max-age=3600');res.send(r.rows[0].screenshot_png);
-}catch(e){next(e)}});
-
-app.get('/api/snapshots/:id/focus', async (req,res,next)=>{try{
-  const r=await pool.query('SELECT focused_screenshot_png FROM snapshots WHERE id=$1',[req.params.id]);
-  if(!r.rows.length || !r.rows[0].focused_screenshot_png) return res.status(404).send('Focused screenshot not available');
-  res.set('Content-Type','image/png');res.set('Cache-Control','private, max-age=3600');res.send(r.rows[0].focused_screenshot_png);
-}catch(e){next(e)}});
-
-app.get('/api/snapshots/:id/html', async (req,res,next)=>{try{
-  const r=await pool.query('SELECT html_gzip FROM snapshots WHERE id=$1',[req.params.id]);
-  if(!r.rows.length || !r.rows[0].html_gzip) return res.status(404).send('HTML not available');
-  const html=zlib.gunzipSync(r.rows[0].html_gzip).toString('utf8');
-  res.set('Content-Type','text/plain; charset=utf-8');res.set('Content-Disposition',`inline; filename="snapshot-${req.params.id}.html.txt"`);res.send(html);
-}catch(e){next(e)}});
-
-app.get('/api/snapshots/:id/json', async (req,res,next)=>{try{
-  const r=await pool.query('SELECT extracted_json FROM snapshots WHERE id=$1',[req.params.id]);
-  if(!r.rows.length) return res.status(404).json({error:'Snapshot not found'});
-  res.json(r.rows[0].extracted_json);
-}catch(e){next(e)}});
+registerEvidenceRoutes(app,pool);
 
 app.get('/api/reports/status', async (req,res,next)=>{try{
   const r=await pool.query('SELECT id,report_type,period_start,period_end,generated_at,trigger_type,delivery_status,recipients,sent_at,file_name,file_size_bytes,error,meta_json FROM report_runs ORDER BY generated_at DESC LIMIT 30');
