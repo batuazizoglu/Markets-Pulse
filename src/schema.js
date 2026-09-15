@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS changes (
   scan_id BIGINT NOT NULL REFERENCES scans(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_changes_time ON changes(detected_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_changes_scan_source ON changes(scan_id, source_id);
 CREATE INDEX IF NOT EXISTS idx_changes_source_time ON changes(source_id, detected_at DESC);
 
 CREATE TABLE IF NOT EXISTS snapshots (
@@ -94,6 +95,7 @@ ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS screenshot_error TEXT;
 ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS focused_screenshot_error TEXT;
 ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS screenshot_meta JSONB;
 CREATE INDEX IF NOT EXISTS idx_snapshots_source_time ON snapshots(source_id, captured_at DESC);
+CREATE INDEX IF NOT EXISTS idx_snapshots_time ON snapshots(captured_at DESC, id DESC);
 
 CREATE TABLE IF NOT EXISTS competitive_position_history (
   id BIGSERIAL PRIMARY KEY,

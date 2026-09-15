@@ -8,15 +8,21 @@
   },
   "scripts": {
     "start": "node src/server.js",
-    "dev": "node --watch src/server.js"
+    "dev": "node --watch src/server.js",
+    "test": "node --test test/*.test.js",
+    "preview:evidence": "node test/preview-evidence.js"
   },
   "dependencies": {
+    "archiver": "^7.0.1",
     "cheerio": "^1.0.0",
     "express": "^4.21.2",
     "node-cron": "^3.0.3",
+    "nodemailer": "^6.9.16",
     "pg": "^8.13.1",
-    "puppeteer": "^24.16.0",
-    "archiver": "^7.0.1",
-    "nodemailer": "^6.9.16"
+    "puppeteer": "^24.16.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "jsdom": "^26.1.0"
   }
 }

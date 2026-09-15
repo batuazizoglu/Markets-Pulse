@@ -9,14 +9,15 @@ async function api(path,opts){const r=await fetch(path,opts);let j;try{j=await r
 async function loadAll(){
   try{
     $('liveText').textContent='Güncelleniyor…';
-    const [sum,packs,changes,snaps,comp,value]=await Promise.all([
-      api('/api/summary'),api('/api/packages'),api('/api/changes?limit=100'),api('/api/snapshots'),api('/api/comparison'),api('/api/value-index')
+    const [sum,packs,changes,comp,value]=await Promise.all([
+      api('/api/summary'),api('/api/packages'),api('/api/changes?limit=100'),api('/api/comparison'),api('/api/value-index')
     ]);
     cacheSummary=sum;cachePackages=packs;cacheValue=value;
     renderKpis(sum);renderSourceCards(sum.sources||[]);renderHero(changes,value);renderTabs(sum.sources||[]);renderPackages();
-    renderComparison(comp.rows||[]);renderValue(value||[]);renderChanges(changes);renderEvidence(snaps);renderSourceTable(sum.sources||[]);
+    renderComparison(comp.rows||[]);renderValue(value||[]);renderChanges(changes);renderSourceTable(sum.sources||[]);
     await loadTimeline(7);
     $('liveText').textContent='Canlı • 60 sn';
+    window.EvidenceArchive?.refreshIfActive();
   }catch(e){console.error(e);$('liveText').textContent='Bağlantı hatası'}
 }
 
@@ -95,13 +96,6 @@ async function loadTimeline(days=7,el){
   $('timeline').innerHTML=rows.length?rows.slice(0,80).map(c=>`<div class="tl ${esc(c.severity)}"><div class="tl-time">${fmtTime(c.detected_at)}</div><div class="tl-axis"><span class="tl-dot"></span></div><div class="tl-content"><b>${esc(c.product_name||c.old_value||c.new_value||'Paket')}</b><div class="muted">${esc(c.source_name)} • ${changeText(c)}</div></div></div>`).join(''):`<div class="empty">Bu dönemde değişiklik yok.</div>`;
 }
 
-function renderEvidence(rows){
-  $('evidenceGrid').innerHTML=rows.length?rows.slice(0,18).map(x=>`<article class="card evidence-card"><div class="evidence-img">${x.has_screenshot?`<img loading="lazy" src="/api/snapshots/${x.id}/image" alt="${esc(x.source_name)} ekran görüntüsü">`:`<div class="evidence-missing"><b>Ekran görüntüsü yok</b><br>${esc(x.screenshot_error||'Eski snapshot veya capture bekleniyor')}</div>`}</div><div class="evidence-body"><div class="evidence-title"><b>${esc(x.source_name)}</b><span class="status ${x.has_screenshot?'ok':'warn'}">${x.has_screenshot?'PNG HAZIR':'PNG YOK'}</span></div><div class="evidence-meta">${fmtTime(x.captured_at)} • ${esc(x.kind)} • ${x.parsed_count??0} paket</div><div class="evidence-actions">${x.has_screenshot?`<button class="mini-btn primary" onclick="openEvidence(${x.id},'${escAttr(x.source_name)}','${escAttr(fmtTime(x.captured_at))}')">Ekran Görüntüsü</button>`:''}${x.has_html?`<a class="mini-btn" href="/api/snapshots/${x.id}/html" target="_blank">HTML</a>`:''}${x.has_json?`<a class="mini-btn" href="/api/snapshots/${x.id}/json" target="_blank">JSON</a>`:''}<a class="mini-btn" href="${esc(x.source_url)}" target="_blank" rel="noopener">Canlı Sayfa</a></div></div></article>`).join(''):`<div class="empty">Kanıt snapshot'ı henüz oluşmadı.</div>`;
-}
-function escAttr(s){return String(s??'').replace(/['\\]/g,m=>m==="'"?'&#39;':'\\\\')}
-function openEvidence(id,name,time){$('evidenceTitle').textContent=`${name} • ${time}`;$('evidenceFull').src=`/api/snapshots/${id}/image`;$('evidenceModal').classList.add('open');document.body.style.overflow='hidden'}
-function closeEvidence(){$('evidenceModal').classList.remove('open');$('evidenceFull').src='';document.body.style.overflow=''}
-
 function renderSourceTable(rows){
   $('sourceRows').innerHTML=rows.map(s=>`<tr><td><b>${esc(s.name)}</b></td><td class="url"><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.url)}</a></td><td><span class="status ${s.last_status==='ok'?'ok':s.last_status?'err':'warn'}">${s.last_status==='ok'?'SAĞLIKLI':s.last_status==='error'?'HATA':'BEKLİYOR'}</span></td><td>${s.http_status??'—'}</td><td>${s.parsed_count??'—'}</td><td>${s.active_products??0}</td><td>${s.response_ms?`${s.response_ms} ms`:'—'}</td><td>${fmtTime(s.last_checked_at)}</td><td class="error-text">${esc(s.last_error||'—')}</td></tr>`).join('');
 }
@@ -119,5 +113,4 @@ function fieldLabel(f){return ({data_gb:'Data',bonus_data_gb:'Bonus Data',local_
 function pretty(v){if(v==null)return '—';try{const x=JSON.parse(v);if(typeof x==='object')return JSON.stringify(x)}catch{}return String(v)}
 function changeText(c){if(c.change_type==='field_changed')return `${fieldLabel(c.field_name)}: ${pretty(c.old_value)} → ${pretty(c.new_value)}`;if(c.change_type==='added')return 'Yeni paket eklendi';return 'Paket kaldırıldı / görünmüyor'}
 
-document.addEventListener('keydown',e=>{if(e.key==='Escape')closeEvidence()});
 loadAll();setInterval(loadAll,60000);
