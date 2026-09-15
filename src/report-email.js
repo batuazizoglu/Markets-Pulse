@@ -1,5 +1,6 @@
 import nodemailer from 'nodemailer';
-import { REPORT_NAMES, REPORT_TZ } from './report-data.js';
+import { REPORT_NAMES, REPORT_TZ, reportDays } from './report-data.js';
+import { monthlyOverviewHtml, monthlyPlainText } from './monthly-report-content.js';
 import { generateReportPdf } from './report-render.js';
 import { generateEvidencePack } from './evidence-pack.js';
 import { pool as dbPool } from './db.js';
@@ -151,9 +152,9 @@ function homeEmailHtml(type,ctx,attachments=[]){
 function dailyHomeEmailBlocks(ctx){
   const d=ctx.daily_home;if(!d)return '';
   const weekly=ctx.type==='weekly';
-  const periodLabel=weekly?'7 Günlük':'Günlük';
-  const changeLabel=weekly?'7 Gün Değişiklik':'24 Saat Değişiklik';
-  const periodText=weekly?'Son 7 gün':'Son 24 saat';
+  const periodLabel=ctx.type==='monthly'?'30 Günlük':weekly?'7 Günlük':'Günlük';
+  const changeLabel=ctx.type==='monthly'?'30 Gün Değişiklik':weekly?'7 Gün Değişiklik':'24 Saat Değişiklik';
+  const periodText=ctx.type==='monthly'?'Son 30 gün':weekly?'Son 7 gün':'Son 24 saat';
   const money=v=>v==null||Number.isNaN(Number(v))?'—':Number(v).toLocaleString('tr-TR',{maximumFractionDigits:0})+' TL';
   const fixed=d.fixed||{},fwa=d.fwa||{},fp=fixed.products||[],fw=fwa.products||[];
   const turkcell=fp.filter(x=>x.provider==='Turkcell Ev İnterneti');
@@ -268,7 +269,8 @@ function emailHtml(type,ctx,attachments=[]){
           (segmentRows||'<tr><td colspan="4" style="padding:12px;color:#667399;font-size:12px;">Segment verisi bulunamadı.</td></tr>')+
         '</table>'+
       '</td></tr>'+
-      +(type==='daily'||type==='weekly'?dailyHomeEmailBlocks(ctx):'')+
+      (['daily','weekly','monthly'].includes(type)?dailyHomeEmailBlocks(ctx):'')+
+      (type==='monthly'?'<tr><td class="mp-pad" style="padding:0 28px 18px">'+monthlyOverviewHtml(ctx,{compact:true})+'</td></tr>':'')+
       '<tr><td class="mp-pad" style="padding:0 28px 18px;">'+
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f7f9fc;border:1px solid #e2e8f1;border-radius:12px;"><tr><td style="padding:14px 16px;">'+
           '<div style="font-size:11px;font-weight:800;color:#001484;margin-bottom:6px;">Ekli dosyalar</div>'+
@@ -305,7 +307,7 @@ export async function sendReportEmail(pool,type,options={}){
     attachments.push({filename:seven.fileName,content:seven.buffer,contentType:seven.contentType});
     totalBytes+=weekly.buffer.length+seven.buffer.length;
   }else{
-    const pdf=await generateReportPdf(pool,type,{days:options.days||(type==='daily'?1:7)});ctx=pdf.ctx;
+    const pdf=await generateReportPdf(pool,type,{days:reportDays(type,options.days)});ctx=pdf.ctx;
     attachments.push({filename:pdf.fileName,content:pdf.buffer,contentType:pdf.contentType});totalBytes+=pdf.buffer.length;
   }
   const maxBytes=mail.status.max_attachment_mb*1024*1024;
@@ -315,7 +317,7 @@ export async function sendReportEmail(pool,type,options={}){
   if(mail.status.api_configured){
     info=await sendViaBrevoApi({
       status:mail.status,subject,
-      textContent:(ctx.market?.executive_summary||(type==='fwa'?'Markets Pulse Superbox / Red Box rekabet raporu':'Markets Pulse Turkcell Ev İnterneti rekabet raporu')),
+      textContent:type==='monthly'?monthlyPlainText(ctx):(ctx.market?.executive_summary||(type==='fwa'?'Markets Pulse Superbox / Red Box rekabet raporu':'Markets Pulse Turkcell Ev İnterneti rekabet raporu')),
       htmlContent:emailHtml(type,ctx,attachments),
       attachments
     });
@@ -323,7 +325,7 @@ export async function sendReportEmail(pool,type,options={}){
     console.log('[report-email] smtp connecting',JSON.stringify({host:process.env.SMTP_HOST,port:Number(process.env.SMTP_PORT||587),from:mail.status.from,recipients:recipientEmails.length,subject,total_bytes:totalBytes}));
     info=await mail.transport.sendMail({
       from:mail.status.from,to:recipientEmails.join(', '),subject,
-      text:(ctx.market?.executive_summary||(type==='fwa'?'Markets Pulse Superbox / Red Box rekabet raporu':'Markets Pulse Turkcell Ev İnterneti rekabet raporu')),html:emailHtml(type,ctx,attachments),attachments
+      text:type==='monthly'?monthlyPlainText(ctx):(ctx.market?.executive_summary||(type==='fwa'?'Markets Pulse Superbox / Red Box rekabet raporu':'Markets Pulse Turkcell Ev İnterneti rekabet raporu')),html:emailHtml(type,ctx,attachments),attachments
     });
     console.log('[report-email] smtp accepted',JSON.stringify({message_id:info.messageId,accepted_count:Array.isArray(info.accepted)?info.accepted.length:null,rejected_count:Array.isArray(info.rejected)?info.rejected.length:null,response:info.response}));
   }

@@ -79,9 +79,14 @@ function distribution(moves,field){const counts={};for(const m of moves)counts[m
 export async function buildMarketPulse(pool,days=30){
   const safeDays=Math.max(1,Math.min(180,Number(days)||30));
   const {rows}=await pool.query(`SELECT c.*,s.slug source_slug,s.name source_name,s.url source_url,p.current_name product_name,p.identity_base,v.extras_json FROM changes c JOIN sources s ON s.id=c.source_id LEFT JOIN products p ON p.id=c.product_id LEFT JOIN LATERAL (SELECT extras_json FROM product_versions pv WHERE pv.product_id=p.id ORDER BY pv.captured_at DESC,pv.id DESC LIMIT 1) v ON TRUE WHERE c.detected_at >= NOW()-($1::text||' days')::interval ORDER BY c.detected_at DESC,c.id DESC LIMIT 800`,[safeDays]);
+  return marketPulseFromRows(rows,safeDays);
+}
+
+export function marketPulseFromRows(rows,days=30,now=new Date()){
+  const safeDays=Math.max(1,Math.min(180,Number(days)||30));
   const moves=groupRows(rows).map(move=>{const segment=detectSegment(move),intent=detectIntent(move,segment),score=scoreMove(move,segment,intent);return {...move,segment,intent:INTENT_LABELS[intent]||intent,...score}});
   const topThreats=[...moves].sort((a,b)=>b.threat-a.threat).slice(0,8),opportunities=moves.filter(m=>m.decision==='OPPORTUNITY').sort((a,b)=>b.opportunity-a.opportunity).slice(0,5),actionable=moves.filter(m=>m.decision==='THREAT');
-  const top5=topThreats.slice(0,5),avgTop=top5.length?top5.reduce((s,m)=>s+m.threat,0)/top5.length:0,recent48=moves.filter(m=>Date.now()-new Date(m.detected_at).getTime()<=48*3600*1000).length;
+  const top5=topThreats.slice(0,5),avgTop=top5.length?top5.reduce((s,m)=>s+m.threat,0)/top5.length:0,recent48=moves.filter(m=>new Date(now)-new Date(m.detected_at)>=0&&new Date(now)-new Date(m.detected_at)<=48*3600*1000).length;
   const pressure_index=Math.min(100,Math.round(avgTop*.78+Math.min(recent48,7)*3.1)),pressure_level=pressure_index>=75?'CRITICAL':pressure_index>=55?'HIGH':pressure_index>=30?'MEDIUM':'LOW';
   return {generated_at:new Date().toISOString(),window_days:safeDays,competitor:'KKTC Telsim',methodology:'Rule-based explainable scoring v2 • 5 segment',pressure_index,pressure_level,move_count:moves.length,threat_count:actionable.length,opportunity_count:moves.filter(m=>m.decision==='OPPORTUNITY').length,no_reaction_count:moves.filter(m=>m.decision==='NO_REACTION').length,intent_mix:distribution(moves,'intent'),segment_mix:distribution(moves,'segment'),top_threats:topThreats,opportunities,moves:moves.slice(0,60),executive_summary:buildExecutiveSummary(pressure_index,pressure_level,topThreats,opportunities,moves)};
 }

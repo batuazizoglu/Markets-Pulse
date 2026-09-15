@@ -1,4 +1,5 @@
-import { buildMarketPulse } from './intelligence.js';
+import { buildMarketPulse, marketPulseFromRows } from './intelligence.js';
+import { collectMonthlyData } from './monthly-report-data.js';
 import { getKktcellCatalog, buildBenchmark } from './kktcell-benchmark.js';
 import { getHomeInternetMarket } from './home-internet.js';
 
@@ -6,11 +7,16 @@ export const REPORT_TZ = 'Asia/Famagusta';
 export const REPORT_NAMES = {
   daily: 'Günlük Yönetici Özeti',
   weekly: 'Haftalık Markets Pulse Raporu',
+  monthly: 'Aylık Birleşik Yönetici Raporu · Son 30 Gün',
   telsim7: 'Son 7 Günde Telsim Ne Yaptı?',
   evidence: 'Evidence Pack',
   home: 'Turkcell Ev İnterneti Rekabet Raporu',
   fwa: 'Superbox / Red Box Rekabet Raporu'
 };
+
+export function reportDays(type,requestedDays=7){
+  return type==='monthly'?30:type==='daily'?1:Math.max(1,Math.min(30,Number(requestedDays)||7));
+}
 
 function latestPackagesSql() {
   return "SELECT p.id,p.identity_base,p.current_name,p.first_seen_at,p.last_seen_at,p.active,p.missing_count,p.last_position," +
@@ -108,11 +114,11 @@ function scoreDeltas(benchmark, baseline) {
   });
 }
 
-function dailyHomeSections(home,days=1){
-  const cutoff=Date.now()-Math.max(1,Number(days)||1)*86400000;
+function dailyHomeSections(home,days=1,now=new Date()){
+  const cutoff=new Date(now).getTime()-Math.max(1,Number(days)||1)*86400000;
   const productMap=new Map((home.products||[]).map(x=>[x.product_key,x]));
   const familyChanges=family=>(home.changes||[]).filter(ch=>{
-    if(new Date(ch.detected_at).getTime()<cutoff)return false;
+    if(new Date(ch.detected_at).getTime()<cutoff||new Date(ch.detected_at)>new Date(now))return false;
     const p=productMap.get(ch.product_key);
     if(p)return (p.product_family||'fixed')===family;
     if(family==='fwa')return ['kktcell-superbox','lifecell-digital-superbox','telsim-redbox'].includes(ch.source_slug)||/superbox|red box/i.test(ch.product_name||'');
@@ -129,9 +135,19 @@ function dailyHomeSections(home,days=1){
   };
 }
 
-export async function buildReportContext(pool, type, options={}) {
-  const days = type === 'daily' ? 1 : Math.max(1,Math.min(30,Number(options.days||7)));
+export async function buildReportContext(pool, type, options={},loaders={currentBenchmark,sourceHealth,getHomeInternetMarket}) {
+  const days = reportDays(type,options.days);
   const periodEnd = new Date(), periodStart = new Date(periodEnd.getTime()-days*86400000);
+
+  if(type==='monthly'){
+    const [data,benchmark,sources,home]=await Promise.all([
+      collectMonthlyData(pool,periodStart,periodEnd),loaders.currentBenchmark(pool),loaders.sourceHealth(pool),loaders.getHomeInternetMarket(pool,{refresh:false})
+    ]);
+    const changes=data.changes,daily_home=dailyHomeSections({...home,changes:data.homeChanges},30,periodEnd);
+    return {type,title:REPORT_NAMES[type],days,period_start:periodStart.toISOString(),period_end:periodEnd.toISOString(),generated_at:periodEnd.toISOString(),
+      market:marketPulseFromRows(changes,30,periodEnd),benchmark,sources,changes,stats:changeStats(changes),score_deltas:scoreDeltas(benchmark,data.baseline),evidence:data.evidence,daily_home,
+      monthly:{...data.summary,trend:data.trend,coverage:data.coverage,total_changes:changes.length+data.homeChanges.length}};
+  }
 
   if(type==='home'||type==='fwa'){
     const home=await getHomeInternetMarket(pool,{refresh:false});

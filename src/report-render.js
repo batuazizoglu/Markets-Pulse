@@ -1,5 +1,6 @@
 import puppeteer from 'puppeteer';
 import { REPORT_TZ, REPORT_NAMES, buildReportContext } from './report-data.js';
+import { monthlyOverviewHtml } from './monthly-report-content.js';
 
 let reportBrowserPromise = null;
 
@@ -136,7 +137,18 @@ export function renderReportHtml(ctx){
   const range=ctx.type==='daily'?localDate(ctx.period_end):localDate(ctx.period_start)+' - '+localDate(ctx.period_end);
   const isHome=ctx.type==='home'||ctx.type==='fwa';
   const subtitle=isHome?(ctx.type==='fwa'?'FWA competitive intelligence • Superbox / Red Box':'Sabit internet competitive intelligence • Turkcell Ev İnterneti'):'Competitive intelligence • Kuzey Kıbrıs Turkcell karar destek raporu';
-  return '<!doctype html><html lang="tr"><head><meta charset="utf-8"><style>'+css()+'</style></head><body><div class="header"><div>'+logoSvg()+'</div><div class="meta"><b>'+esc(ctx.title)+'</b>'+esc(range)+'<br>Üretim: '+esc(localStamp(ctx.generated_at))+'</div></div><h1>'+esc(ctx.title)+'</h1><div class="sub">'+esc(subtitle)+'</div>'+(isHome?homeBodyHtml(ctx):bodyHtml(ctx))+'<div class="footer"><span>Markets Pulse by Turkcell</span><span>Daha fazla veri • Daha güçlü kararlar</span></div></body></html>';
+  let content=isHome?homeBodyHtml(ctx):bodyHtml(ctx);
+  if(ctx.type==='monthly'){
+    content=monthlyOverviewHtml(ctx)+'<div class="pagebreak"></div><h2>Mobil Rekabet ve Paket Hareketleri</h2>'+content+
+      '<p>Mobil değişiklik tablosu son '+Math.min(40,ctx.changes.length)+' / '+ctx.changes.length+' kaydı gösterir. Yönetici özetindeki sayılar dönemdeki tüm kayıtları kapsar.</p>';
+    for(const [family,title] of [['fixed','Turkcell Ev İnterneti • Aylık Detay'],['fwa','Superbox / Red Box • Aylık Detay']]){
+      const section=ctx.daily_home[family];
+      content+='<div class="pagebreak"></div><h2>'+title+'</h2>'+homeBodyHtml({...ctx,type:family==='fixed'?'home':'fwa',home:section})+
+        '<p>Seçilmiş ürünler ve son '+Math.min(35,section.changes.length)+' / '+section.changes.length+' değişiklik gösterilir. Ürün tablosu güncel katalogdan ilk '+Math.min(family==='fixed'?55:30,section.products.length)+' / '+section.products.length+' teklifi içerir.</p>';
+    }
+  }
+  const monthlyCss=ctx.type==='monthly'?'thead{display:table-header-group}tr,.kpi,.evidence-card{break-inside:avoid}h2,h3{break-after:avoid}td{overflow-wrap:anywhere}.two{display:block}.two>div{margin-bottom:12px}':'';
+  return '<!doctype html><html lang="tr"><head><meta charset="utf-8"><style>'+css()+monthlyCss+'</style></head><body><div class="header"><div>'+logoSvg()+'</div><div class="meta"><b>'+esc(ctx.title)+'</b>'+esc(range)+'<br>Üretim: '+esc(localStamp(ctx.generated_at))+'</div></div><h1>'+esc(ctx.title)+'</h1><div class="sub">'+esc(subtitle)+'</div>'+content+'<div class="footer"><span>Markets Pulse by Turkcell</span><span>Daha fazla veri • Daha güçlü kararlar</span></div></body></html>';
 }
 async function getBrowser(){
   if(!reportBrowserPromise)reportBrowserPromise=puppeteer.launch({headless:true,args:['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage','--disable-gpu','--no-zygote']}).catch(e=>{reportBrowserPromise=null;throw e;});
