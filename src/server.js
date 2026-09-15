@@ -10,6 +10,7 @@ import { getKktcellCatalog, buildBenchmark } from './kktcell-benchmark.js';
 import { generateReportPdf } from './report-render.js';
 import { generateEvidencePack } from './evidence-pack.js';
 import { getReportEmailStatus, sendReportEmail } from './report-email.js';
+import { sendPersonalReportEmail } from './manual-report-email.js';
 import { getHomeInternetMarket, scanHomeInternet } from './home-internet.js';
 import { registerAuth, bootstrapInitialUsers } from './auth.js';
 
@@ -346,12 +347,12 @@ app.get('/api/reports/:type/download', async (req,res,next)=>{try{
 app.post('/api/reports/:type/email', async (req,res,next)=>{try{
   const type=String(req.params.type||'');
   if(!['daily','weekly','telsim7','evidence','home','fwa'].includes(type)) return res.status(400).json({error:'Unknown report type'});
-  const result=await sendReportEmail(pool,type,{days:type==='daily'?1:7});
-  await logReportRun({report_type:type,period_start:result.ctx.period_start,period_end:result.ctx.period_end,trigger_type:'manual',delivery_status:'sent',recipients:result.recipients,sent_at:new Date(),file_size_bytes:result.total_bytes,meta_json:{subject:result.subject,message_id:result.message_id}});
-  res.json({ok:true,recipients:result.recipients,subject:result.subject,message_id:result.message_id,total_bytes:result.total_bytes});
+  const result=await sendPersonalReportEmail(pool,type,req.appUser?.email,{days:type==='daily'?1:7});
+  await logReportRun({report_type:type,period_start:result.ctx.period_start,period_end:result.ctx.period_end,trigger_type:'manual',delivery_status:'sent',recipients:result.recipients,sent_at:new Date(),file_size_bytes:result.total_bytes,meta_json:{subject:result.subject,message_id:result.message_id,recipient_mode:'manual-user',user_id:req.appUser?.id||null}});
+  res.json({ok:true,recipients:result.recipients,delivery_to:result.delivery_to,subject:result.subject,message_id:result.message_id,total_bytes:result.total_bytes});
 }catch(e){
-  const status=e?.code==='EMAIL_NOT_CONFIGURED'?503:e?.code==='ATTACHMENT_TOO_LARGE'?413:500;
-  await logReportRun({report_type:req.params.type,trigger_type:'manual',delivery_status:'error',error:e?.message||String(e)});
+  const status=e?.code==='PERSONAL_EMAIL_REQUIRED'?400:e?.code==='EMAIL_NOT_CONFIGURED'?503:e?.code==='ATTACHMENT_TOO_LARGE'?413:500;
+  await logReportRun({report_type:req.params.type,trigger_type:'manual',delivery_status:'error',error:e?.message||String(e),meta_json:{recipient_mode:'manual-user',user_id:req.appUser?.id||null}});
   res.status(status).json({error:e?.message||String(e),code:e?.code||null});
 }});
 
