@@ -2,34 +2,71 @@ import nodemailer from 'nodemailer';
 import { REPORT_NAMES, REPORT_TZ } from './report-data.js';
 import { generateReportPdf } from './report-render.js';
 import { generateEvidencePack } from './evidence-pack.js';
+import { pool as dbPool } from './db.js';
 
 function parseList(v){return String(v||'').split(/[;,]/).map(x=>x.trim()).filter(Boolean);}
 function localDate(v=new Date()){return new Intl.DateTimeFormat('tr-TR',{timeZone:REPORT_TZ,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(v));}
-function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
+function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[m]));}
 
+let dynamicRecipients=[];
+let recipientSource='environment-fallback';
+function uniqueEmails(list){
+  const seen=new Set(),out=[];
+  for(const raw of list||[]){const email=String(raw||'').trim().toLowerCase();if(!email||!/@/.test(email)||seen.has(email))continue;seen.add(email);out.push(email)}
+  return out;
+}
+export async function refreshReportRecipients(pool=dbPool){
+  try{
+    const r=await pool.query("SELECT email FROM app_users WHERE active=TRUE AND email IS NOT NULL AND length(trim(email))>3 ORDER BY id");
+    const users=uniqueEmails(r.rows.map(x=>x.email));
+    if(users.length){dynamicRecipients=users;recipientSource='active-app-users'}
+    else{dynamicRecipients=uniqueEmails(parseList(process.env.REPORT_EMAIL_TO));recipientSource='environment-fallback'}
+  }catch(e){
+    dynamicRecipients=uniqueEmails(parseList(process.env.REPORT_EMAIL_TO));recipientSource='environment-fallback';
+    console.error('[report-email] dynamic recipient refresh failed',e?.message||String(e));
+  }
+  return [...dynamicRecipients];
+}
+function recipientDisplay(count){
+  return {length:count,join:()=>count+' kişi',toJSON:()=>[count+' kişi']};
+}
 export function getReportEmailStatus(){
-  const recipients=parseList(process.env.REPORT_EMAIL_TO);
-  const apiConfigured=Boolean(process.env.BREVO_API_KEY&&process.env.REPORT_EMAIL_FROM&&recipients.length);
-  const smtpConfigured=Boolean(process.env.SMTP_HOST&&process.env.REPORT_EMAIL_FROM&&recipients.length);
+  const actual=dynamicRecipients.length?dynamicRecipients:uniqueEmails(parseList(process.env.REPORT_EMAIL_TO));
+  const count=actual.length;
+  const apiConfigured=Boolean(process.env.BREVO_API_KEY&&process.env.REPORT_EMAIL_FROM&&count);
+  const smtpConfigured=Boolean(process.env.SMTP_HOST&&process.env.REPORT_EMAIL_FROM&&count);
   const configured=apiConfigured||smtpConfigured;
-  return {
+  const status={
     configured,api_configured:apiConfigured,smtp_configured:smtpConfigured,
     delivery_mode:apiConfigured?'brevo-api':smtpConfigured?'smtp':'none',
-    recipients,from:process.env.REPORT_EMAIL_FROM||null,smtp_host:process.env.SMTP_HOST||null,
+    recipients:recipientDisplay(count),recipient_count:count,recipient_source:recipientSource,
+    from:process.env.REPORT_EMAIL_FROM||null,smtp_host:process.env.SMTP_HOST||null,
     daily_cron:process.env.REPORT_DAILY_CRON||'0 8 * * *',
     weekly_cron:process.env.REPORT_WEEKLY_CRON||'15 8 * * 1',
     timezone:REPORT_TZ,max_attachment_mb:Number(process.env.REPORT_EMAIL_MAX_MB||18)
   };
+  Object.defineProperty(status,'recipient_emails',{value:actual,enumerable:false,writable:false});
+  return status;
 }
 function transportConfig(){
   const status=getReportEmailStatus();
-  if(!status.configured){const e=new Error('E-posta yapılandırılmadı. REPORT_EMAIL_FROM, REPORT_EMAIL_TO ve BREVO_API_KEY (önerilen) veya SMTP ayarları gerekli.');e.code='EMAIL_NOT_CONFIGURED';throw e;}
+  if(!status.configured){const e=new Error('E-posta yapılandırılmadı. Aktif Markets Pulse kullanıcısı ve REPORT_EMAIL_FROM ile BREVO_API_KEY (önerilen) veya SMTP ayarları gerekli.');e.code='EMAIL_NOT_CONFIGURED';throw e;}
   if(status.api_configured) return {status,transport:null};
   const port=Number(process.env.SMTP_PORT||587);
   const cfg={host:process.env.SMTP_HOST,port,secure:String(process.env.SMTP_SECURE||'').toLowerCase()==='true'||port===465,connectionTimeout:15000,greetingTimeout:15000,socketTimeout:30000,requireTLS:port===587};
   if(process.env.SMTP_USER)cfg.auth={user:process.env.SMTP_USER,pass:process.env.SMTP_PASS||''};
   return {status,transport:nodemailer.createTransport(cfg)};
 }
+async function maskStoredReportRecipients(pool=dbPool){
+  try{
+    await pool.query(`UPDATE report_runs
+      SET recipients=ARRAY[cardinality(recipients)::text || ' kişi']
+      WHERE recipients IS NOT NULL AND cardinality(recipients)>0
+      AND NOT (cardinality(recipients)=1 AND recipients[1] ~ '^[0-9]+ kişi$')`);
+  }catch(e){console.error('[report-email] recipient history masking failed',e?.message||String(e))}
+}
+setTimeout(()=>{refreshReportRecipients().catch(()=>{});maskStoredReportRecipients().catch(()=>{})},8000).unref?.();
+setInterval(()=>refreshReportRecipients().catch(()=>{}),30000).unref?.();
 
 function parseSender(v){
   const raw=String(v||'').trim();
@@ -40,15 +77,16 @@ function parseSender(v){
 
 async function sendViaBrevoApi({status,subject,textContent,htmlContent,attachments}){
   const sender=parseSender(status.from);
+  const recipients=status.recipient_emails||[];
   const body={
     sender,
-    to:status.recipients.map(email=>({email})),
+    to:recipients.map(email=>({email})),
     subject,
     htmlContent,
     textContent,
     attachment:attachments.map(a=>({name:a.filename,content:Buffer.from(a.content).toString('base64')}))
   };
-  console.log('[report-email] brevo-api connecting',JSON.stringify({from:sender.email,recipients:status.recipients.length,subject,attachments:attachments.length}));
+  console.log('[report-email] brevo-api connecting',JSON.stringify({from:sender.email,recipients:recipients.length,subject,attachments:attachments.length}));
   const controller=new AbortController();
   const timer=setTimeout(()=>controller.abort(),30000);
   let response;
@@ -72,7 +110,7 @@ async function sendViaBrevoApi({status,subject,textContent,htmlContent,attachmen
     throw err;
   }
   console.log('[report-email] brevo-api accepted',JSON.stringify({message_id:payload.messageId||null}));
-  return {messageId:payload.messageId||null,accepted:status.recipients,rejected:[],response:'Brevo API '+response.status};
+  return {messageId:payload.messageId||null,accepted_count:recipients.length,rejected:[],response:'Brevo API '+response.status};
 }
 function signed(v){
   if(v==null||Number.isNaN(Number(v)))return '—';
@@ -247,7 +285,9 @@ function emailHtml(type,ctx,attachments=[]){
     '</table></td></tr></table></body></html>';
 }
 export async function sendReportEmail(pool,type,options={}){
+  await refreshReportRecipients(pool);
   const mail=transportConfig();
+  const recipientEmails=mail.status.recipient_emails||[];
   let attachments=[],ctx,totalBytes=0;
   if(type==='evidence'){
     const [pack,summary]=await Promise.all([
@@ -280,12 +320,13 @@ export async function sendReportEmail(pool,type,options={}){
       attachments
     });
   }else{
-    console.log('[report-email] smtp connecting',JSON.stringify({host:process.env.SMTP_HOST,port:Number(process.env.SMTP_PORT||587),from:mail.status.from,recipients:mail.status.recipients.length,subject,total_bytes:totalBytes}));
+    console.log('[report-email] smtp connecting',JSON.stringify({host:process.env.SMTP_HOST,port:Number(process.env.SMTP_PORT||587),from:mail.status.from,recipients:recipientEmails.length,subject,total_bytes:totalBytes}));
     info=await mail.transport.sendMail({
-      from:mail.status.from,to:mail.status.recipients.join(', '),subject,
+      from:mail.status.from,to:recipientEmails.join(', '),subject,
       text:(ctx.market?.executive_summary||(type==='fwa'?'Markets Pulse Superbox / Red Box rekabet raporu':'Markets Pulse Turkcell Ev İnterneti rekabet raporu')),html:emailHtml(type,ctx,attachments),attachments
     });
-    console.log('[report-email] smtp accepted',JSON.stringify({message_id:info.messageId,accepted:info.accepted,rejected:info.rejected,response:info.response}));
+    console.log('[report-email] smtp accepted',JSON.stringify({message_id:info.messageId,accepted_count:Array.isArray(info.accepted)?info.accepted.length:null,rejected_count:Array.isArray(info.rejected)?info.rejected.length:null,response:info.response}));
   }
-  return {message_id:info.messageId,recipients:mail.status.recipients,subject,total_bytes:totalBytes,ctx,delivery_mode:mail.status.delivery_mode};
+  const count=recipientEmails.length;
+  return {message_id:info.messageId,recipients:[count+' kişi'],recipient_count:count,subject,total_bytes:totalBytes,ctx,delivery_mode:mail.status.delivery_mode};
 }
