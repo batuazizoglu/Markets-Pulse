@@ -202,7 +202,7 @@ function emailHtml(type,ctx,attachments=[]){
   const title=REPORT_NAMES[type]||'Markets Pulse Raporu';
   const m=ctx.market||{},b=ctx.benchmark||{},s=ctx.stats||{};
   const top=(m.top_threats||[])[0];
-  const scoreRows=(ctx.score_deltas||[]).slice(0,6);
+  const scoreRows=(ctx.score_deltas||[]);
   const healthy=(ctx.sources||[]).filter(x=>String(x.last_status||'').toLowerCase()==='ok' && (!x.http_status||Number(x.http_status)<400)).length;
   const sourceCount=(ctx.sources||[]).length;
   const position=b.overall_score&&b.overall_score.score!=null?b.overall_score.score:'—';
@@ -267,7 +267,7 @@ function emailHtml(type,ctx,attachments=[]){
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e1e8f2;border-radius:12px;border-collapse:separate;border-spacing:0;overflow:hidden;">'+
           '<tr style="background:#001484;"><th align="left" style="padding:9px 8px;color:#fff;font-size:10px;">Segment</th><th style="padding:9px 8px;color:#fff;font-size:10px;">Skor</th><th style="padding:9px 8px;color:#fff;font-size:10px;">Delta</th><th align="left" style="padding:9px 8px;color:#fff;font-size:10px;">Durum</th></tr>'+
           (segmentRows||'<tr><td colspan="4" style="padding:12px;color:#667399;font-size:12px;">Segment verisi bulunamadı.</td></tr>')+
-        '</table>'+
+        '</table><p style="font-size:11px;color:#667399">'+esc(b.methodology||'')+' '+esc(b.score_methodology||'')+' '+esc(b.history_note||'')+'</p>'+
       '</td></tr>'+
       (['daily','weekly','monthly'].includes(type)?dailyHomeEmailBlocks(ctx):'')+
       (type==='monthly'?'<tr><td class="mp-pad" style="padding:0 28px 18px">'+monthlyOverviewHtml(ctx,{compact:true})+'</td></tr>':'')+

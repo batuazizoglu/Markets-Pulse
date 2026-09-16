@@ -4,6 +4,7 @@ import {readFile} from 'node:fs/promises';
 import {compileFunction} from 'node:vm';
 import {JSDOM} from 'jsdom';
 import {createEvidenceFixture} from './evidence-fixture.js';
+import {ENGINE_VERSION} from '../src/comparable-engine.js';
 import {collectMonthlyData} from '../src/monthly-report-data.js';
 import {monthlyOverviewHtml,monthlyPlainText} from '../src/monthly-report-content.js';
 import {buildReportContext,reportDays,REPORT_NAMES,REPORT_TZ} from '../src/report-data.js';
@@ -20,6 +21,7 @@ before(async()=>{
   for(const [slug,name] of [['fixed-test','Sabit paket'],['telsim-redbox','Red Box']])await pool.query(`INSERT INTO home_internet_changes(source_slug,provider,product_name,detected_at,change_type,new_value)
     SELECT $1,'Örnek',$2,$3,'added','699' FROM generate_series(1,151)`,[slug,name,new Date(end.getTime()-3600000).toISOString()]);
   await pool.query(`INSERT INTO competitive_position_history(bucket_at,segment,score) VALUES($1,'Genel',60),($2,'Genel',70),($3,'Genel',NULL)`,[new Date(end.getTime()-7200000).toISOString(),new Date(end.getTime()-3600000).toISOString(),end.toISOString()]);
+  await pool.query("UPDATE competitive_position_history SET details_json=jsonb_build_object('engine_version',$1::text)",[ENGINE_VERSION]);
   const loaders={
     currentBenchmark:async()=>({overall_score:{segment:'Genel',score:70,level:'Örnek'},segment_scores:[]}),
     sourceHealth:async()=>[{name:'Örnek kaynak',last_status:'ok',http_status:200}],

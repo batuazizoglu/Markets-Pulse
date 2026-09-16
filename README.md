@@ -44,7 +44,11 @@ KKTCELL and Telsim products are compared through the Comparable Product Engine i
 - price level
 - mutual-best-match confidence
 
-Current matching classes are **Primary**, **Secondary**, **Review** and **Reject**. Admin decisions can be persisted as overrides without being overwritten by automated matching.
+Comparable Product Engine **v2.4 is live**. The dashboard, Match Review and all mobile reports share one engine and the same persisted admin decisions. Primary matches drive Competitive Position scores and advantage totals. Secondary alternatives are shown separately and do not affect scores; Review and Reject are excluded.
+
+Saved decisions are revalidated against the current catalog and hard gates. A missing or newly ineligible peer remains saved but moves to Review; it never silently falls back to an automatic match. Admin identities and notes remain on the admin-only review endpoint.
+
+Score history is tagged `2.4-live`. Older records are preserved but never used for v2.4 deltas or monthly averages. If the deployment shares an hourly bucket with an old-engine record, that record is preserved and the new history starts in the next available hour. No historical scores are recalculated. The legacy `BENCHMARK_V2_SHADOW_RUN` flag is no longer needed to activate matching; the application uses v2.4 directly.
 
 ### Turkcell Home Internet
 Fixed broadband is monitored separately from mobile. The module tracks providers, technology, speed, contract duration, installation cost, effective monthly price, total cost of ownership and Mbps/100 TL.

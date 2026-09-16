@@ -1,3 +1,5 @@
+import { ENGINE_VERSION } from './comparable-engine.js';
+
 // One frozen rolling 30-day window; never add totals from overlapping daily/weekly PDFs.
 export async function collectMonthlyData(pool,start,end){
   const range=[new Date(start).toISOString(),new Date(end).toISOString()];
@@ -7,7 +9,7 @@ export async function collectMonthlyData(pool,start,end){
       LEFT JOIN LATERAL (SELECT extras_json FROM product_versions WHERE product_id=p.id AND captured_at<=c.detected_at ORDER BY captured_at DESC,id DESC LIMIT 1) v ON TRUE
       WHERE c.detected_at >= $1 AND c.detected_at < $2 ORDER BY c.detected_at DESC,c.id DESC`,range),
     pool.query('SELECT * FROM home_internet_changes WHERE detected_at >= $1 AND detected_at < $2 ORDER BY detected_at DESC,id DESC',range),
-    pool.query('SELECT DISTINCT ON (segment) segment,score,bucket_at FROM competitive_position_history WHERE bucket_at <= $1 ORDER BY segment,bucket_at DESC',[range[0]]),
+    pool.query("SELECT DISTINCT ON (segment) segment,score,bucket_at FROM competitive_position_history WHERE bucket_at <= $1 AND details_json->>'engine_version'=$2 ORDER BY segment,bucket_at DESC",[range[0],ENGINE_VERSION]),
     pool.query(`SELECT sn.id,sn.source_id,sn.captured_at,sn.kind,s.name source_name,
       COALESCE(octet_length(sn.focused_screenshot_png),0)>0 has_focus,COALESCE(octet_length(sn.screenshot_png),0)>0 has_screenshot,
       COALESCE(octet_length(sn.html_gzip),0)>0 has_html,(sn.extracted_json IS NOT NULL AND sn.extracted_json<>'null'::jsonb) has_json
@@ -15,8 +17,8 @@ export async function collectMonthlyData(pool,start,end){
       ORDER BY (sn.kind='change') DESC,sn.captured_at DESC,sn.id DESC`,range),
     pool.query(`SELECT date_trunc('week',bucket_at AT TIME ZONE 'Asia/Famagusta')::date::text week,segment,
       round(avg(score)::numeric,1) average_score,count(score)::int samples,min(bucket_at) first_sample,max(bucket_at) last_sample
-      FROM competitive_position_history WHERE bucket_at >= $1 AND bucket_at < $2 AND score IS NOT NULL
-      GROUP BY 1,segment ORDER BY 1,segment`,range),
+      FROM competitive_position_history WHERE bucket_at >= $1 AND bucket_at < $2 AND score IS NOT NULL AND details_json->>'engine_version'=$3
+      GROUP BY 1,segment ORDER BY 1,segment`,[...range,ENGINE_VERSION]),
     pool.query(`SELECT 'Mobil' domain,s.name source,min(sc.started_at) first_recorded,
       count(sc.id) FILTER (WHERE sc.started_at >= $1 AND sc.started_at < $2)::int scans,
       count(sc.id) FILTER (WHERE sc.started_at >= $1 AND sc.started_at < $2 AND sc.status='ok')::int successful
