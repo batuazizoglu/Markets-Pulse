@@ -5,9 +5,9 @@ async function getUser(){
 }
 function cardHtml(){return `<article id="matchReviewSettingsCard" class="setting-card">
   <h3>Eşleşme İnceleme</h3>
-  <p>Comparable Product Engine v2.4 shadow sonuçlarını inceleyin; Primary / Secondary / Reject kararlarını kalıcı admin override olarak yönetin.</p>
-  <div class="setting-line"><span>Motor</span><b>v2.4 Shadow</b></div>
-  <div class="setting-line"><span>Canlı eşleştirme</span><b>Henüz etkilenmiyor</b></div>
+  <p>Canlı Comparable Product Engine v2.4 sonuçlarını inceleyin; Primary / Secondary / Reject kararlarını kalıcı admin override olarak yönetin.</p>
+  <div class="setting-line"><span>Motor</span><b>v2.4 Canlı</b></div>
+  <div class="setting-line"><span>Canlı eşleştirme</span><b>Karşılaştırma ve raporlar aktif</b></div>
   <div class="setting-line"><span>Durum</span><b id="matchReviewSettingsStatus">Yükleniyor…</b></div>
   <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" onclick="location.href='/match-review'">Eşleşmeleri İncele</button><button class="btn" onclick="MarketPulseAdminTools.refreshMatchReviewStatus()">Durumu Yenile</button></div>
 </article>`}

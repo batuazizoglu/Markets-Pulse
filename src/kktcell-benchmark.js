@@ -1,3 +1,4 @@
+import { ENGINE_VERSION, evaluateComparableProducts } from './comparable-engine.js';
 import * as cheerio from 'cheerio';
 
 const KKTCELL_SOURCES = [
@@ -128,28 +129,7 @@ export async function getKktcellCatalog(force=false){
   return cache;
 }
 
-function competitorType(p){return p.source_slug==='faturasiz'?'prepaid':'postpaid'}
-function competitorText(p){return `${p.current_name||p.name||''} ${JSON.stringify(p.extras_json||[])}`}
-function competitorSegment(p){return classifySegment(competitorText(p))}
-function competitorAcquisition(p){return detectAcquisition(competitorText(p))}
-function competitorChannel(p){return detectChannel(competitorText(p))}
 function pctGap(ours,theirs){if(ours==null||theirs==null||Number(theirs)===0)return null;return((Number(ours)-Number(theirs))/Number(theirs))*100}
-function valueScore(p){const data=Number(p.effective_data_gb??((Number(p.data_gb)||0)+(Number(p.bonus_data_gb)||0)));const price=Number(p.price_try);return data>0&&price>0?data/price*100:null}
-
-function similarity(t,k){
-  const tt=competitorType(t),ts=competitorSegment(t);
-  if(k.type!==tt)return -999;
-  if(k.segment!==ts)return -999;
-  let s=70;
-  const td=(Number(t.data_gb)||0)+(Number(t.bonus_data_gb)||0),kd=Number(k.effective_data_gb)||0;
-  if(td>0&&kd>0)s+=Math.min(td,kd)/Math.max(td,kd)*15;
-  if(t.validity_days&&k.validity_days){const d=Math.abs(Number(t.validity_days)-Number(k.validity_days));s+=Math.max(0,8-d/4)}
-  if(t.price_try&&k.price_try)s+=Math.min(Number(t.price_try),Number(k.price_try))/Math.max(Number(t.price_try),Number(k.price_try))*7;
-  if(competitorAcquisition(t)===k.acquisition)s+=3;
-  if(competitorChannel(t)===k.channel)s+=2;
-  return s;
-}
-
 function competitivePositionScore(rows,segment){
   if(!rows.length){
     return {segment,score:null,level:'VERİ YETERSİZ',confidence:'DÜŞÜK',match_count:0,positions:{},avg_value_gap_pct:null,avg_match_score:null,rationale:'Bu segmentte karşılaştırılabilir Telsim ↔ KKTCELL SKU eşleşmesi yok.'};
@@ -175,35 +155,39 @@ function competitivePositionScore(rows,segment){
   return {segment,score,level,confidence,match_count:rows.length,positions,avg_value_gap_pct:Number(avgValuePct.toFixed(1)),avg_match_score:Number(avgMatch.toFixed(1)),rationale};
 }
 
-export function buildBenchmark(telsimRows,kktcellRows){
-  const ours=kktcellRows.filter(x=>x.is_core);
-  const comp=telsimRows.filter(x=>x.active&&x.price_try!=null&&x.data_gb!=null);
-  const matches=[];
-  for(const t of comp){
-    const segment=competitorSegment(t),acquisition=competitorAcquisition(t),channel=competitorChannel(t);
-    const ranked=ours.map(k=>({k,score:similarity(t,k)})).filter(x=>x.score>=70).sort((a,b)=>b.score-a.score);
-    const best=ranked[0];if(!best)continue;
-    const k=best.k,tEff=(Number(t.data_gb)||0)+(Number(t.bonus_data_gb)||0),kEff=Number(k.effective_data_gb)||0;
-    const tValue=valueScore({...t,effective_data_gb:tEff}),kValue=valueScore(k);
-    const priceGap=Number(k.price_try)-Number(t.price_try),dataGap=kEff-tEff,valueGap=(kValue!=null&&tValue!=null)?kValue-tValue:null;
-    const position=valueGap==null?'UNKNOWN':valueGap>0.25?'KKTCELL_ADVANTAGE':valueGap<-0.25?'TELSIM_ADVANTAGE':'PARITY';
-    matches.push({match_score:Math.round(best.score),segment,type:competitorType(t),acquisition,channel,position,
-      telsim:{id:t.id,name:t.name||t.current_name,data_gb:Number(t.data_gb)||0,bonus_data_gb:Number(t.bonus_data_gb)||0,effective_data_gb:tEff,minutes:t.local_tr_minutes,validity_days:t.validity_days,price_try:Number(t.price_try),gb_per_100tl:tValue,acquisition,channel},
-      kktcell:{name:k.name,data_gb:k.data_gb,bonus_data_gb:k.bonus_data_gb,effective_data_gb:kEff,minutes:k.local_tr_minutes,validity_days:k.validity_days,price_try:k.price_try,gb_per_100tl:kValue,source_url:k.source_url,product_url:k.product_url,acquisition:k.acquisition,channel:k.channel},
-      gaps:{price_try:priceGap,data_gb:dataGap,value_gb_per_100tl:valueGap,price_pct:pctGap(k.price_try,t.price_try),data_pct:pctGap(kEff,tEff)},
-      recommendation:recommend(position,{priceGap,dataGap,segment})});
+export function buildBenchmark(telsimRows,kktcellRows,overrides=[]){
+  const review=evaluateComparableProducts(telsimRows,kktcellRows,overrides);
+  const matches=[],secondary_matches=[];
+  const product=p=>({...p,data_gb:p.core_data_gb,effective_data_gb:p.core_data_gb+p.bonus_data_gb,
+    gb_per_100tl:p.price_try>0?(p.core_data_gb+p.bonus_data_gb)/p.price_try*100:null});
+  for(const row of review.rows){
+    if(!['Primary','Secondary'].includes(row.effective_status)||!row.effective_match||row.override?.stale)continue;
+    const t=product(row.telsim),k=product(row.effective_match),segment=t.segment;
+    const priceGap=k.price_try-t.price_try,dataGap=k.effective_data_gb-t.effective_data_gb;
+    const valueGap=k.gb_per_100tl!=null&&t.gb_per_100tl!=null?k.gb_per_100tl-t.gb_per_100tl:null;
+    const position=valueGap==null?'UNKNOWN':valueGap>0.25?'KKTCELL_ADVANTAGE':valueGap<-.25?'TELSIM_ADVANTAGE':'PARITY';
+    const match={match_score:row.effective_score,match_status:row.effective_status,match_origin:row.override?'admin':'engine',
+      mutual_best:!row.override&&row.mutual_best,reasons:row.reasons,penalties:row.penalties,
+      segment,type:t.type,acquisition:t.acquisition,channel:t.channel,position,telsim:t,kktcell:k,
+      gaps:{price_try:priceGap,data_gb:dataGap,value_gb_per_100tl:valueGap,price_pct:pctGap(k.price_try,t.price_try),data_pct:pctGap(k.effective_data_gb,t.effective_data_gb)},
+      recommendation:recommend(position,{priceGap,dataGap,segment})};
+    (row.effective_status==='Primary'?matches:secondary_matches).push(match);
   }
-  matches.sort((a,b)=>{const rank={TELSIM_ADVANTAGE:0,PARITY:1,KKTCELL_ADVANTAGE:2,UNKNOWN:3};return rank[a.position]-rank[b.position]||b.match_score-a.match_score});
+  const rank={TELSIM_ADVANTAGE:0,PARITY:1,KKTCELL_ADVANTAGE:2,UNKNOWN:3};
+  for(const rows of [matches,secondary_matches])rows.sort((a,b)=>rank[a.position]-rank[b.position]||b.match_score-a.match_score);
+  const segments=[...new Set([...BENCHMARK_SEGMENTS,...review.rows.map(x=>x.telsim.segment)])];
+  const scored=(rows,segment)=>({...competitivePositionScore(rows,segment),engine_version:ENGINE_VERSION});
   const counts=matches.reduce((a,m)=>(a[m.position]=(a[m.position]||0)+1,a),{});
-  const segment_scores=BENCHMARK_SEGMENTS.map(segment=>competitivePositionScore(matches.filter(m=>m.segment===segment),segment));
-  const overall_score=competitivePositionScore(matches,'Toplam');
-  const segment_summary=BENCHMARK_SEGMENTS.map(segment=>{
-    const rows=matches.filter(m=>m.segment===segment);
-    const positions=rows.reduce((a,m)=>(a[m.position]=(a[m.position]||0)+1,a),{});
-    const score=segment_scores.find(x=>x.segment===segment);
-    return {segment,total:rows.length,positions,score:score?.score??null,level:score?.level||'VERİ YETERSİZ',confidence:score?.confidence||'DÜŞÜK'};
-  });
-  return {generated_at:new Date().toISOString(),methodology:'Segment-first benchmark v3 • position + relative value score',score_methodology:'50 nötr baz + net avantaj oranı (±22 puan) + ortalama relatif GB/100 TL farkı (±28 puan, ±60% cap). Eşleşme adedi ve match quality güven seviyesini belirler.',segments:BENCHMARK_SEGMENTS,counts,total_matches:matches.length,overall_score,segment_scores,segment_summary,matches};
+  const segment_scores=segments.map(segment=>scored(matches.filter(m=>m.segment===segment),segment));
+  const overall_score=scored(matches,'Toplam');
+  const segment_summary=segment_scores.map(s=>({segment:s.segment,total:s.match_count,positions:s.positions,score:s.score,level:s.level,confidence:s.confidence}));
+  return {generated_at:review.generated_at,engine_version:ENGINE_VERSION,mode:'live',
+    methodology:'Comparable Product Engine v2.4 • ürün ailesi + uygunluk + karşılıklı en iyi eşleşme',
+    score_methodology:'Skor ve avantaj adetleri yalnız Primary eşleşmelerden hesaplanır. Secondary alternatifleri skor dışındadır; Review, Reject ve geçersiz yönetici kararları karşılaştırmaya alınmaz. 50 nötr baz + net avantaj oranı (±22) + relatif GB/100 TL farkı (±28, ±60% sınır).',
+    history_note:'Motor geçişinden önceki skorlar saklanır; yeni motorla birleştirilmez. Dönem değişimi için aynı motorun tarihçesi birikir.',
+    segments,counts,total_matches:matches.length,overall_score,segment_scores,segment_summary,matches,secondary_matches,
+    matching:{engine_counts:review.engine_counts,effective_counts:review.effective_counts,override_count:review.override_count,
+      stale_override_count:review.rows.filter(x=>x.override?.stale).length,catalog:review.catalog}};
 }
 
 function recommend(position,x){
@@ -221,6 +205,6 @@ function recommend(position,x){
   return 'Manuel ürün eşleştirmesi kontrolü gerekli.';
 }
 
-setTimeout(()=>{
+export function warmKktcellCatalog(){
   getKktcellCatalog(true).then(c=>console.log('[kktcell-catalog]',JSON.stringify({total:c.rows.length,core:c.rows.filter(x=>x.is_core).length,segments:BENCHMARK_SEGMENTS.map(segment=>({segment,count:c.rows.filter(x=>x.is_core&&x.segment===segment).length})),sources:c.sources.map(s=>({slug:s.slug,ok:s.ok,http_status:s.http_status,parsed_count:s.parsed_count,core_count:s.core_count,response_ms:s.response_ms,error:s.error||null}))}))).catch(e=>console.error('[kktcell-catalog]',e?.message||String(e)));
-},1500);
+}

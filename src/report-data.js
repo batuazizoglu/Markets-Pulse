@@ -1,6 +1,7 @@
 import { buildMarketPulse, marketPulseFromRows } from './intelligence.js';
 import { collectMonthlyData } from './monthly-report-data.js';
-import { getKktcellCatalog, buildBenchmark } from './kktcell-benchmark.js';
+import { currentBenchmark } from './live-benchmark.js';
+import { ENGINE_VERSION } from './comparable-engine.js';
 import { getHomeInternetMarket } from './home-internet.js';
 
 export const REPORT_TZ = 'Asia/Famagusta';
@@ -16,22 +17,6 @@ export const REPORT_NAMES = {
 
 export function reportDays(type,requestedDays=7){
   return type==='monthly'?30:type==='daily'?1:Math.max(1,Math.min(30,Number(requestedDays)||7));
-}
-
-function latestPackagesSql() {
-  return "SELECT p.id,p.identity_base,p.current_name,p.first_seen_at,p.last_seen_at,p.active,p.missing_count,p.last_position," +
-    " s.slug source_slug,s.name source_name,s.url source_url," +
-    " v.captured_at,v.name,v.data_gb,v.bonus_data_gb,v.local_tr_minutes,v.international_minutes,v.sms,v.validity_days,v.red_passport_days,v.price_try,v.extras_json" +
-    " FROM products p JOIN sources s ON s.id=p.source_id" +
-    " LEFT JOIN LATERAL (SELECT * FROM product_versions v2 WHERE v2.product_id=p.id ORDER BY v2.captured_at DESC,v2.id DESC LIMIT 1) v ON TRUE";
-}
-
-async function currentBenchmark(pool) {
-  const [telsim,catalog] = await Promise.all([
-    pool.query(latestPackagesSql() + " WHERE p.active=TRUE ORDER BY s.id,v.price_try ASC NULLS LAST,p.current_name"),
-    getKktcellCatalog(false)
-  ]);
-  return Object.assign({}, buildBenchmark(telsim.rows,catalog.rows), {kktcell_sources:catalog.sources});
 }
 
 async function sourceHealth(pool) {
@@ -79,8 +64,8 @@ async function scoreBaselines(pool, days) {
   const r = await pool.query(
     "SELECT DISTINCT ON (segment) segment,score,bucket_at,level,confidence" +
     " FROM competitive_position_history" +
-    " WHERE bucket_at <= NOW()-($1::text||' days')::interval" +
-    " ORDER BY segment,bucket_at DESC", [days]
+    " WHERE bucket_at <= NOW()-($1::text||' days')::interval AND details_json->>'engine_version'=$2" +
+    " ORDER BY segment,bucket_at DESC", [days,ENGINE_VERSION]
   );
   const m = {};
   for (const x of r.rows) m[x.segment] = x;
