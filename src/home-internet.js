@@ -1,7 +1,7 @@
 import puppeteer from 'puppeteer';
 import * as cheerio from 'cheerio';
 import {parseAmount as n, normalizeOffer as offer} from './isp-economics.js';
-import {parseISP, socialLinks} from './isp-parsers.js';
+import {parseISP, socialLinks, parseAlemPackages} from './isp-parsers.js';
 import {ISP_SCOPE, ISP_COMPANIES, EXTRA_HOME_SOURCES, LEGACY_COMPANIES, companyCoverage, socialDirectory} from './isp-registry.js';
 const PARSER_VERSION='home-isp-2';
 
@@ -296,6 +296,7 @@ async function getLifecellBrowser(){
   if(!lifecellBrowserPromise){
     lifecellBrowserPromise=puppeteer.launch({
       headless:true,
+      ...(process.env.PUPPETEER_EXECUTABLE_PATH?{executablePath:process.env.PUPPETEER_EXECUTABLE_PATH}:{}),
       args:['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage','--disable-gpu','--no-zygote']
     }).catch(e=>{lifecellBrowserPromise=null;throw e});
   }
@@ -559,6 +560,48 @@ async function fetchLifecellDynamic(source){
   }finally{if(page)await page.close().catch(()=>{})}
 }
 
+
+export async function closeHomeInternetBrowser(){
+  if(lifecellBrowserPromise){const browser=await lifecellBrowserPromise;lifecellBrowserPromise=null;await browser.close()}
+}
+async function fetchPublicPricingDynamic(source){
+  const start=Date.now();let page;
+  try{
+    const browser=await getLifecellBrowser();page=await browser.newPage();
+    await page.setUserAgent(UA);
+    page.setDefaultTimeout(15000);
+    if(source.parser==='alemnet-dynamic')await page.evaluateOnNewDocument(()=>{
+      localStorage.removeItem('packagesData');localStorage.removeItem('packagesTimestamp');
+    });
+    const response=await page.goto(source.url,{waitUntil:'domcontentloaded',timeout:30000});
+    if(!response?.ok())throw new Error('HTTP '+response?.status());
+    let products=[];
+    if(source.parser==='alemnet-dynamic'){
+      await page.waitForFunction(()=>{try{return JSON.parse(localStorage.getItem('packagesData')||'[]').length>0}catch{return false}},{timeout:20000});
+      const data=await page.evaluate(()=>({records:JSON.parse(localStorage.getItem('packagesData')||'[]'),campaigns:document.querySelector('.alm__pkg-offers')?.innerText||''}));
+      if(!data.campaigns)await page.waitForSelector('.alm__pkg-offers');
+      const campaigns=data.campaigns||await page.$eval('.alm__pkg-offers',x=>x.innerText);
+      products=parseAlemPackages(data.records,source,campaigns).map(offer);
+    }else{
+      await page.waitForSelector('.pricing-tab');
+      const periods=await page.$eval('.pricing-tab',buttons=>buttons.map(b=>({d:parseInt(b.dataset.period,10),text:b.parentElement.innerText})));
+      for(const period of periods){
+        if(![1,3,6,12].includes(period.d))continue;
+        await page.click('.pricing-tab[data-period="'+period.d+'months"]');
+        await page.waitForFunction(d=>[...document.querySelectorAll('[wire\\:snapshot]')].some(el=>{try{return JSON.parse(el.getAttribute('wire:snapshot')).data.selectedDuration===d}catch{return false}}),{},period.d);
+        const html=await page.content(),bonus=period.text.match(/\+\s*(\d+)\s*Ay\s*Hediy/i);
+        const rows=parseFixNet(html,source);
+        if(!rows.length)throw new Error('Seçilen dönem için paket verisi alınamadı: '+period.d);
+        products.push(...rows.map(r=>offer({...r,duration_months:period.d,bonus_months:bonus?Number(bonus[1]):0,
+          price_monthly_try:null,product_key:[source.slug,keyPart(r.name),period.d,bonus?bonus[1]:0].join('|')})));
+      }
+    }
+    const html=await page.content();
+    return {ok:true,products,http_status:200,response_ms:Date.now()-start,meta:{dynamic:true,social_links:socialLinks(html,source.url)}};
+  }catch(e){return {ok:false,products:[],response_ms:Date.now()-start,http_status:null,error:e.message,meta:{dynamic:true}}}
+  finally{if(page)await page.close().catch(()=>{})}
+}
+
 export function parserFor(source,html){
   if(source.parser==='kktcell'||source.parser==='kktcell-superbox')return {products:parseKktcell(html,source),meta:discoveryMeta(html,source)};
   if(source.parser==='extend-table')return {products:parseExtendTable(html,source),meta:discoveryMeta(html,source)};
@@ -578,6 +621,8 @@ export async function fetchSource(source){
     let result;
     if(source.parser==='lifecell-dynamic'||source.parser==='lifecell-superbox-dynamic'){
       result=await fetchLifecellDynamic(source);
+    }else if(source.parser==='alemnet-dynamic'||source.parser==='fixnet-dynamic'){
+      result=await fetchPublicPricingDynamic(source);
     }else{
       let url=source.fetch_url||source.url,res;
       const host=new URL(url).hostname.replace(/^www\./,'');

@@ -440,7 +440,7 @@ export const EXTRA_HOME_SOURCES = [
     "provider": "Alemnet",
     "name": "Alemnet • Sabit Genişbant",
     "url": "https://www.alemnet.net/pricing",
-    "parser": "alemnet",
+    "parser": "alemnet-dynamic",
     "company_ids": [
       "alemdar"
     ],
@@ -451,8 +451,8 @@ export const EXTRA_HOME_SOURCES = [
     "slug": "cypking-home",
     "provider": "Cypking",
     "name": "Cypking • WDSL / ADSL / VDSL",
-    "url": "https://cypking.net/fiyatlarimiz/",
-    "parser": "services",
+    "url": "https://cypking.net/#pricing",
+    "parser": "cypking",
     "company_ids": [
       "cypking"
     ],
@@ -538,7 +538,7 @@ export const EXTRA_HOME_SOURCES = [
     "provider": "FixNet",
     "name": "FixNet • WDSL / Fiber",
     "url": "https://www.fixnetbroadband.com/tarifeler/flex-super-internet",
-    "parser": "fixnet",
+    "parser": "fixnet-dynamic",
     "company_ids": [
       "fixnet"
     ],
@@ -550,7 +550,7 @@ export const EXTRA_HOME_SOURCES = [
     "provider": "FixNet",
     "name": "FixNet • WDSL / Fiber",
     "url": "https://www.fixnetbroadband.com/tarifeler/exclusive-internet",
-    "parser": "fixnet",
+    "parser": "fixnet-dynamic",
     "company_ids": [
       "fixnet"
     ],
@@ -562,7 +562,7 @@ export const EXTRA_HOME_SOURCES = [
     "provider": "FixNet",
     "name": "FixNet • WDSL / Fiber",
     "url": "https://www.fixnetbroadband.com/tarifeler/iste-internet",
-    "parser": "fixnet",
+    "parser": "fixnet-dynamic",
     "company_ids": [
       "fixnet"
     ],
@@ -575,7 +575,7 @@ export const EXTRA_HOME_SOURCES = [
     "provider": "FixNet",
     "name": "FixNet • WDSL / Fiber",
     "url": "https://www.fixnetbroadband.com/tarifeler/oyuncu-paketleri",
-    "parser": "fixnet",
+    "parser": "fixnet-dynamic",
     "company_ids": [
       "fixnet"
     ],
@@ -587,7 +587,7 @@ export const EXTRA_HOME_SOURCES = [
     "provider": "FixNet",
     "name": "FixNet • WDSL / Fiber",
     "url": "https://www.fixnetbroadband.com/tarifeler/yayinci-paketleri",
-    "parser": "fixnet",
+    "parser": "fixnet-dynamic",
     "company_ids": [
       "fixnet"
     ],

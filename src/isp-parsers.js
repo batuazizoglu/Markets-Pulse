@@ -153,8 +153,39 @@ export function parseServices(html,source){
   });
   return out;
 }
+
+export function parseAlemPackages(records,source,campaigns=''){
+  const gifts=new Map();
+  for(const m of campaigns.matchAll(/(\d+)\s*(?:ay|months?)[^\d]{0,45}(\d+)\s*(?:ay|months?)/gi))gifts.set(Number(m[1]),Number(m[2]));
+  const out=[];
+  for(const r of records||[]){
+    if(!['eco','pro'].includes(r.type))continue;
+    const speed=n(r.package_name);if(!speed)continue;
+    const name=(r.type==='eco'?'Eko':'Oyuncu ve Eğitim')+' '+speed+' Mbps';
+    for(const [field,d] of [['price_one',1],['price_three',3],['price_six',6],['price_twelve',12]]){
+      const total=n(r[field]);if(!(total>0))continue;
+      out.push(base(source,{name,technology:'Sabit Genişbant',speed_down_mbps:speed,
+        duration_months:d,bonus_months:gifts.get(d)||0,total_price_try:total,install_fee_try:0,
+        features:[campaigns].filter(Boolean),raw_text:JSON.stringify(r),product_key:[source.slug,r.type,speed,d].join('|')}));
+    }
+  }
+  return out;
+}
+function cypking(html,source){
+  const $=document(html),text=clean($.root().text()),out=[];
+  const re=/((?:APT|KING LUX|CYP İŞ)\s+\d+\s*MB)\s+(\d+)\s*MB\s*D\s*\/\s*(?:(\d+)\s*MB\s*Off-Peak\s*\/\s*)?(\d+)\s*MB\s*U\s+((?:[\d.,]+\s*TL\s*\/\s*\d+\s*(?:\+\s*\d+\s*)?Months?\s*)+)/gi;
+  for(const m of text.matchAll(re))for(const term of m[5].matchAll(/([\d.,]+)\s*TL\s*\/\s*(\d+)\s*(?:\+\s*(\d+)\s*)?Months?/gi)){
+    const business=m[1].startsWith('CYP');
+    out.push(base(source,{name:m[1],technology:m[1].startsWith('APT')?'Apartman WDSL':'WDSL',
+      market_segment:business?'business':'residential',speed_down_mbps:Number(m[2]),speed_up_mbps:Number(m[4]),
+      unlimited:true,duration_months:Number(term[2]),bonus_months:Number(term[3]||0),total_price_try:n(term[1]),
+      features:[m[3]?'Yoğun olmayan saat hızı: '+m[3]+' Mbps':null,'Kaynak hızları MB D / MB U olarak gösteriyor'].filter(Boolean),raw_text:m[0]}));
+  }
+  return out;
+}
+
 export function parseISP(html,source){
-  const parser={netonline:parseNetonline,haypem,surface,primenet,royalnet,goldsurf,enson:tables,analiz:tables,'isp-table':tables,services:parseServices};
+  const parser={cypking,netonline:parseNetonline,haypem,surface,primenet,royalnet,goldsurf,enson:tables,analiz:tables,'isp-table':tables,services:parseServices};
   const rows=(parser[source.parser]||(()=>[]))(html,source);
   return [...new Map(rows.map(r=>[r.product_key||[r.source_slug,r.technology,r.name,r.duration_months,r.duration_days,r.bonus_months,r.bonus_days].join('|'),r])).values()];
 }

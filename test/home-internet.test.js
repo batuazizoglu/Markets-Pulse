@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {PGlite} from '@electric-sql/pglite';
 import {parseAmount,normalizeOffer} from '../src/isp-economics.js';
-import {parseISP} from '../src/isp-parsers.js';
+import {parseISP,parseAlemPackages} from '../src/isp-parsers.js';
 import {HOME_INTERNET_SOURCES,parserFor,scanHomeInternet,marketPayload} from '../src/home-internet.js';
 import {ISP_COMPANIES,companyCoverage,socialDirectory} from '../src/isp-registry.js';
 import {SCHEMA_SQL} from '../src/schema.js';
@@ -90,4 +90,14 @@ test('customer-visible speed overrides a different internal Netonline speed code
   const d={a_data:{a_services:[{i_speed:6,s_service_type_ask:['wdsl'],a_packages:[{i_internet_service_id:1,s_internet_service_name:'Premium5',i_month_without_campaign:1,i_internet_service_price:900,i_speed:6,a_special_options:{s_speed_desc:'5 Mbps ye kadar hız'},a_service_options:['Sınırsız']}]}]}};
   const [p]=parserFor(source('broadmax-wdsl'),'<script>const a_wdsl_hizmet = '+JSON.stringify(d)+';</script>').products;
   assert.equal(p.speed_down_mbps,5);assert.equal(p.unlimited,true);
+});
+
+test('Cypking current prices retain gift periods and business off-peak conditions',()=>{
+ const html='<p>APT 7 MB 7 MB D / 2 MB U 500 TL / 1 Month 2700 TL / 6+1 Months</p><p>CYP İŞ 12 MB 12 MB D / 6 MB Off-Peak / 10 MB U 3500 TL / 6 Months 6000 TL / 12 Months</p>';
+ const rows=parserFor(source('cypking-home'),html).products;
+ assert.equal(rows.length,4);assert.equal(rows[1].effective_monthly_try,385.71);assert.equal(rows[2].market_segment,'business');assert.match(rows[2].features[0],/6 Mbps/);
+});
+test('Alemnet uses public cached package data and displayed gift campaign',()=>{
+ const rows=parseAlemPackages([{type:'eco',package_name:'10',price_one:900,price_three:2500,price_six:4800,price_twelve:9000}],source('alemnet-home'),'3 ay öde 1 ay bedava • 6 ay öde 2 ay bedava • 12 ay öde 3 ay bedava').map(normalizeOffer);
+ assert.equal(rows.length,4);assert.equal(rows[1].bonus_months,1);assert.equal(rows[3].effective_monthly_try,600);
 });
