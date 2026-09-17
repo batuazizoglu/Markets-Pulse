@@ -1,22 +1,31 @@
 import puppeteer from 'puppeteer';
 import * as cheerio from 'cheerio';
+import {parseAmount as n, normalizeOffer as offer} from './isp-economics.js';
+import {parseISP, socialLinks, parseAlemPackages} from './isp-parsers.js';
+import {ISP_SCOPE, ISP_COMPANIES, EXTRA_HOME_SOURCES, LEGACY_COMPANIES, companyCoverage, socialDirectory} from './isp-registry.js';
+const PARSER_VERSION='home-isp-2';
 
 const UA='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152 Safari/537.36';
 
-export const HOME_INTERNET_SOURCES=[
-  {slug:'kktcell-home',provider:'Turkcell Ev İnterneti',name:'Kuzey Kıbrıs Turkcell Ev İnterneti',url:'https://www.kktcell.com/internet-paketleri?type=home',technology:'Ev İnterneti',ownership_group:'Kuzey Kıbrıs Turkcell',parser:'kktcell'},
+const LEGACY_SOURCES=[
+  {slug:'kktcell-home',provider:'Turkcell Ev İnterneti',name:'Kuzey Kıbrıs Turkcell Ev İnterneti',url:'https://www.kktcell.com/internet-paketleri?type=turkcell-ev-interneti',technology:'Ev İnterneti',ownership_group:'Kuzey Kıbrıs Turkcell',parser:'kktcell'},
   {slug:'kktcell-superbox',provider:'KKTCELL',name:'Kuzey Kıbrıs Turkcell Superbox',url:'https://www.kktcell.com/internet-paketleri?type=superbox',technology:'4.5G FWA',ownership_group:'Kuzey Kıbrıs Turkcell',parser:'kktcell-superbox'},
   {slug:'lifecell-digital-home',provider:'Turkcell Ev İnterneti',name:'Lifecell Digital Ev İnterneti',url:'https://www.lifecelldigital.com/paketler?altyapi=1&cat=other',technology:'WDSL / Fiber / Sabit Genişbant',ownership_group:'Lifecell Digital Ltd.',parser:'lifecell-dynamic'},
   {slug:'lifecell-digital-superbox',provider:'KKTCELL',name:'Lifecell Digital Superbox',url:'https://www.lifecelldigital.com/paketler?altyapi=2',technology:'4.5G FWA',ownership_group:'Lifecell Digital Ltd.',parser:'lifecell-superbox-dynamic'},
-  {slug:'extend-wdsl',provider:'Extend',name:'Extend WDSL',url:'https://www.extendbroadband.com/urunler-wdsl.php',technology:'WDSL',ownership_group:'Aydoğan Communication Ltd.',parser:'extend-table'},
-  {slug:'extend-fiber',provider:'Extend',name:'Extend FiberNET',url:'https://www.extendbroadband.com/urunler-fibernet.php',technology:'Fiber',ownership_group:'Aydoğan Communication Ltd.',parser:'extend-table'},
+  {slug:'extend-wdsl',provider:'Extend',name:'Extend WDSL',url:'https://www.extendbroadband.com/urunler-wdsl.php',technology:'WDSL',ownership_group:'Arınet Security & Internet Consultancy Ltd.',parser:'extend-table'},
+  {slug:'extend-fiber',provider:'Extend',name:'Extend FiberNET',url:'https://www.extendbroadband.com/urunler-fibernet.php',technology:'Fiber',ownership_group:'Arınet Security & Internet Consultancy Ltd.',parser:'extend-table'},
   {slug:'telsim-home',provider:'Telsim',name:'Vodafone Evde İnternet',url:'https://www.kktctelsim.com/tr/internet/evde-internet-ve-red-box/vodafone-evde-internet',technology:'WDSL / ADSL',ownership_group:'KKTC Telsim',parser:'telsim-home'},
   {slug:'telsim-redbox',provider:'Telsim',name:'Telsim Red Box',url:'https://www.kktctelsim.com/tr/internet/evde-internet-ve-red-box/red-box',technology:'5G FWA',ownership_group:'KKTC Telsim',parser:'redbox'},
   {slug:'freenet-home',provider:'FreeNet',name:'FreeNet Ev İnterneti',url:'https://freenetcyp.com/',technology:'WDSL',ownership_group:'FreeNet',parser:'freenet'},
   {slug:'fixnet-home',provider:'FixNet',name:'FixNet Broadband',url:'https://www.fixnetbroadband.com/',technology:'WDSL / Fiber',ownership_group:'FixNet Broadband',parser:'fixnet'},
-  {slug:'towernet-home',provider:'Towernet',name:'Towernet Ev İnterneti',url:'https://towernet.net/paketler/',technology:'WDSL / ADSL',ownership_group:'Towernet',parser:'towernet'},
-  {slug:'nethouse-home',provider:'Nethouse',name:'Nethouse Bireysel',url:'https://nethouse.net/tr/',technology:'WDSL / ADSL / VDSL / Fiber',ownership_group:'Netonline Bilişim Şti. Ltd.',parser:'discovery'},
-  {slug:'multimax-home',provider:'Multimax',name:'Multimax Bireysel',url:'https://www.mmcyp.com/',technology:'WDSL / Fiber / Apartman',ownership_group:'Netonline Bilişim Şti. Ltd.',parser:'discovery'}
+  {slug:'towernet-home',provider:'Towernet',name:'Towernet Ev İnterneti',url:'https://towernet.net/#paketler',technology:'WDSL / ADSL',ownership_group:'Towernet',parser:'towernet-bundle'},
+  {slug:'nethouse-home',provider:'Nethouse',name:'Nethouse Bireysel',url:'https://nethouse.net/tr/',technology:'WDSL / ADSL / VDSL / Fiber',ownership_group:'Netonline Bilişim Şti. Ltd.',parser:'netonline'},
+  {slug:'multimax-home',provider:'Multimax',name:'Multimax Bireysel',url:'https://www.mmcyp.com/hizmetler',fetch_url:'https://www.mmcyp.com/?page=customer&action=hizmetler',technology:'WDSL / Fiber / Apartman',ownership_group:'Netonline Bilişim Şti. Ltd.',parser:'netonline'}
+];
+
+export const HOME_INTERNET_SOURCES=[
+  ...LEGACY_SOURCES.map(s=>({...s,company_ids:LEGACY_COMPANIES[s.slug]||[]})),
+  ...EXTRA_HOME_SOURCES
 ];
 
 const TRACK_FIELDS=[
@@ -27,44 +36,18 @@ const TRACK_FIELDS=[
   ['total_price_try','Toplam Ücret','high'],
   ['duration_months','Taahhüt / Ödeme Süresi','medium'],
   ['bonus_months','Hediye Ay','medium'],
+  ['duration_days','Ödeme Süresi (gün)','medium'],
+  ['bonus_days','Hediye Gün','medium'],
+  ['price_status','Fiyat Durumu','medium'],
   ['install_fee_try','Kurulum Ücreti','medium'],
   ['unlimited','Limitsiz','high'],
   ['data_limit_gb','Kota','high'],
   ['technology','Teknoloji','medium']
 ];
 
-function n(v){
-  if(v==null)return null;
-  const s=String(v).replace(/\.(?=\d{3}(?:\D|$))/g,'').replace(',','.').replace(/[^0-9.]/g,'');
-  const x=Number(s);return Number.isFinite(x)?x:null;
-}
 function clean(v){return String(v||'').replace(/\u00a0/g,' ').replace(/\s+/g,' ').trim()}
 function keyPart(v){return clean(v).toLocaleLowerCase('tr-TR').replace(/[^a-z0-9çğıöşü]+/gi,'-').replace(/^-|-$/g,'')}
 function round(v,d=2){if(v==null||!Number.isFinite(Number(v)))return null;const p=10**d;return Math.round(Number(v)*p)/p}
-
-function offer(base={}){
-  const duration=Number(base.duration_months||1);
-  const bonus=Number(base.bonus_months||0);
-  const service=Math.max(1,duration+bonus);
-  const total=base.total_price_try!=null?Number(base.total_price_try):(base.price_monthly_try!=null?Number(base.price_monthly_try)*duration:null);
-  const effective=total!=null?total/service:(base.price_monthly_try!=null?Number(base.price_monthly_try):null);
-  const monthly=base.price_monthly_try!=null?Number(base.price_monthly_try):(total!=null?total/duration:null);
-  const speed=base.speed_down_mbps!=null?Number(base.speed_down_mbps):null;
-  return {
-    ...base,
-    product_family:base.product_family||'fixed',
-    brand:base.brand||base.provider||null,
-    duration_months:duration,
-    bonus_months:bonus,
-    service_months:service,
-    price_monthly_try:round(monthly),
-    total_price_try:round(total),
-    effective_monthly_try:round(effective),
-    first_year_equiv_try:effective!=null?round(effective*12):null,
-    mbps_per_100tl:(speed>0&&effective>0)?round(speed/effective*100,3):null,
-    product_key:base.product_key||[base.source_slug,keyPart(base.name),duration,bonus].join('|')
-  };
-}
 
 function parseKktcell(html,source){
   const $=cheerio.load(html);$('script,style,noscript,svg').remove();
@@ -135,7 +118,7 @@ function parseLifecellDigital(html,source){
   const out=[],re=/(GNÇ'lilere Özel 20|Merkezi 10|Merkezi 20|Merkezi 30|Standart Paket 10|Aile Paketi 20|Pro Paket 30|Oyuncu Paketi 10)\s+(\d+)Mbps'e kadar\s+([\s\S]{0,100}?)(?=(?:GNÇ'lilere Özel 20|Merkezi 10|Merkezi 20|Merkezi 30|Standart Paket 10|Aile Paketi 20|Pro Paket 30|Oyuncu Paketi 10|Paket Türü|ÜCRETSİZ KURULUM|$))/ig;
   for(const m of text.matchAll(re)){
     const name=clean(m[1]),speed=n(m[2]),seg=clean(m[3]);
-    const pairs=[...seg.matchAll(/(1|4|12|14)\s*Ay\s+([\d.]+)\s*TL(?:\/Ay)?/ig)];
+    const pairs=[...seg.matchAll(/(1|4|12|14)\s*Ay\s+([\d.,]+)\s*TL(?:\/Ay)?/ig)];
     if(pairs.length){
       for(const p of pairs){const duration=Number(p[1]),price=n(p[2]);out.push(offer({
         source_slug:source.slug,provider:source.provider,ownership_group:source.ownership_group,source_url:source.url,
@@ -145,7 +128,7 @@ function parseLifecellDigital(html,source){
         raw_text:(name+' '+speed+'Mbps '+seg).slice(0,700),product_key:[source.slug,keyPart(name),speed,duration].join('|')
       }))}
     }else{
-      const d=seg.match(/(12)\s*Ay/i),p=seg.match(/([\d.]+)\s*TL\/Ay/i);
+      const d=seg.match(/(12)\s*Ay/i),p=seg.match(/([\d.,]+)\s*TL\/Ay/i);
       if(d&&p)out.push(offer({
         source_slug:source.slug,provider:source.provider,ownership_group:source.ownership_group,source_url:source.url,
         name,technology:'WDSL / Sabit Genişbant',speed_down_mbps:speed,speed_up_mbps:null,data_limit_gb:null,unlimited:true,
@@ -228,10 +211,10 @@ function parseFreeNet(html,source){
     const next=defs.slice(i+1).map(x=>text.indexOf(x.label,start+1)).filter(x=>x>start).sort((a,b)=>a-b)[0]||Math.min(text.length,start+1200);
     const seg=text.slice(start,next);
     const terms=[
-      {d:1,b:0,re:/([\d.]+)₺\s*1\s*Aylık/i},
-      {d:3,b:0,re:/([\d.]+)₺\s*3\s*Aylık/i},
-      {d:6,b:/6\s*Aylık\s*\+1\s*Ay\s*Hediye/i.test(seg)?1:0,re:/([\d.]+)₺\s*6\s*Aylık/i},
-      {d:12,b:/12\s*Aylık\s*\+2\s*Ay\s*Hediye/i.test(seg)?2:0,re:/([\d.]+)₺\s*12\s*Aylık/i}
+      {d:1,b:0,re:/([\d.,]+)₺\s*1\s*Aylık/i},
+      {d:3,b:0,re:/([\d.,]+)₺\s*3\s*Aylık/i},
+      {d:6,b:/6\s*Aylık\s*\+1\s*Ay\s*Hediye/i.test(seg)?1:0,re:/([\d.,]+)₺\s*6\s*Aylık/i},
+      {d:12,b:/12\s*Aylık\s*\+2\s*Ay\s*Hediye/i.test(seg)?2:0,re:/([\d.,]+)₺\s*12\s*Aylık/i}
     ];
     for(const t of terms){const m=seg.match(t.re);if(!m)continue;out.push(offer({
       source_slug:source.slug,provider:source.provider,brand:source.provider,product_family:'fixed',ownership_group:source.ownership_group,source_url:source.url,
@@ -252,7 +235,7 @@ function parseFixNet(html,source){
     for(let i=0;i<5;i++){node=node.parent();const t=clean(node.text());if(t.length>=80&&t.length<=1600){raw=t;if(/Mbps|Mbit/i.test(t)&&/₺/i.test(t))break}}
     const dm=raw.match(/(\d+)\s*Mbit(?:'e kadar|\s*Sabit|\b)/i)||raw.match(/(\d+)\s*Mbps\s*İndirme/i);
     const um=raw.match(/(\d+)\s*Mbps\s*Yükleme/i);
-    const priceM=raw.match(/([\d.]+)₺/i);if(!dm||!priceM)return;
+    const priceM=raw.match(/([\d.,]+)₺/i);if(!dm||!priceM)return;
     const durationM=raw.match(/(\d+)\s*Ay\s*Paket/i);const duration=durationM?Number(durationM[1]):1;
     const bonusM=raw.match(/\+\s*(\d+)\s*AY\s*HEDİYE/i);const bonus=bonusM?Number(bonusM[1]):0;
     out.push(offer({
@@ -309,10 +292,13 @@ function discoveryMeta(html,source){
 
 
 let lifecellBrowserPromise=null;
+let browserQueue=Promise.resolve();
+function serialBrowserFetch(run){const result=browserQueue.then(run,run);browserQueue=result.catch(()=>{});return result}
 async function getLifecellBrowser(){
   if(!lifecellBrowserPromise){
     lifecellBrowserPromise=puppeteer.launch({
       headless:true,
+      ...(process.env.PUPPETEER_EXECUTABLE_PATH?{executablePath:process.env.PUPPETEER_EXECUTABLE_PATH}:{}),
       args:['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage','--disable-gpu','--no-zygote']
     }).catch(e=>{lifecellBrowserPromise=null;throw e});
   }
@@ -576,7 +562,57 @@ async function fetchLifecellDynamic(source){
   }finally{if(page)await page.close().catch(()=>{})}
 }
 
-function parserFor(source,html){
+
+export async function closeHomeInternetBrowser(){
+  if(lifecellBrowserPromise){const browser=await lifecellBrowserPromise;lifecellBrowserPromise=null;await browser.close()}
+}
+async function fetchPublicPricingDynamic(source){
+  const start=Date.now();let page,stage='sayfa açılışı';
+  try{
+    const browser=await getLifecellBrowser();page=await browser.newPage();
+    await page.setUserAgent(UA);
+    page.setDefaultTimeout(15000);
+    if(source.parser==='alemnet-dynamic')await page.evaluateOnNewDocument(()=>{
+      localStorage.removeItem('packagesData');localStorage.removeItem('packagesTimestamp');
+    });
+    const response=await page.goto(source.url,{waitUntil:'domcontentloaded',timeout:30000});
+    if(!response?.ok())throw new Error('HTTP '+response?.status());
+    let products=[];
+    if(source.parser==='alemnet-dynamic'){
+      stage='paket fiyatlarının yüklenmesi';
+      await page.waitForFunction(()=>{try{return JSON.parse(localStorage.getItem('packagesData')||'[]').length>0}catch{return false}},{timeout:40000});
+      const data=await page.evaluate(()=>({records:JSON.parse(localStorage.getItem('packagesData')||'[]'),campaigns:document.querySelector('.alm__pkg-offers')?.innerText||''}));
+      if(!data.campaigns)await page.waitForSelector('.alm__pkg-offers');
+      const campaigns=data.campaigns||await page.$eval('.alm__pkg-offers',x=>x.innerText);
+      products=parseAlemPackages(data.records,source,campaigns).map(offer);
+    }else{
+      await page.waitForSelector('.pricing-tab');
+      const periods=await page.$$eval('.pricing-tab',buttons=>buttons.map((b,index)=>({
+        d:parseInt(b.dataset.period,10)||Number(b.getAttribute('wire:click')?.match(/\((\d+)\)/)?.[1]),
+        index,text:b.parentElement.innerText
+      })));
+      if(!periods.length)throw new Error('Paket dönem seçenekleri bulunamadı');
+      for(const period of periods){
+        if(!(period.d>0&&period.d<=36))continue;
+        stage=period.d+' aylık paketlerin yüklenmesi';
+        await page.evaluate(index=>document.querySelectorAll('.pricing-tab')[index].click(),period.index);
+        // Livewire leaves the original wire:snapshot attribute unchanged after an update.
+        // The active tab changes only when its rendered response is applied.
+        await page.waitForFunction(index=>document.querySelectorAll('.pricing-tab')[index]?.classList.contains('active'),{timeout:20000},period.index);
+        const html=await page.content(),bonus=period.text.match(/\+\s*(\d+)\s*Ay\s*Hediy/i);
+        const rows=parseFixNet(html,source);
+        if(!rows.length)throw new Error('Seçilen dönem için paket verisi alınamadı: '+period.d);
+        products.push(...rows.map(r=>offer({...r,duration_months:period.d,bonus_months:bonus?Number(bonus[1]):0,
+          price_monthly_try:null,product_key:[source.slug,keyPart(r.name),period.d,bonus?bonus[1]:0].join('|')})));
+      }
+    }
+    const html=await page.content();
+    return {ok:true,products,http_status:200,response_ms:Date.now()-start,meta:{dynamic:true,social_links:socialLinks(html,source.url)}};
+  }catch(e){return {ok:false,products:[],response_ms:Date.now()-start,http_status:null,error:stage+': '+e.message,meta:{dynamic:true}}}
+  finally{if(page)await page.close().catch(()=>{})}
+}
+
+export function parserFor(source,html){
   if(source.parser==='kktcell'||source.parser==='kktcell-superbox')return {products:parseKktcell(html,source),meta:discoveryMeta(html,source)};
   if(source.parser==='extend-table')return {products:parseExtendTable(html,source),meta:discoveryMeta(html,source)};
   if(source.parser==='lifecell-digital')return {products:parseLifecellDigital(html,source),meta:discoveryMeta(html,source)};
@@ -585,19 +621,58 @@ function parserFor(source,html){
   if(source.parser==='freenet')return {products:parseFreeNet(html,source),meta:discoveryMeta(html,source)};
   if(source.parser==='fixnet')return {products:parseFixNet(html,source),meta:discoveryMeta(html,source)};
   if(source.parser==='towernet')return {products:parseTowernet(html,source),meta:discoveryMeta(html,source)};
-  return {products:[],meta:discoveryMeta(html,source)};
+  return {products:parseISP(html,source).map(offer),meta:discoveryMeta(html,source)};
 }
 
-async function fetchSource(source){
-  if(source.parser==='lifecell-dynamic'||source.parser==='lifecell-superbox-dynamic')return fetchLifecellDynamic(source);
-  const t0=Date.now();
+// Configured official hosts only; unrelated redirects must not become package sources.
+export async function fetchSource(source){
+  const t0=Date.now();let httpStatus=null;
   try{
-    const res=await fetch(source.url,{headers:{'user-agent':UA,'accept':'text/html,application/xhtml+xml','accept-language':'tr-TR,tr;q=0.9,en;q=0.7','cache-control':'no-cache'},redirect:'follow',signal:AbortSignal.timeout(30000)});
-    const html=await res.text();
-    if(!res.ok)throw new Error('HTTP '+res.status);
-    const parsed=parserFor(source,html);
-    return {ok:true,http_status:res.status,response_ms:Date.now()-t0,products:parsed.products,meta:parsed.meta};
-  }catch(e){return {ok:false,http_status:null,response_ms:Date.now()-t0,products:[],meta:{},error:e?.message||String(e)}}
+    let result;
+    if(source.parser==='lifecell-dynamic'||source.parser==='lifecell-superbox-dynamic'){
+      result=await serialBrowserFetch(()=>fetchLifecellDynamic(source));
+    }else if(source.parser==='alemnet-dynamic'||source.parser==='fixnet-dynamic'){
+      result=await serialBrowserFetch(()=>fetchPublicPricingDynamic(source));
+    }else{
+      let url=source.fetch_url||source.url,res;
+      const host=new URL(url).hostname.replace(/^www\./,'');
+      const signal=AbortSignal.timeout(20000);
+      for(let i=0;i<5;i++){
+        res=await fetch(url,{headers:{'user-agent':UA,'accept':'text/html,application/xhtml+xml','accept-language':'tr-TR,tr;q=0.9,en;q=0.7'},redirect:'manual',signal});
+        httpStatus=res.status;
+        if(res.status>=300&&res.status<400){
+          const next=new URL(res.headers.get('location')||'',url);
+          if(!['http:','https:'].includes(next.protocol)||next.hostname.replace(/^www\./,'')!==host)throw new Error('Beklenmeyen alan adına yönlendirme; kaynak doğrulaması gerekli');
+          await res.body?.cancel();url=next.href;continue;
+        }
+        break;
+      }
+      if(!res.ok)throw new Error('HTTP '+res.status);
+      const html=await res.text();
+      if(html.length>8_000_000)throw new Error('Kaynak beklenen boyutu aşıyor');
+      let parserHtml=html;
+      if(source.parser==='towernet-bundle'){
+        const $=cheerio.load(html),assets=$('script[src]').map((_,s)=>$(s).attr('src')).get().filter(s=>s.startsWith('/assets/')).slice(0,3);
+        for(const asset of assets){
+          const assetUrl=new URL(asset,url);
+          if(assetUrl.hostname.replace(/^www\./,'')!==host)continue;
+          const script=await fetch(assetUrl,{signal,redirect:'error'});
+          if(!script.ok)throw new Error('Paket veri dosyası HTTP '+script.status);
+          const js=await script.text();if(js.length>8_000_000)throw new Error('Paket veri dosyası beklenen boyutu aşıyor');
+          parserHtml+='\n<script>'+js+'</script>';
+        }
+      }
+      const parsed=parserFor(source,parserHtml);
+      result={ok:true,http_status:res.status,response_ms:Date.now()-t0,products:parsed.products,meta:{...parsed.meta,social_links:socialLinks(html,source.url)}};
+    }
+    result.meta={...result.meta,parser_version:PARSER_VERSION};
+    result.products=(result.products||[]).map(p=>({...p,product_url:new URL(p.product_url||source.url,source.url).href,company_ids:source.company_ids,market_segment:source.market_segment||p.market_segment||'residential'}));
+    if(result.ok&&!result.products.length){
+      return {...result,ok:false,status:source.parser==='services'?'discovery':'parse_error',
+        error:source.parser==='services'?'Site erişilebilir; paket bilgisi henüz doğrulanamadı':'Paket verisi ayrıştırılamadı; önceki doğrulanmış teklifler korunuyor'};
+    }
+    return {...result,status:result.ok?'ok':'error'};
+  }catch(e){return {ok:false,status:'error',http_status:httpStatus,response_ms:Date.now()-t0,products:[],meta:{parser_version:PARSER_VERSION},error:(e?.message||String(e))+(e.cause?.code?' ('+e.cause.code+')':'')}}
 }
 
 function comparable(a,b){
@@ -648,30 +723,41 @@ async function cleanupHomeInternetMigrationNoise(pool){
     )`);
   migrationCleanupDone=true;
 }
-export async function scanHomeInternet(pool){
+export async function scanHomeInternet(pool,{sources=HOME_INTERNET_SOURCES,fetcher=fetchSource}={}){
   if(running)return {ok:false,skipped:true,reason:'home internet scan already running'};
   running=true;
   try{
     await cleanupHomeInternetMigrationNoise(pool);
     const results=[];
-    for(const source of HOME_INTERNET_SOURCES){
-      const fetched=await fetchSource(source);
-      const prev=await pool.query(`SELECT payload_json FROM home_internet_scans WHERE source_slug=$1 AND status='ok' ORDER BY captured_at DESC,id DESC LIMIT 1`,[source.slug]);
+    const pending=[...sources].sort((a,b)=>Number(a.parser.includes('dynamic'))-Number(b.parser.includes('dynamic')));
+    async function worker(){for(;;){
+      const source=pending.shift();if(!source)return;
+      let fetched=await fetcher(source);
+      fetched.meta={...fetched.meta,parser_version:PARSER_VERSION};
+      if(fetched.ok&&!fetched.products.length)fetched={...fetched,ok:false,status:'parse_error',error:'Paket verisi boş; önceki teklifler korunuyor'};
+      const prev=await pool.query(`SELECT payload_json,source_meta_json FROM home_internet_scans WHERE source_slug=$1 AND status='ok' ORDER BY captured_at DESC,id DESC LIMIT 1`,[source.slug]);
+      const previousProducts=prev.rows.length&&Array.isArray(prev.rows[0].payload_json)?prev.rows[0].payload_json:[];
+      const sameParser=prev.rows[0]?.source_meta_json?.parser_version===PARSER_VERSION;
+      if(fetched.ok&&sameParser&&previousProducts.length>=6&&fetched.products.length<previousProducts.length/2){
+        fetched={...fetched,ok:false,status:'parse_error',error:'Paket sayısı yarıdan fazla düştü; kaynak kontrolü gerekli',products:[]};
+      }
       const ins=await pool.query(`INSERT INTO home_internet_scans(source_slug,provider,source_name,source_url,technology,ownership_group,status,http_status,response_ms,parsed_count,payload_json,source_meta_json,error)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12::jsonb,$13) RETURNING id,captured_at`,[
         source.slug,source.provider,source.name,source.url,source.technology,source.ownership_group,
-        fetched.ok?'ok':'error',fetched.http_status,fetched.response_ms,fetched.products.length,JSON.stringify(fetched.products),JSON.stringify(fetched.meta||{}),fetched.error||null
+        fetched.status||(fetched.ok?'ok':'error'),fetched.http_status,fetched.response_ms,fetched.products.length,JSON.stringify(fetched.products),JSON.stringify(fetched.meta||{}),fetched.error||null
       ]);
       const scanId=ins.rows[0].id;
-      const previousProducts=prev.rows.length&&Array.isArray(prev.rows[0].payload_json)?prev.rows[0].payload_json:[];
-      const parserBaseline=previousProducts.length===0&&fetched.products.length>0;
+      const parserBaseline=!sameParser||previousProducts.length===0;
       const changes=fetched.ok&&prev.rows.length&&!parserBaseline?await writeChanges(pool,source,scanId,previousProducts,fetched.products):0;
       results.push({...source,...fetched,changes,captured_at:ins.rows[0].captured_at});
       console.log('[home-internet]',source.slug,JSON.stringify({ok:fetched.ok,parsed:fetched.products.length,changes,response_ms:fetched.response_ms,error:fetched.error||null,meta:fetched.meta||{}}));
-    }
+    }}
+    const completed=await Promise.allSettled(Array.from({length:3},worker));
+    const failure=completed.find(x=>x.status==='rejected');if(failure)throw failure.reason;
     const scanProducts=results.flatMap(x=>x.products||[]);
     console.log('[home-internet-summary]',JSON.stringify({
-      total:scanProducts.length,
+      total:scanProducts.length,companies:ISP_COMPANIES.length,sources:results.length,healthy_sources:results.filter(x=>x.ok).length,
+      priced:scanProducts.filter(x=>x.effective_monthly_try>0).length,brands:new Set(scanProducts.map(x=>x.provider)).size,
       fixed:scanProducts.filter(x=>(x.product_family||'fixed')==='fixed').length,
       fwa:scanProducts.filter(x=>x.product_family==='fwa').length,
       turkcell_home:scanProducts.filter(x=>x.provider==='Turkcell Ev İnterneti'&&x.product_family!=='fwa').length,
@@ -683,7 +769,7 @@ export async function scanHomeInternet(pool){
 }
 
 function scoreOffer(x){
-  if(!x.speed_down_mbps||!x.effective_monthly_try)return null;
+  if(x.stale||x.market_segment==='business'||!x.speed_down_mbps||!x.effective_monthly_try)return null;
   const value=Math.min(100,(Number(x.mbps_per_100tl)||0)*10);
   const tech={Fiber:100,'4.5G FWA':72,WDSL:60,ADSL:35,'Turkcell Ev İnterneti':60}[x.technology]||55;
   const flexibility=x.duration_months<=1?100:x.duration_months<=6?75:55;
@@ -691,18 +777,26 @@ function scoreOffer(x){
   return Math.round(value*.45+tech*.25+flexibility*.15+install*.15);
 }
 
-function marketPayload(scans,changes){
-  const products=[];const sources=[];
-  for(const row of scans){
-    const payload=Array.isArray(row.payload_json)?row.payload_json:[];
-    products.push(...payload.map(x=>({...x,market_score:scoreOffer(x)})));
-    sources.push({
-      slug:row.source_slug,provider:row.provider,name:row.source_name,url:row.source_url,technology:row.technology,ownership_group:row.ownership_group,
-      captured_at:row.captured_at,status:row.status,http_status:row.http_status,response_ms:row.response_ms,parsed_count:row.parsed_count,
-      meta:row.source_meta_json||{},error:row.error
-    });
+export function marketPayload(scans,changes,lastGood=[]){
+  const products=[],sources=[];
+  const bySlug=new Map(scans.map(r=>[r.source_slug,r]));
+  const good=new Map(lastGood.map(r=>[r.source_slug,r]));
+  for(const source of HOME_INTERNET_SOURCES){
+    const row=bySlug.get(source.slug);
+    const usable=row?.status==='ok'&&row.source_meta_json?.parser_version===PARSER_VERSION;
+    const fallback=good.get(source.slug);
+    const snapshot=usable?row:fallback?.source_meta_json?.parser_version===PARSER_VERSION?fallback:null;
+    const stale=!usable||snapshot&&Date.now()-new Date(snapshot.captured_at).getTime()>26*3600000;
+    const payload=Array.isArray(snapshot?.payload_json)?snapshot.payload_json:[];
+    products.push(...payload.map(x=>({...x,company_ids:source.company_ids,market_segment:source.market_segment||x.market_segment||'residential',
+      stale:!!stale,verified_at:snapshot.captured_at,market_score:scoreOffer({...x,stale})})));
+    sources.push({...source,captured_at:row?.captured_at||null,
+      last_success_at:snapshot?.captured_at||null,status:row?.status||'pending',
+      http_status:row?.http_status,response_ms:row?.response_ms,parsed_count:usable?row.parsed_count:0,
+      retained_count:!usable?payload.length:0,meta:{...row?.source_meta_json,social_links:row?.source_meta_json?.social_links||snapshot?.source_meta_json?.social_links||[]},error:row?.error||null});
   }
-  const priced=products.filter(x=>x.effective_monthly_try!=null);
+  const companies=companyCoverage(sources,products);
+  const priced=products.filter(x=>!x.stale&&x.market_segment!=='business'&&x.effective_monthly_try>0);
   const speedBased=priced.filter(x=>x.speed_down_mbps>0);
   const providerCount=new Set(sources.map(x=>x.provider)).size;
   const technologies=[...new Set(products.map(x=>x.technology).filter(Boolean))];
@@ -715,7 +809,7 @@ function marketPayload(scans,changes){
   const rivals=speedBased.filter(x=>x.provider!=='Turkcell Ev İnterneti'&&x.product_family!=='fwa');
   const opportunities=[];
   for(const o of ours){
-    const near=rivals.filter(r=>Math.abs(Number(r.speed_down_mbps)-Number(o.speed_down_mbps))<=Math.max(5,Number(o.speed_down_mbps)*.35)).sort((a,b)=>(b.market_score||0)-(a.market_score||0))[0];
+    const near=rivals.filter(r=>r.technology===o.technology&&r.unlimited===o.unlimited&&r.duration_months===o.duration_months&&r.duration_days===o.duration_days&&Math.abs(Number(r.speed_down_mbps)-Number(o.speed_down_mbps))<=Math.max(5,Number(o.speed_down_mbps)*.35)).sort((a,b)=>(b.market_score||0)-(a.market_score||0))[0];
     if(near){
       opportunities.push({kktcell:o,competitor:near,score_gap:(o.market_score??0)-(near.market_score??0),monthly_gap_try:round(Number(o.effective_monthly_try)-Number(near.effective_monthly_try)),value_gap:round(Number(o.mbps_per_100tl||0)-Number(near.mbps_per_100tl||0),3)});
     }
@@ -726,8 +820,10 @@ function marketPayload(scans,changes){
   const fwa_comparison={superbox,redbox,superbox_count:superbox.length,redbox_count:redbox.length};
   return {
     generated_at:new Date().toISOString(),
-    methodology:'Home Internet v1 • official source monitoring + normalized contract economics',
+    methodology:'Home Internet v2 • Resmî paket kaynakları. Hediye süre dâhil efektif aylık bedel; kurulum/kablo ayrıca. Gün bazlı paketlerde 30 gün = 1 ay. 12 ay eşdeğer bedel bir taahhüt fiyatı değildir.',
+    scope:ISP_SCOPE,companies,social:socialDirectory(sources),
     metrics:{
+      listed_companies:companies.length,tracked_companies:companies.filter(c=>['tracked','partial'].includes(c.status)).length,
       providers:providerCount,sources:sources.length,products:products.length,priced_products:priced.length,
       fixed_products:fixedProducts.length,fwa_products:fwaProducts.length,turkcell_home_products:fixedProducts.filter(x=>x.provider==='Turkcell Ev İnterneti').length,superbox_products:fwaProducts.filter(x=>x.brand==='Superbox').length,redbox_products:fwaProducts.filter(x=>x.brand==='Red Box').length,
       technologies:technologies.length,changes_7d:changes.filter(x=>new Date(x.detected_at)>Date.now()-7*86400000).length,
@@ -742,5 +838,6 @@ export async function getHomeInternetMarket(pool,{refresh=false}={}){
   let r=await pool.query(`SELECT DISTINCT ON (source_slug) * FROM home_internet_scans ORDER BY source_slug,captured_at DESC,id DESC`);
   if(!r.rows.length){await scanHomeInternet(pool);r=await pool.query(`SELECT DISTINCT ON (source_slug) * FROM home_internet_scans ORDER BY source_slug,captured_at DESC,id DESC`)}
   const ch=await pool.query(`SELECT * FROM home_internet_changes WHERE detected_at>=NOW()-INTERVAL '30 days' ORDER BY detected_at DESC,id DESC LIMIT 300`);
-  return marketPayload(r.rows,ch.rows);
+  const good=await pool.query(`SELECT DISTINCT ON (source_slug) * FROM home_internet_scans WHERE status='ok' AND source_meta_json->>'parser_version'=$1 ORDER BY source_slug,captured_at DESC,id DESC`,[PARSER_VERSION]);
+  return marketPayload(r.rows,ch.rows,good.rows);
 }
