@@ -685,7 +685,8 @@ export async function scanHomeInternet(pool,{sources=HOME_INTERNET_SOURCES,fetch
       results.push({...source,...fetched,changes,captured_at:ins.rows[0].captured_at});
       console.log('[home-internet]',source.slug,JSON.stringify({ok:fetched.ok,parsed:fetched.products.length,changes,response_ms:fetched.response_ms,error:fetched.error||null,meta:fetched.meta||{}}));
     }}
-    await Promise.all(Array.from({length:3},worker));
+    const completed=await Promise.allSettled(Array.from({length:3},worker));
+    const failure=completed.find(x=>x.status==='rejected');if(failure)throw failure.reason;
     const scanProducts=results.flatMap(x=>x.products||[]);
     console.log('[home-internet-summary]',JSON.stringify({
       total:scanProducts.length,companies:ISP_COMPANIES.length,sources:results.length,healthy_sources:results.filter(x=>x.ok).length,

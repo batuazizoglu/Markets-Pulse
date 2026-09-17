@@ -163,14 +163,14 @@ async function saveObservation(e){
 function render(){
   if(!state.data)return;
   const keys=new Set(state.data.products.map(x=>x.product_key));state.selected=new Set([...state.selected].filter(k=>keys.has(k)));
-  document.querySelectorAll('[data-family]').forEach(b=>{b.classList.toggle('active',b.dataset.family===state.family);b.setAttribute('aria-pressed',String(b.dataset.family===state.family))});
+  $('home-internet-section').querySelectorAll('[data-family]').forEach(b=>{b.classList.toggle('active',b.dataset.family===state.family);b.setAttribute('aria-pressed',String(b.dataset.family===state.family))});
   renderKpis();renderChanges();populateFilters();renderProducts();renderCompare();renderCoverage();renderSocial();renderObservations();
   const times=state.data.sources.map(x=>x.captured_at).filter(Boolean).sort();$('hiUpdated').textContent='Son tarama '+dt(times.at(-1));
   setView(state.view);
 }
 function setView(view){
   if(!['tracking','compare','social'].includes(view))return;state.view=view;
-  document.querySelectorAll('[data-view]').forEach(b=>{b.classList.toggle('active',b.dataset.view===view);b.setAttribute('aria-pressed',String(b.dataset.view===view))});
+  $('home-internet-section').querySelectorAll('[data-view]').forEach(b=>{b.classList.toggle('active',b.dataset.view===view);b.setAttribute('aria-pressed',String(b.dataset.view===view))});
   $('hiMarketViews').hidden=view==='social';$('hiSocialView').hidden=view!=='social';
   $('hiTrackingTop').hidden=view!=='tracking';$('hiTrackingBottom').hidden=view!=='tracking';$('hiCompareView').hidden=view!=='compare';
   if(view==='social'&&state.data&&!state.socialLoaded)loadSocial();
