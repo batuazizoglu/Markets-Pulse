@@ -292,6 +292,8 @@ function discoveryMeta(html,source){
 
 
 let lifecellBrowserPromise=null;
+let browserQueue=Promise.resolve();
+function serialBrowserFetch(run){const result=browserQueue.then(run,run);browserQueue=result.catch(()=>{});return result}
 async function getLifecellBrowser(){
   if(!lifecellBrowserPromise){
     lifecellBrowserPromise=puppeteer.launch({
@@ -565,7 +567,7 @@ export async function closeHomeInternetBrowser(){
   if(lifecellBrowserPromise){const browser=await lifecellBrowserPromise;lifecellBrowserPromise=null;await browser.close()}
 }
 async function fetchPublicPricingDynamic(source){
-  const start=Date.now();let page;
+  const start=Date.now();let page,stage='sayfa açılışı';
   try{
     const browser=await getLifecellBrowser();page=await browser.newPage();
     await page.setUserAgent(UA);
@@ -577,18 +579,26 @@ async function fetchPublicPricingDynamic(source){
     if(!response?.ok())throw new Error('HTTP '+response?.status());
     let products=[];
     if(source.parser==='alemnet-dynamic'){
-      await page.waitForFunction(()=>{try{return JSON.parse(localStorage.getItem('packagesData')||'[]').length>0}catch{return false}},{timeout:20000});
+      stage='paket fiyatlarının yüklenmesi';
+      await page.waitForFunction(()=>{try{return JSON.parse(localStorage.getItem('packagesData')||'[]').length>0}catch{return false}},{timeout:40000});
       const data=await page.evaluate(()=>({records:JSON.parse(localStorage.getItem('packagesData')||'[]'),campaigns:document.querySelector('.alm__pkg-offers')?.innerText||''}));
       if(!data.campaigns)await page.waitForSelector('.alm__pkg-offers');
       const campaigns=data.campaigns||await page.$eval('.alm__pkg-offers',x=>x.innerText);
       products=parseAlemPackages(data.records,source,campaigns).map(offer);
     }else{
       await page.waitForSelector('.pricing-tab');
-      const periods=await page.$$eval('.pricing-tab',buttons=>buttons.map(b=>({d:parseInt(b.dataset.period,10),text:b.parentElement.innerText})));
+      const periods=await page.$$eval('.pricing-tab',buttons=>buttons.map((b,index)=>({
+        d:parseInt(b.dataset.period,10)||Number(b.getAttribute('wire:click')?.match(/\((\d+)\)/)?.[1]),
+        index,text:b.parentElement.innerText
+      })));
+      if(!periods.length)throw new Error('Paket dönem seçenekleri bulunamadı');
       for(const period of periods){
-        if(![1,3,6,12].includes(period.d))continue;
-        await page.click('.pricing-tab[data-period="'+period.d+'months"]');
-        await page.waitForFunction(d=>[...document.querySelectorAll('[wire\\:snapshot]')].some(el=>{try{return JSON.parse(el.getAttribute('wire:snapshot')).data.selectedDuration===d}catch{return false}}),{},period.d);
+        if(!(period.d>0&&period.d<=36))continue;
+        stage=period.d+' aylık paketlerin yüklenmesi';
+        await page.evaluate(index=>document.querySelectorAll('.pricing-tab')[index].click(),period.index);
+        // Livewire leaves the original wire:snapshot attribute unchanged after an update.
+        // The active tab changes only when its rendered response is applied.
+        await page.waitForFunction(index=>document.querySelectorAll('.pricing-tab')[index]?.classList.contains('active'),{timeout:20000},period.index);
         const html=await page.content(),bonus=period.text.match(/\+\s*(\d+)\s*Ay\s*Hediy/i);
         const rows=parseFixNet(html,source);
         if(!rows.length)throw new Error('Seçilen dönem için paket verisi alınamadı: '+period.d);
@@ -598,7 +608,7 @@ async function fetchPublicPricingDynamic(source){
     }
     const html=await page.content();
     return {ok:true,products,http_status:200,response_ms:Date.now()-start,meta:{dynamic:true,social_links:socialLinks(html,source.url)}};
-  }catch(e){return {ok:false,products:[],response_ms:Date.now()-start,http_status:null,error:e.message,meta:{dynamic:true}}}
+  }catch(e){return {ok:false,products:[],response_ms:Date.now()-start,http_status:null,error:stage+': '+e.message,meta:{dynamic:true}}}
   finally{if(page)await page.close().catch(()=>{})}
 }
 
@@ -620,9 +630,9 @@ export async function fetchSource(source){
   try{
     let result;
     if(source.parser==='lifecell-dynamic'||source.parser==='lifecell-superbox-dynamic'){
-      result=await fetchLifecellDynamic(source);
+      result=await serialBrowserFetch(()=>fetchLifecellDynamic(source));
     }else if(source.parser==='alemnet-dynamic'||source.parser==='fixnet-dynamic'){
-      result=await fetchPublicPricingDynamic(source);
+      result=await serialBrowserFetch(()=>fetchPublicPricingDynamic(source));
     }else{
       let url=source.fetch_url||source.url,res;
       const host=new URL(url).hostname.replace(/^www\./,'');
@@ -719,7 +729,7 @@ export async function scanHomeInternet(pool,{sources=HOME_INTERNET_SOURCES,fetch
   try{
     await cleanupHomeInternetMigrationNoise(pool);
     const results=[];
-    const pending=[...sources];
+    const pending=[...sources].sort((a,b)=>Number(a.parser.includes('dynamic'))-Number(b.parser.includes('dynamic')));
     async function worker(){for(;;){
       const source=pending.shift();if(!source)return;
       let fetched=await fetcher(source);

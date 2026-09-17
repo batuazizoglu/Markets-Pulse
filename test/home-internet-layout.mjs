@@ -21,12 +21,13 @@ try{
  const page=await browser.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
  await mkdir('test-output',{recursive:true});
  for(const width of [1440,390]){
-  await page.setViewport({width,height:960});await page.goto('http://127.0.0.1:'+server.address().port+'/preview-home#home');
+  await page.setViewport({width,height:960});await page.goto('http://127.0.0.1:'+server.address().port+'/preview-home?width='+width+'#home');
   await page.waitForSelector('#hiCompanies tr');
   for(const view of ['tracking','compare','social']){
    await page.evaluate(view=>window.HomeInternetUI.setView(view),view);
    if(view==='compare'){
     await page.locator('[data-pick="demo0"]').click();await page.locator('[data-pick="demo1"]').click();
+    assert.equal(await page.$$eval('.hi-comparison thead th',els=>els.length),3);
    }
    await page.waitForFunction(()=>!document.querySelector('#hiScanBtn').disabled);
    const bounds=await page.evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth,buttons:[...document.querySelectorAll('.hi-subnav button')].map(x=>({text:x.textContent,width:x.getBoundingClientRect().width,height:x.getBoundingClientRect().height}))}));
