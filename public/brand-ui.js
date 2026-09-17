@@ -1,7 +1,7 @@
 (()=>{
 const routes={
   dashboard:{label:'Dashboard',desc:'Pazarın nabzı, kritik gelişmeler, aksiyonlar ve yönetici özeti.',ids:['market-pulse-section','dashboard-insights-section','overview']},
-  competitor:{label:'Rakip Takip',desc:'Kaynak sağlığı, günlük değişim, Telsim paketleri ve değişiklik akışı.',ids:['source-health-section','daily-market-section','packages-section','historySection','changes-section','sources-section']},
+  competitor:{label:'Rakip Takip',desc:'Değişiklik akışı, günlük değişim, Telsim paketleri ve kaynak sağlığı.',ids:['changes-section','daily-market-section','packages-section','historySection','sources-section','source-health-section']},
   home:{label:'Ev İnterneti',desc:'KKTC sabit internet pazarında fiyat, hız, teknoloji, TCO ve rakip hareketleri.',ids:['home-internet-section']},
   compare:{label:'Ürün Karşılaştırma',desc:'Telsim ve KKTCELL ürünlerini segment bazında karşılaştırın.',ids:['benchmark-section']},
   segment:{label:'Segment Analizi',desc:'Genel, Asker, Öğrenci/Genç, Turist ve Premium/Platinum pozisyonu.',ids:['benchmark-section']},
