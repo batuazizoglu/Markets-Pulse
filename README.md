@@ -298,3 +298,5 @@ POST /api/home-internet/social-observations
 ```
 
 `npm test` uses isolated fixtures and does not contact production. Optional `node test/inspect-isp-sources.mjs` reads public package sources and reports parsing health; it never sends applications, messages or emails.
+
+Validation for this release: 51 tests cover catalog scope, price separators, gift periods, failed-scan retention, UI selection/escaping and persisted social observations. Browser smoke checks exercise all three views at 1440px and 390px. A separate read-only live audit verified Kıbrıs Online, Nethouse, Multimax, Broadmax, Cypking, Alemnet, Towernet and FixNet's duration controls. Public-site failures remain explicit source-health records.

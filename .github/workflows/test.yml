@@ -1,7 +1,7 @@
 name: Tests
 on:
   push:
-    branches: [main, 'feat/bthk-isp-coverage']
+    branches: [main]
   pull_request:
 permissions:
   contents: read
@@ -22,12 +22,6 @@ jobs:
       - run: npm test
       - name: Home internet desktop and mobile layouts
         run: node test/home-internet-layout.mjs
-      - name: Inspect public ISP sources
-        if: github.ref == 'refs/heads/feat/bthk-isp-coverage'
-        run: node test/inspect-isp-sources.mjs
-        env:
-          PUPPETEER_EXECUTABLE_PATH: /usr/bin/google-chrome
-          ISP_AUDIT_SOURCES: cypking-home,alemnet-home,towernet-home,fixnet-flex-super-internet,fixnet-exclusive-internet,fixnet-iste-internet,fixnet-oyuncu-paketleri,fixnet-yayinci-paketleri,extend-business
       - uses: actions/upload-artifact@v4
         if: always()
         with:
