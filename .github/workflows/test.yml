@@ -1,0 +1,25 @@
+name: Tests
+on:
+  push:
+    branches: [main, 'feat/bthk-isp-coverage']
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --no-audit --no-fund
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: 'true'
+      - run: npm test
+      - name: Inspect public ISP sources
+        if: github.ref == 'refs/heads/feat/bthk-isp-coverage'
+        run: node test/inspect-isp-sources.mjs
