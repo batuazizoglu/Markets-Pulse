@@ -27,6 +27,7 @@ jobs:
         run: node test/inspect-isp-sources.mjs
         env:
           PUPPETEER_EXECUTABLE_PATH: /usr/bin/google-chrome
+          ISP_AUDIT_SOURCES: cypking-home,alemnet-home,towernet-home,fixnet-flex-super-internet,fixnet-exclusive-internet,fixnet-iste-internet,fixnet-oyuncu-paketleri,fixnet-yayinci-paketleri,extend-business
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -101,3 +101,17 @@ test('Alemnet uses public cached package data and displayed gift campaign',()=>{
  const rows=parseAlemPackages([{type:'eco',package_name:'10',price_one:900,price_three:2500,price_six:4800,price_twelve:9000}],source('alemnet-home'),'3 ay öde 1 ay bedava • 6 ay öde 2 ay bedava • 12 ay öde 3 ay bedava').map(normalizeOffer);
  assert.equal(rows.length,4);assert.equal(rows[1].bonus_months,1);assert.equal(rows[3].effective_monthly_try,600);
 });
+
+test('an incomplete Alemnet gift line cannot consume the next campaign line',()=>{
+ const r={type:'eco',package_name:'15',price_one:930,price_three:2520,price_six:5350,price_twelve:9170};
+ const rows=parseAlemPackages([r],source('alemnet-home'),'3 ay öde\n6 ay öde, 2 ay bedava al\n12 ay öde, 3 ay bedava al').map(normalizeOffer);
+ assert.deepEqual(rows.map(x=>x.bonus_months),[0,0,2,3]);
+ assert.equal(rows[1].effective_monthly_try,840);assert.equal(rows[3].effective_monthly_try,611.33);
+});
+test('Towernet public bundle preserves null terms and scientific-notation amounts without executing JS',()=>{
+ const tick=String.fromCharCode(96);
+ const bundle='var cd=[{id:'+tick+'ekonomik'+tick+',label:'+tick+'WDSL Ekonomik'+tick+',plans:[{speed:15,prices:[1e3,2850,5700,9850]}]},{id:'+tick+'adsl'+tick+',label:'+tick+'ADSL'+tick+',plans:[{speed:8,prices:[600,1600,null,6e3]}]}];throw "not executable"';
+ const rows=parserFor(source('towernet-home'),bundle).products;
+ assert.equal(rows.length,7);assert.equal(rows[0].total_price_try,1000);assert.equal(rows.at(-1).effective_monthly_try,500);
+ assert.equal(rows.filter(x=>x.technology==='ADSL').some(x=>x.duration_months===6),false);
+});

@@ -18,7 +18,7 @@ const LEGACY_SOURCES=[
   {slug:'telsim-redbox',provider:'Telsim',name:'Telsim Red Box',url:'https://www.kktctelsim.com/tr/internet/evde-internet-ve-red-box/red-box',technology:'5G FWA',ownership_group:'KKTC Telsim',parser:'redbox'},
   {slug:'freenet-home',provider:'FreeNet',name:'FreeNet Ev İnterneti',url:'https://freenetcyp.com/',technology:'WDSL',ownership_group:'FreeNet',parser:'freenet'},
   {slug:'fixnet-home',provider:'FixNet',name:'FixNet Broadband',url:'https://www.fixnetbroadband.com/',technology:'WDSL / Fiber',ownership_group:'FixNet Broadband',parser:'fixnet'},
-  {slug:'towernet-home',provider:'Towernet',name:'Towernet Ev İnterneti',url:'https://towernet.net/paketler/',technology:'WDSL / ADSL',ownership_group:'Towernet',parser:'towernet'},
+  {slug:'towernet-home',provider:'Towernet',name:'Towernet Ev İnterneti',url:'https://towernet.net/#paketler',technology:'WDSL / ADSL',ownership_group:'Towernet',parser:'towernet-bundle'},
   {slug:'nethouse-home',provider:'Nethouse',name:'Nethouse Bireysel',url:'https://nethouse.net/tr/',technology:'WDSL / ADSL / VDSL / Fiber',ownership_group:'Netonline Bilişim Şti. Ltd.',parser:'netonline'},
   {slug:'multimax-home',provider:'Multimax',name:'Multimax Bireysel',url:'https://www.mmcyp.com/hizmetler',fetch_url:'https://www.mmcyp.com/?page=customer&action=hizmetler',technology:'WDSL / Fiber / Apartman',ownership_group:'Netonline Bilişim Şti. Ltd.',parser:'netonline'}
 ];
@@ -584,7 +584,7 @@ async function fetchPublicPricingDynamic(source){
       products=parseAlemPackages(data.records,source,campaigns).map(offer);
     }else{
       await page.waitForSelector('.pricing-tab');
-      const periods=await page.$eval('.pricing-tab',buttons=>buttons.map(b=>({d:parseInt(b.dataset.period,10),text:b.parentElement.innerText})));
+      const periods=await page.$$eval('.pricing-tab',buttons=>buttons.map(b=>({d:parseInt(b.dataset.period,10),text:b.parentElement.innerText})));
       for(const period of periods){
         if(![1,3,6,12].includes(period.d))continue;
         await page.click('.pricing-tab[data-period="'+period.d+'months"]');
@@ -640,7 +640,19 @@ export async function fetchSource(source){
       if(!res.ok)throw new Error('HTTP '+res.status);
       const html=await res.text();
       if(html.length>8_000_000)throw new Error('Kaynak beklenen boyutu aşıyor');
-      const parsed=parserFor(source,html);
+      let parserHtml=html;
+      if(source.parser==='towernet-bundle'){
+        const $=cheerio.load(html),assets=$('script[src]').map((_,s)=>$(s).attr('src')).get().filter(s=>s.startsWith('/assets/')).slice(0,3);
+        for(const asset of assets){
+          const assetUrl=new URL(asset,url);
+          if(assetUrl.hostname.replace(/^www\./,'')!==host)continue;
+          const script=await fetch(assetUrl,{signal,redirect:'error'});
+          if(!script.ok)throw new Error('Paket veri dosyası HTTP '+script.status);
+          const js=await script.text();if(js.length>8_000_000)throw new Error('Paket veri dosyası beklenen boyutu aşıyor');
+          parserHtml+='\n<script>'+js+'</script>';
+        }
+      }
+      const parsed=parserFor(source,parserHtml);
       result={ok:true,http_status:res.status,response_ms:Date.now()-t0,products:parsed.products,meta:{...parsed.meta,social_links:socialLinks(html,source.url)}};
     }
     result.meta={...result.meta,parser_version:PARSER_VERSION};
@@ -771,7 +783,7 @@ export function marketPayload(scans,changes,lastGood=[]){
     sources.push({...source,captured_at:row?.captured_at||null,
       last_success_at:snapshot?.captured_at||null,status:row?.status||'pending',
       http_status:row?.http_status,response_ms:row?.response_ms,parsed_count:usable?row.parsed_count:0,
-      retained_count:!usable?payload.length:0,meta:row?.source_meta_json||{},error:row?.error||null});
+      retained_count:!usable?payload.length:0,meta:{...row?.source_meta_json,social_links:row?.source_meta_json?.social_links||snapshot?.source_meta_json?.social_links||[]},error:row?.error||null});
   }
   const companies=companyCoverage(sources,products);
   const priced=products.filter(x=>!x.stale&&x.market_segment!=='business'&&x.effective_monthly_try>0);

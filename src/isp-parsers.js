@@ -156,7 +156,11 @@ export function parseServices(html,source){
 
 export function parseAlemPackages(records,source,campaigns=''){
   const gifts=new Map();
-  for(const m of campaigns.matchAll(/(\d+)\s*(?:ay|months?)[^\d]{0,45}(\d+)\s*(?:ay|months?)/gi))gifts.set(Number(m[1]),Number(m[2]));
+  for(const line of campaigns.split(/[\n•]/)){
+    if(!/bedava|hediye|free/i.test(line))continue;
+    const m=line.match(/(\d+)\s*(?:ay|months?)[^\d\r\n]{0,45}(\d+)\s*(?:ay|months?)/i);
+    if(m)gifts.set(Number(m[1]),Number(m[2]));
+  }
   const out=[];
   for(const r of records||[]){
     if(!['eco','pro'].includes(r.type))continue;
@@ -184,8 +188,36 @@ function cypking(html,source){
   return out;
 }
 
+
+export function parseTowernetBundle(html,source){
+  const out=[];
+  // Only the public plan literal grammar is accepted; bundled JavaScript is never evaluated.
+  for(const group of html.matchAll(/\{id:\x60([a-z]+)\x60,label:\x60([^\x60]+)\x60,plans:\[((?:\{speed:\d+(?:\.\d+)?,prices:\[[\deE+.,nul\s-]+\]\},?)+)\]\}/g)){
+    for(const plan of group[3].matchAll(/\{speed:(\d+(?:\.\d+)?),prices:(\[[\deE+.,nul\s-]+\])\}/g)){
+      const prices=JSON.parse(plan[2]);if(prices.length!==4)throw new Error('Towernet dönem sayısı değişti');
+      prices.forEach((total,i)=>{
+        if(!(total>0))return;const adsl=group[1]==='adsl';
+        out.push(base(source,{name:group[2]+' '+plan[1]+' Mbps',technology:adsl?'ADSL':'WDSL',
+          speed_down_mbps:Number(plan[1]),unlimited:/limitsiz/i.test(group[2])?true:null,
+          duration_months:[1,3,6,12][i],bonus_months:0,total_price_try:total,
+          features:adsl?[]:['Kurulum: 100 USD; TL karşılığına çevrilmedi'],
+          raw_text:group[2]+' '+plan[0],product_key:[source.slug,group[1],plan[1],[1,3,6,12][i]].join('|')}));
+      });
+    }
+  }
+  return out;
+}
+function extendBusiness(html,source){
+  const $=document(html),text=clean($.root().text()),out=[];
+  for(const [word,name,technology] of [['WDSL','Kurumsal WDSL','WDSL'],['FİBEROPTİK','Kurumsal Fiber','Fiber']]){
+    if(text.includes(word)&&/site survey|keşif/i.test(text))out.push(base(source,{name,technology,market_segment:'business',price_status:'quote',
+      features:['Yerinde keşif ile fiyatlandırma','Senkron bağlantı','Statik IP'],raw_text:text.slice(0,1800)}));
+  }
+  return out;
+}
+
 export function parseISP(html,source){
-  const parser={cypking,netonline:parseNetonline,haypem,surface,primenet,royalnet,goldsurf,enson:tables,analiz:tables,'isp-table':tables,services:parseServices};
+  const parser={'towernet-bundle':parseTowernetBundle,'extend-business':extendBusiness,cypking,netonline:parseNetonline,haypem,surface,primenet,royalnet,goldsurf,enson:tables,analiz:tables,'isp-table':tables,services:parseServices};
   const rows=(parser[source.parser]||(()=>[]))(html,source);
   return [...new Map(rows.map(r=>[r.product_key||[r.source_slug,r.technology,r.name,r.duration_months,r.duration_days,r.bonus_months,r.bonus_days].join('|'),r])).values()];
 }
