@@ -127,7 +127,7 @@ test('live comparison renders Primary and Secondary labels, reasons and escaped 
     const data=buildBenchmark([telsim(),telsim(2,{current_name:'Super Databol <img src=x onerror=bad()>'})],[kktcell()]);
     dom.window.renderBenchmark(data);
     const doc=dom.window.document,text=doc.body.textContent;
-    assert.match(text,/Primary/);assert.match(text,/Secondary/);assert.match(text,/2.4-live/);
+    assert.match(text,/Primary/);assert.match(text,/Secondary/);assert.ok(text.includes(ENGINE_VERSION));
     assert.match(text,/Super Databol <img/);assert.equal(doc.querySelector('img'),null);
     assert.equal(doc.querySelectorAll('.bm-table tbody tr').length,2);
     assert.ok(!text.includes('NaN'));assert.ok(!text.includes('undefined'));

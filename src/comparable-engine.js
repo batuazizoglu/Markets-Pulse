@@ -1,5 +1,5 @@
 const TR='tr-TR';
-export const ENGINE_VERSION='2.4-live';
+export const ENGINE_VERSION='2.4.1-live';
 
 
 function norm(v){return String(v||'').toLocaleLowerCase(TR).replace(/\s+/g,' ').trim()}
@@ -55,8 +55,8 @@ function parseKktAllowances(raw,fallbackCore,fallbackBonus){
 function validityT(p,billing,name){const v=num(p.validity_days);if(v&&v>0)return v;const n=norm(name);if(billing==='postpaid')return 30;if(/super databol\s*3\b/.test(n))return 90;if(/super databol\s*5\b/.test(n))return 150;if(/super databol (?:xsmall|small|medium|large|digital)|super world (?:xsmall|small|medium|large|digital)|uni[- ]?pack/.test(n))return 30;return null}
 function validityK(p,billing){const v=num(p.validity_days);if(v&&v>0)return v;return billing==='postpaid'?30:null}
 
-function fpT(p){const name=p.current_name||p.name||'',e=eligibility(name),billing=billingTelsim(p),core=num(p.data_gb)||0,bonus=num(p.bonus_data_gb)||0,eff=core+bonus,text=textTelsim(p);return{provider:'Telsim',id:Number(p.id),key:String(p.id),name,billing,eligibility:e,segment:segment(e),family:family('Telsim',name,e),core,bonus,eff,minutes:num(p.local_tr_minutes),intl:num(p.international_minutes),sms:num(p.sms),days:validityT(p,billing,name),price:num(p.price_try),benefits:benefits(text),acquisition:acquisition(text),channel:channel(text),intent:tier(eff,e),addon:detectAddon(text),closed:detectClosed(text)||p.active===false,source_url:p.source_url}}
-function fpK(p){const name=p.name||'',e=eligibility(name),billing=p.type,parsed=parseKktAllowances(p.raw_text,p.data_gb,p.bonus_data_gb),core=parsed.core,bonus=parsed.bonus,eff=core+bonus,text=textKktcell(p);return{provider:'KKTCELL',id:productKey(p),key:productKey(p),name,billing,eligibility:e,segment:segment(e),family:family('KKTCELL',name,e),core,bonus,eff,minutes:num(p.local_tr_minutes),intl:num(p.international_minutes),sms:num(p.sms),days:validityK(p,billing),price:num(p.price_try),benefits:benefits(text),acquisition:p.acquisition||acquisition(text),channel:p.channel||channel(text),intent:tier(eff,e),addon:p.is_core===false||detectAddon(text),closed:!!p.is_closed||detectClosed(text),source_url:p.source_url,product_url:p.product_url}}
+function fpT(p){const name=p.current_name||p.name||'',e=eligibility(name),billing=billingTelsim(p),core=num(p.data_gb)||0,bonus=num(p.bonus_data_gb)||0,eff=core+bonus,text=textTelsim(p);return{provider:'Telsim',id:Number(p.id),key:String(p.id),name,billing,eligibility:e,segment:segment(e),family:family('Telsim',name,e),core,bonus,eff,minutes:num(p.local_tr_minutes),intl:num(p.international_minutes),sms:num(p.sms),days:validityT(p,billing,name),price:num(p.price_try),benefits:benefits(text),acquisition:acquisition(text),channel:channel(text),intent:tier(eff,e),addon:detectAddon(name),closed:detectClosed(text)||p.active===false,source_url:p.source_url}}
+function fpK(p){const name=p.name||'',e=eligibility(name),billing=p.type,parsed=parseKktAllowances(p.raw_text,p.data_gb,p.bonus_data_gb),core=parsed.core,bonus=parsed.bonus,eff=core+bonus,text=textKktcell(p);return{provider:'KKTCELL',id:productKey(p),key:productKey(p),name,billing,eligibility:e,segment:segment(e),family:family('KKTCELL',name,e),core,bonus,eff,minutes:num(p.local_tr_minutes),intl:num(p.international_minutes),sms:num(p.sms),days:validityK(p,billing),price:num(p.price_try),benefits:benefits(text),acquisition:p.acquisition||acquisition(text),channel:p.channel||channel(text),intent:tier(eff,e),addon:p.is_core===false||detectAddon(name),closed:!!p.is_closed||detectClosed(text),source_url:p.source_url,product_url:p.product_url}}
 
 function gate(t,k){const reasons=[];if(t.billing!==k.billing)reasons.push('billing');if(t.eligibility!==k.eligibility)reasons.push('eligibility');if(t.family&&(!k.family||t.family!==k.family))reasons.push('product_family');return{ok:!reasons.length,reasons}}
 function pair(t,k){
@@ -75,7 +75,10 @@ function pair(t,k){
 function compact(p){return p?{key:p.key,id:p.id,name:p.name,type:p.billing,acquisition:p.acquisition,channel:p.channel,source_url:p.source_url,product_url:p.product_url,segment:p.segment,family:p.family,core_data_gb:p.core,bonus_data_gb:p.bonus,minutes:p.minutes,international_minutes:p.intl,sms:p.sms,validity_days:p.days,price_try:p.price,intent:p.intent}:null}
 
 export function evaluateComparableProducts(telsimRows,kktcellRows,overrideRows=[]){
-  const T=telsimRows.map(fpT).filter(x=>!x.closed&&!x.addon&&x.price!=null&&x.core>0),K=kktcellRows.map(fpK).filter(x=>!x.closed&&!x.addon&&x.price!=null&&x.core>0),pairs=[];
+  // Product identity determines add-on status; included benefits such as 'Sınırsız ek uygulamalar' do not.
+  const allT=telsimRows.map(fpT),allK=kktcellRows.map(fpK);
+  const isCore=x=>!x.closed&&!x.addon&&x.price!=null&&x.core>0;
+  const T=allT.filter(isCore),K=allK.filter(isCore),pairs=[];
   for(const t of T)for(const k of K){const p=pair(t,k);pairs.push({t,k,...p})}
   const bestT=new Map(),bestK=new Map();for(const p of pairs){if(!p.eligible)continue;const a=bestT.get(p.t.id),b=bestK.get(p.k.key);if(!a||p.score>a.score)bestT.set(p.t.id,p);if(!b||p.score>b.score)bestK.set(p.k.key,p)}
   const overrides=new Map(overrideRows.map(x=>[Number(x.telsim_product_id),x]));const rows=[];
@@ -94,7 +97,16 @@ export function evaluateComparableProducts(telsimRows,kktcellRows,overrideRows=[
     const effectivePair=effectiveK?all.find(x=>x.k.key===effectiveK.key):null;
     rows.push({telsim:compact(t),telsim_product_id:t.id,engine_status:engineStatus,engine_score:best?.score||0,effective_score:effectivePair?.score??null,mutual_best:mutual,engine_match:compact(best?.k),effective_status:effectiveStatus,effective_match:compact(effectiveK),override,reasons:effectivePair?.reasons||best?.reasons||[],penalties:effectivePair?.penalties||[],score_margin:best&&all[1]?best.score-all[1].score:null,candidates:all.map(x=>({score:x.score,product:compact(x.k),penalties:x.penalties}))});
   }
+  const segment_coverage={};
+  for(const label of new Set([...allT,...allK].map(x=>x.segment))){
+    const tr=T.filter(x=>x.segment===label),kr=K.filter(x=>x.segment===label),rr=rows.filter(x=>x.telsim.segment===label);
+    segment_coverage[label]={telsim_total:allT.filter(x=>x.segment===label).length,telsim_core:tr.length,
+      kktcell_total:allK.filter(x=>x.segment===label).length,kktcell_core:kr.length,
+      billing_types:[...new Set(tr.map(x=>x.billing))],eligible_pairs:rr.reduce((n,x)=>n+x.candidates.length,0),
+      statuses:rr.reduce((a,x)=>(a[x.effective_status]=(a[x.effective_status]||0)+1,a),{}),
+      stale_overrides:rr.filter(x=>x.override?.stale).length,rejected_overrides:rr.filter(x=>x.override?.decision==='reject').length};
+  }
   const count=(field)=>rows.reduce((a,x)=>(a[x[field]]=(a[x[field]]||0)+1,a),{});
-  return{generated_at:new Date().toISOString(),engine_version:ENGINE_VERSION,mode:'live',thresholds:{Primary:'≥85 + Mutual Best',Secondary:'≥75',Review:'65–74',Reject:'<65 / uygun peer yok'},catalog:{telsim_core:T.length,kktcell_core:K.length,eligible_pairs:pairs.filter(x=>x.eligible).length,total_pairs:pairs.length},engine_counts:count('engine_status'),effective_counts:count('effective_status'),override_count:overrideRows.length,rows};
+  return{generated_at:new Date().toISOString(),engine_version:ENGINE_VERSION,mode:'live',segment_coverage,thresholds:{Primary:'≥85 + Mutual Best',Secondary:'≥75',Review:'65–74',Reject:'<65 / uygun peer yok'},catalog:{telsim_core:T.length,kktcell_core:K.length,eligible_pairs:pairs.filter(x=>x.eligible).length,total_pairs:pairs.length},engine_counts:count('engine_status'),effective_counts:count('effective_status'),override_count:overrideRows.length,rows};
 }
 

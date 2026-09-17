@@ -155,7 +155,7 @@ function competitivePositionScore(rows,segment){
   return {segment,score,level,confidence,match_count:rows.length,positions,avg_value_gap_pct:Number(avgValuePct.toFixed(1)),avg_match_score:Number(avgMatch.toFixed(1)),rationale};
 }
 
-export function buildBenchmark(telsimRows,kktcellRows,overrides=[]){
+export function buildBenchmark(telsimRows,kktcellRows,overrides=[],{sources=[]}={}){
   const review=evaluateComparableProducts(telsimRows,kktcellRows,overrides);
   const matches=[],secondary_matches=[];
   const product=p=>({...p,data_gb:p.core_data_gb,effective_data_gb:p.core_data_gb+p.bonus_data_gb,
@@ -176,7 +176,30 @@ export function buildBenchmark(telsimRows,kktcellRows,overrides=[]){
   const rank={TELSIM_ADVANTAGE:0,PARITY:1,KKTCELL_ADVANTAGE:2,UNKNOWN:3};
   for(const rows of [matches,secondary_matches])rows.sort((a,b)=>rank[a.position]-rank[b.position]||b.match_score-a.match_score);
   const segments=[...new Set([...BENCHMARK_SEGMENTS,...review.rows.map(x=>x.telsim.segment)])];
-  const scored=(rows,segment)=>({...competitivePositionScore(rows,segment),engine_version:ENGINE_VERSION});
+  const scored=(rows,segment)=>{
+    const result={...competitivePositionScore(rows,segment),engine_version:ENGINE_VERSION};
+    if(rows.length)return result;
+    const coverage=segment==='Toplam'?{
+      telsim_core:review.catalog.telsim_core,kktcell_core:review.catalog.kktcell_core,
+      statuses:review.effective_counts,stale_overrides:review.rows.filter(x=>x.override?.stale).length,
+      rejected_overrides:review.rows.filter(x=>x.override?.decision==='reject').length,billing_types:['prepaid','postpaid']
+    }:(review.segment_coverage[segment]||{telsim_core:0,kktcell_core:0,statuses:{},billing_types:[]});
+    const prefix=`${coverage.telsim_core} Telsim / ${coverage.kktcell_core} KKTCELL ana tarifesi. `;
+    const relevantSources=sources.filter(s=>
+      segment==='Premium / Platinum'?['kktcell-platinum','kktcell-faturali'].includes(s.slug):
+      segment==='Öğrenci / Genç'?['kktcell-gnc','kktcell-faturali'].includes(s.slug):
+      !coverage.billing_types.length||coverage.billing_types.includes(s.type));
+    const failed=relevantSources.filter(s=>!s.ok);
+    let level,reason,code;
+    if(failed.length){level='KAYNAK ERİŞİM SORUNU';code='source_error';reason='İlgili katalog kaynağına erişilemedi: '+failed.map(s=>s.name||s.slug).join(', ')+'.';}
+    else if(!coverage.telsim_core){level='RAKİP TARİFESİ YOK';code='no_competitor';reason='İzlenen Telsim kataloğunda karşılaştırma koşullarını sağlayan ana tarife bulunamadı.';}
+    else if(!coverage.kktcell_core){level='KARŞILIK BULUNAMADI';code='no_peer';reason='İzlenen KKTCELL kataloğunda aynı segmente uygun ana tarife bulunamadı; bu paketler rakip takibinde izlenmeye devam ediyor.';}
+    else if(coverage.stale_overrides){level='KARAR GÜNCELLENMELİ';code='stale_override';reason=coverage.stale_overrides+' yönetici eşleşmesinin seçili ürünü artık uygun değil; yeniden inceleme gerekiyor.';}
+    else if(coverage.statuses.Secondary){level='PRIMARY EŞLEŞME YOK';code='secondary_only';reason=coverage.statuses.Secondary+' Secondary alternatif var; skora katılan Primary eşleşme yok.';}
+    else if(coverage.statuses.Review){level='EŞLEŞME İNCELENMELİ';code='review_required';reason=coverage.statuses.Review+' aday inceleme bekliyor; skora katılan Primary eşleşme yok.';}
+    else {level='UYGUN EŞLEŞME YOK';code='no_approved_match';reason='Ürünler mevcut, fakat karşılaştırma kuralları veya kayıtlı yönetici kararları sonucunda Primary eşleşme oluşmadı.'+(coverage.rejected_overrides?' '+coverage.rejected_overrides+' eşleşme yönetici tarafından reddedilmiş.':'');}
+    return {...result,level,availability:code,coverage,rationale:prefix+reason};
+  };
   const counts=matches.reduce((a,m)=>(a[m.position]=(a[m.position]||0)+1,a),{});
   const segment_scores=segments.map(segment=>scored(matches.filter(m=>m.segment===segment),segment));
   const overall_score=scored(matches,'Toplam');
@@ -187,7 +210,7 @@ export function buildBenchmark(telsimRows,kktcellRows,overrides=[]){
     history_note:'Motor geçişinden önceki skorlar saklanır; yeni motorla birleştirilmez. Dönem değişimi için aynı motorun tarihçesi birikir.',
     segments,counts,total_matches:matches.length,overall_score,segment_scores,segment_summary,matches,secondary_matches,
     matching:{engine_counts:review.engine_counts,effective_counts:review.effective_counts,override_count:review.override_count,
-      stale_override_count:review.rows.filter(x=>x.override?.stale).length,catalog:review.catalog}};
+      stale_override_count:review.rows.filter(x=>x.override?.stale).length,catalog:review.catalog,segment_coverage:review.segment_coverage}};
 }
 
 function recommend(position,x){
