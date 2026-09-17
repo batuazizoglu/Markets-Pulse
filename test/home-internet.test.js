@@ -85,3 +85,9 @@ test('Meta search shortcuts never imply connected automation or zero ads',()=>{
   assert.equal(rows.find(x=>x.brand==='Kıbrıs Online').ad_library_type,'brand_search');
   assert.ok(rows.every(x=>x.ad_count===undefined));
 });
+
+test('customer-visible speed overrides a different internal Netonline speed code',()=>{
+  const d={a_data:{a_services:[{i_speed:6,s_service_type_ask:['wdsl'],a_packages:[{i_internet_service_id:1,s_internet_service_name:'Premium5',i_month_without_campaign:1,i_internet_service_price:900,i_speed:6,a_special_options:{s_speed_desc:'5 Mbps ye kadar hız'},a_service_options:['Sınırsız']}]}]}};
+  const [p]=parserFor(source('broadmax-wdsl'),'<script>const a_wdsl_hizmet = '+JSON.stringify(d)+';</script>').products;
+  assert.equal(p.speed_down_mbps,5);assert.equal(p.unlimited,true);
+});

@@ -599,13 +599,13 @@ export async function fetchSource(source){
       result={ok:true,http_status:res.status,response_ms:Date.now()-t0,products:parsed.products,meta:{...parsed.meta,social_links:socialLinks(html,source.url)}};
     }
     result.meta={...result.meta,parser_version:PARSER_VERSION};
-    result.products=(result.products||[]).map(p=>({...p,company_ids:source.company_ids,market_segment:source.market_segment||p.market_segment||'residential'}));
+    result.products=(result.products||[]).map(p=>({...p,product_url:new URL(p.product_url||source.url,source.url).href,company_ids:source.company_ids,market_segment:source.market_segment||p.market_segment||'residential'}));
     if(result.ok&&!result.products.length){
       return {...result,ok:false,status:source.parser==='services'?'discovery':'parse_error',
         error:source.parser==='services'?'Site erişilebilir; paket bilgisi henüz doğrulanamadı':'Paket verisi ayrıştırılamadı; önceki doğrulanmış teklifler korunuyor'};
     }
     return {...result,status:result.ok?'ok':'error'};
-  }catch(e){return {ok:false,status:'error',http_status:httpStatus,response_ms:Date.now()-t0,products:[],meta:{parser_version:PARSER_VERSION},error:e?.message||String(e)}}
+  }catch(e){return {ok:false,status:'error',http_status:httpStatus,response_ms:Date.now()-t0,products:[],meta:{parser_version:PARSER_VERSION},error:(e?.message||String(e))+(e.cause?.code?' ('+e.cause.code+')':'')}}
 }
 
 function comparable(a,b){

@@ -105,7 +105,7 @@ function renderCompare(){
     ['Son doğrulama',x=>(x.stale?'Güncellik doğrulanamadı • ':'')+dt(x.verified_at)],
     ['Kaynak',x=>link(x.source_url,'Paket sayfası')]
   ];
-  const mixed=new Set(rows.map(x=>[x.technology,x.market_segment,term(x),x.unlimited,x.data_limit_gb].join('|'))).size>1;
+  const mixed=new Set(rows.map(x=>[x.technology,x.market_segment,term(x),x.unlimited,x.data_limit_gb,x.speed_down_mbps,x.speed_up_mbps].join('|'))).size>1;
   $('hiCompareResult').innerHTML=(mixed?'<p class="hi-help hi-warning">Teknoloji, süre, kota veya hizmet türü farklı. Bu tablo koşulları yan yana gösterir; otomatik eşdeğerlik sonucu değildir.</p>':'')+
     '<div class="table-wrap"><table class="data-table hi-comparison"><thead><tr><th>Özellik</th>'+rows.map(x=>'<th>'+esc(x.provider)+'<br>'+esc(x.name)+'</th>').join('')+'</tr></thead><tbody>'+
     fields.map(([label,render])=>'<tr><th scope="row">'+esc(label)+'</th>'+rows.map(x=>'<td>'+render(x)+'</td>').join('')+'</tr>').join('')+'</tbody></table></div><p class="hi-help">12 ay eşdeğer toplamı bir yıllık satış teklifi değildir. Gün bazlı paketler için 30 gün bir ay kabul edilir. Fiyatı belirtilmeyen hizmetlere sıfır fiyat atanmaz.</p>';
