@@ -219,4 +219,14 @@ CREATE TABLE IF NOT EXISTS auth_audit (
 CREATE INDEX IF NOT EXISTS idx_auth_audit_time ON auth_audit(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_auth_audit_user_time ON auth_audit(user_id,created_at DESC);
 
+CREATE TABLE IF NOT EXISTS social_watch_observations (
+  id BIGSERIAL PRIMARY KEY,
+  brand TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('ad','post','page')),
+  source_url TEXT NOT NULL,
+  note TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_by BIGINT REFERENCES app_users(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_social_watch_brand_time ON social_watch_observations(brand,created_at DESC);
 `;

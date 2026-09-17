@@ -361,3 +361,54 @@ body.branded-app :is(.mp-score,.hi-score,.bm-pos,.status){filter:none!important}
   body.branded-app .mp-ring strong{font-size:22px!important}
   body.branded-app .mp-pressure{gap:13px!important}
 }
+
+/* Home internet: catalog, legal-entity coverage, comparison and observation log */
+.hi-subnav{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 18px;border-bottom:1px solid var(--line);padding-bottom:12px}
+.hi-subnav button{border:1px solid var(--line);background:var(--surface);color:var(--muted);padding:11px 17px;border-radius:10px;font:inherit;font-weight:700;cursor:pointer}
+.hi-subnav button.active{background:var(--mp-blue);color:#fff;border-color:var(--mp-blue)}
+.hi-section [hidden]{display:none!important}
+.hi-section .hi-help{padding:8px 16px;color:var(--muted);font-size:12px;line-height:1.6}
+.hi-section #hiMessage{color:var(--bad);font-size:13px}
+.hi-catalog-toolbar{grid-template-columns:repeat(3,minmax(140px,1fr)) minmax(160px,1.2fr)}
+.hi-catalog-toolbar .hi-toggle{grid-column:1/-1;justify-self:start;font-size:11px}
+.hi-filter input,.hi-observation input,.hi-observation textarea,.hi-observation select,.hi-social-intro select{border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:9px;padding:10px;font:inherit;max-width:100%;box-sizing:border-box}
+.hi-filter input{width:100%;height:36px;font-size:12px}
+.hi-section a{color:var(--mp-blue);text-decoration:underline;text-underline-offset:3px}
+.hi-section .hi-table{min-width:1080px}
+.hi-section .hi-table td{font-size:12px;vertical-align:top}
+.hi-section .hi-table td small,.hi-directory small{display:block;font-size:11px;line-height:1.5;color:var(--muted);margin-top:4px}
+.hi-section .hi-table input{width:17px;height:17px;accent-color:var(--mp-blue);cursor:pointer}
+.hi-stale{background:var(--surface2)}
+.hi-comparison{min-width:700px;table-layout:fixed;width:100%}
+.hi-comparison th,.hi-comparison td{min-width:170px;vertical-align:top;white-space:normal;line-height:1.55;font-size:12px;padding:14px}
+.hi-comparison th:first-child{width:170px}
+.hi-warning{background:var(--warnbg);border-left:3px solid var(--warn)}
+.hi-directory{min-width:800px;width:100%}
+.hi-directory td{vertical-align:top;font-size:12px;white-space:normal;line-height:1.6}
+.hi-directory td:first-child{width:30%}
+.hi-source-links{font-size:11px;margin-top:5px;max-height:96px;overflow:auto}
+.hi-section .hi-source small,.hi-section .hi-change small{font-size:11px;white-space:normal}
+.hi-source-error{color:var(--bad)!important}
+.hi-section .hi-change-list{max-height:370px;overflow:auto}
+.hi-social-intro,.hi-observation{padding:20px}
+.hi-social-intro h3,.hi-observation h3{margin-top:0}
+.hi-social-intro p{font-size:13px;line-height:1.7;color:var(--muted)}
+.hi-social-intro small{display:block;margin-top:10px;color:var(--muted)}
+.hi-social-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:16px 0}
+.hi-social-card{padding:18px;background:var(--surface);border:1px solid var(--line);border-radius:14px}
+.hi-social-card h3{margin:0 0 12px;font-size:16px}
+.hi-social-card p{font-size:12px;line-height:1.6;margin:8px 0}
+.hi-social-card p span,.hi-social-card small{color:var(--muted)}
+.hi-social-card small{display:block;margin:12px 0;font-size:11px}
+.hi-observation form{max-width:900px}
+.hi-observation label{display:grid;gap:7px;font-size:12px;font-weight:600;margin-bottom:14px}
+.hi-observation input,.hi-observation textarea,.hi-observation select{width:100%}
+.hi-observation textarea{min-height:100px;resize:vertical}
+.hi-observation-grid{display:grid;grid-template-columns:2fr 1fr;gap:12px}
+#hiObservationStatus{font-size:12px;margin-left:12px}
+.hi-note{padding:16px 20px;border-bottom:1px solid var(--line);font-size:12px}
+.hi-note p{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6}
+.hi-note small{color:var(--muted);float:right}
+.hi-section button:focus-visible,.hi-section input:focus-visible,.hi-section select:focus-visible,.hi-section textarea:focus-visible{outline:3px solid var(--mp-blue);outline-offset:3px}
+@media(max-width:1000px){.hi-social-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.hi-catalog-toolbar{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:600px){.hi-social-grid,.hi-observation-grid{grid-template-columns:1fr}.hi-subnav{gap:6px}.hi-subnav button{flex:1;font-size:12px;padding:10px 8px}.hi-title{align-items:flex-start;gap:12px;flex-wrap:wrap}.hi-source{gap:10px}.hi-source-meta{max-width:40%}}

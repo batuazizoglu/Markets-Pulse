@@ -487,7 +487,7 @@ export const EXTRA_HOME_SOURCES = [
     "slug": "mahir-home",
     "provider": "Kıbrıs NET",
     "name": "Kıbrıs NET • Kurumsal",
-    "url": "https://mahir.com/hizmetler",
+    "url": "https://mahir.com/hizmetler/internet",
     "parser": "services",
     "company_ids": [
       "mahir"

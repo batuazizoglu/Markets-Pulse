@@ -48,15 +48,19 @@ export function parseNetonline(html,source){
       const day=Number(value.i_rms_day_type)===1||/Gün/i.test(value.s_time_without_campaign||value.s_month_without_campaign||'');
       const duration=n(value.i_time_without_campaign??value.i_month_without_campaign);
       const bonus=n(value.i_time_without_campaign_diff??value.i_month_without_campaign_diff)||0;
-      const raw=clean([name,value.s_radio_label,value.s_internet_service_price_description,value.s_label_notice_for_application_dropdown,parent.s_desc].join(' '));
+      const description=parent.j_desc?.o_data?.map(x=>x.s_text).join(' ')||parent.s_desc||'';
+      const raw=clean([name,value.s_radio_label,value.s_internet_service_price_description,value.s_label_notice_for_application_dropdown,description].join(' '));
       const install=raw.match(/kurulum\s*(?:bedeli|ücreti)?\s*:\s*([\d.,]+)/i);
-      const speed=n(value.i_speed??parent.i_speed);
+      const displayed=clean(value.a_special_options?.s_speed_desc||value.s_speed_desc||'');
+      const internalSpeed=n(value.i_speed??parent.i_speed);
+      const speed=n(displayed.match(/(\d+(?:[.,]\d+)?)\s*(?:Mbps|Mbit)/i)?.[1])||internalSpeed;
+      const options=Array.isArray(value.a_service_options)?value.a_service_options.filter(x=>typeof x==='string'):[];
       if(!name||!(n(value.i_internet_service_price)>0)||!(duration>0))return;
-      out.push(base(source,{name,technology:tech,speed_down_mbps:speed,
+      out.push(base(source,{name,technology:tech,speed_down_mbps:speed,unlimited:options.some(x=>/Sınırsız|Limitsiz|Kotasız/i.test(x))?true:null,
         speed_up_mbps:n((raw.match(/upload\s*h[ıi]z[ıi]\s*(\d+(?:[.,]\d+)?)/i)||[])[1]),
         duration_months:day?null:duration,duration_days:day?duration:null,bonus_months:day?0:bonus,bonus_days:day?bonus:0,
         total_price_try:n(value.i_internet_service_price),install_fee_try:install?n(install[1]):null,
-        features:[clean(value.s_internet_service_price_description),day?'Gün bazlı paket; aylık eşdeğer 30 gün üzerinden hesaplanır':null].filter(Boolean),
+        features:[...options,clean(value.s_internet_service_price_description),displayed,internalSpeed!==speed?'Kaynak hız açıklaması esas alındı':null,day?'Gün bazlı paket; aylık eşdeğer 30 gün üzerinden hesaplanır':null].filter(Boolean),
         raw_text:raw,product_key:source.slug+'|'+id}));
       return;
     }

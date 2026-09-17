@@ -13,16 +13,18 @@ import { generateReportPdf } from './report-render.js';
 import { generateEvidencePack } from './evidence-pack.js';
 import { getReportEmailStatus, sendReportEmail } from './report-email.js';
 import { sendPersonalReportEmail } from './manual-report-email.js';
-import { getHomeInternetMarket, scanHomeInternet } from './home-internet.js';
+import { getHomeInternetMarket, scanHomeInternet, HOME_INTERNET_SOURCES } from './home-internet.js';
 import { registerAuth, bootstrapInitialUsers } from './auth.js';
 import { registerEvidenceRoutes } from './evidence-archive.js';
 import { reportDays } from './report-data.js';
+import {registerSocialWatchRoutes} from './social-watch.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 app.use(express.json({limit:'1mb'}));
 
 registerAuth(app,pool,path.join(__dirname,'..','public'));
+registerSocialWatchRoutes(app,pool,HOME_INTERNET_SOURCES);
 
 const localMidnightSql = `(date_trunc('day', NOW() AT TIME ZONE 'Asia/Famagusta') AT TIME ZONE 'Asia/Famagusta')`;
 const latestPackagesSql = `SELECT p.id,p.identity_base,p.current_name,p.first_seen_at,p.last_seen_at,p.active,p.missing_count,p.last_position,
