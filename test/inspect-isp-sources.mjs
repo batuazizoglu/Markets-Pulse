@@ -8,36 +8,24 @@ const summary={slug:source.slug,status:r.status,count:r.products.length,error:r.
 results.push(summary);console.log('ISP_LIVE '+JSON.stringify(summary));}}
 await Promise.all(Array.from({length:4},worker));
 console.log('ISP_TOTAL '+JSON.stringify({sources:results.length,healthy:results.filter(x=>x.count).length,products:results.reduce((a,x)=>a+x.count,0)}));
-// Public client code reveals the package endpoint used by the pricing page.
-const scripts=[
-'https://www.alemnet.net/_next/static/chunks/app/pricing/page-7c8e67ef6b22edf4.js',
-'https://www.mmcyp.com/?page=customer&action=hizmetler',
-'https://www.broadmax.net/?page=customer&action=hizmetler-wdsl'
-];
-for(const url of scripts)try{
-const r=await fetch(url,{signal:AbortSignal.timeout(15000)}),text=await r.text();
-if(url.includes('alemnet'))console.log('ISP_DYNAMIC '+JSON.stringify({url,fragments:[...text.matchAll(/.{0,120}(?:fetch\(|axios|\/api\/|https:).{0,200}/g)].slice(0,20).map(x=>x[0])}));
-else{const m=text.match(/const a_wdsl_hizmet\s*=\s*/);if(m){const d=jsonLiteral(text,m.index+m[0].length);console.log('ISP_DYNAMIC '+JSON.stringify({url,record:d.a_data?.a_services?.[0]}))}}
-}catch(e){console.log('ISP_DYNAMIC '+JSON.stringify({url,error:e.message}))}
 
-for(const url of [
-'https://www.alemnet.net/pricing',
-'https://towernet.net/paketler/',
-'https://www.extendbroadband.com/urunler-wdsl-kurumsal.php',
-'https://www.fixnetbroadband.com/tarifeler/flex-super-internet'
-])try{
-const r=await fetch(url,{signal:AbortSignal.timeout(15000)}),html=await r.text();
-const ch=await import('cheerio'),$=ch.load(html);
-const data={url,status:r.status,forms:$('select').map((_,s)=>({name:$(s).attr('name'),options:$(s).find('option').map((__,o)=>({value:$(o).attr('value'),text:$(o).text()})).get()})).get()};
+for(const url of ['https://www.alemnet.net/pricing','https://www.fixnetbroadband.com/tarifeler/flex-super-internet','https://towernet.net/paketler/','https://cypking.net/']){
+try{
+const r=await fetch(url,{signal:AbortSignal.timeout(15000)}),html=await r.text(),ch=await import('cheerio'),$=ch.load(html);
+const result={url,status:r.status};
 if(url.includes('alemnet')){
-const paths=$('script[src]').map((_,s)=>$(s).attr('src')).get().filter(s=>s.startsWith('/_next/')&&!/polyfill|main-app|4bd1b696|webpack/.test(s));
-data.fragments=[];
-for(const path of paths){const js=await (await fetch(new URL(path,url),{signal:AbortSignal.timeout(10000)})).text();data.fragments.push(...[...js.matchAll(/.{0,100}(?:fetch\(|axios|\/api\/|https:).{0,150}/g)].map(x=>x[0]).filter(x=>!/facebook|schema.org|google|reactjs|w3.org|nextjs/.test(x)).slice(0,15))}
+result.fragments=[];
+for(const src of $('script[src]').map((_,s)=>$(s).attr('src')).get().filter(x=>x.startsWith('/_next/')&&!/polyfill|main-app|4bd1b696|webpack|255-/.test(x))){
+const js=await (await fetch(new URL(src,url),{signal:AbortSignal.timeout(10000)})).text();
+if(/getPackages|\/packages|package[s_]|pricing/i.test(js)){
+result.fragments.push({src,parts:[...js.matchAll(/.{0,150}(?:getPackages|\/packages|["']packages["']|price_month|pricing|packagePrice|packageApi|api\/).{0,280}/gi)].map(m=>m[0]).slice(0,20)});
 }
-else{
-data.scripts=$('script:not([src])').map((_,s)=>$(s).text()).get().filter(s=>/package|paket|price|duration|plan|period|pricing/i.test(s)).map(s=>s.slice(0,12000));
-data.tables=$('table').map((_,t)=>$(t).text().replace(/\s+/g,' ').slice(0,2500)).get();
-$('script,style,nav,header,footer,svg').remove();$('br').replaceWith(' ');data.text=$.root().text().replace(/\s+/g,' ').slice(0,9000);
 }
-console.log('ISP_MORE '+JSON.stringify(data));
-}catch(e){console.log('ISP_MORE '+JSON.stringify({url,error:e.message,cause:e.cause?.code}))}
+}else if(url.includes('fixnet')){
+result.tabs=$('.pricing-tab').map((_,x)=>$(x).toString()).get();
+result.snapshots=$('[wire\\:snapshot]').map((_,x)=>$(x).attr('wire:snapshot').slice(0,40000)).get();
+result.data=$('[x-data]').map((_,x)=>$(x).attr('x-data')).get().filter(x=>/price|pack|duration/.test(x)).map(x=>x.slice(0,20000));
+}else {result.html=html.slice(0,12000);}
+console.log('ISP_DETAIL '+JSON.stringify(result));
+}catch(e){console.log('ISP_DETAIL '+JSON.stringify({url,error:e.message,cause:e.cause?.code}))}
+}

@@ -525,7 +525,7 @@ export const EXTRA_HOME_SOURCES = [
     "provider": "Extend",
     "name": "Extend • WDSL",
     "url": "https://www.extendbroadband.com/urunler-wdsl-kurumsal.php",
-    "parser": "isp-table",
+    "parser": "services",
     "company_ids": [
       "arinet"
     ],

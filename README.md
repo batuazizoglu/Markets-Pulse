@@ -274,3 +274,27 @@ Markets Pulse is designed around three principles:
 
 **Markets Pulse by Turkcell**  
 Competitive Intelligence • Northern Cyprus
+
+## BTHK ISP coverage and home internet monitoring
+
+The `Ev İnterneti` area has **Rakip Takip**, **Ürün Karşılaştırma**, and **Reklam & Sayfalar** views.
+
+- `src/isp-registry.js` contains all 29 legal entities named on printed pages 67–68 of the [BTHK 2026 Q2 report](https://www.bthk.org/Documents/raporlar/pazar-verileri-sektorel-raporlar/2026%20Q2%20Raporu.pdf). The report overview counts 28 respondents; the named appendix contains 29 companies. This is a scope list, not a claim that all companies currently publish prices.
+- Official sites were cross-checked with the [BTHK authorized-provider directory](https://www.bthk.org/en/yetkilendirilen-haberlesme-saglayicilar/) on 2026-09-17. Cyberspace Solutions and Hypernet remain explicitly unverified; unrelated namesakes are not used.
+- Extend maps to Arınet. Nethouse, Kıbrıs Online and Multimax map to Netonline. Brand and legal-entity counts remain separate.
+- Package prices come from official pages or their public embedded JSON. No customer account or private API is used. Failed fetches, empty parsing and a sudden loss of more than half a catalog preserve the last verified version and flag source health.
+- Parser-version changes establish a new baseline without emitting mass removals or price changes. Retained or >26-hour-old data is marked stale and excluded from automatic benchmark metrics.
+- Payment period, gift months and gift days are separate. For a day-based offer, 30 days equal one comparison month. A 12-month equivalent is an analytical estimate, not a quoted annual contract. Installation, cable and modem charges are not silently included. Quote-only services have no invented price or term.
+- Comparison supports 2–4 offers, displays source/time/contract details and flags different technologies, speeds, terms or service types. Fixed and FWA offers are selected separately.
+- The social view provides verified account links and country-selectable Ad Library links. Telsim's supplied page ID is 164143610515. Unknown page IDs use an explicitly labelled brand search.
+- Social observations are manual, authenticated records with a Facebook/Instagram source link and note. They are saved in `social_watch_observations`; no message or email is sent.
+- **Automatic Meta ad/post ingestion is not connected.** It requires an approved app, appropriate permissions and a supported API/data provider. Ad Library availability depends on region and ad category; absence of an API result must not be interpreted as zero advertising.
+
+Additional API endpoints:
+
+```text
+GET  /api/home-internet/social-observations
+POST /api/home-internet/social-observations
+```
+
+`npm test` uses isolated fixtures and does not contact production. Optional `node test/inspect-isp-sources.mjs` reads public package sources and reports parsing health; it never sends applications, messages or emails.

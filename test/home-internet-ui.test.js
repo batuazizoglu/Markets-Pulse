@@ -50,3 +50,21 @@ test('observation input accepts only known brands and official HTTPS social doma
   assert.equal(validateObservation(input,HOME_INTERNET_SOURCES).brand,'Telsim');
   for(const change of [{brand:'Unknown'},{kind:'email'},{source_url:'https://facebook.com.evil.example/a'},{source_url:'javascript:alert(1)'},{source_url:'https://user:pass@facebook.com/a'},{note:'x'}])assert.throws(()=>validateObservation({...input,...change},HOME_INTERNET_SOURCES));
 });
+
+test('social observation endpoint persists validated notes and blocks cross-site writes',async()=>{
+  const {default:express}=await import('express');
+  const {PGlite}=await import('@electric-sql/pglite');
+  const {SCHEMA_SQL}=await import('../src/schema.js');
+  const {registerSocialWatchRoutes}=await import('../src/social-watch.js');
+  const db=new PGlite();await db.exec(SCHEMA_SQL);
+  const app=express();app.use(express.json());app.use((req,res,next)=>{req.appUser={id:null};next()});
+  registerSocialWatchRoutes(app,db,HOME_INTERNET_SOURCES);
+  const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
+  const url='http://127.0.0.1:'+server.address().port+'/api/home-internet/social-observations';
+  const body={brand:'Telsim',kind:'ad',source_url:'https://www.facebook.com/kktctelsim',note:'Yeni kampanya'};
+  try{
+    const bad=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://other.example'},body:JSON.stringify(body)});assert.equal(bad.status,403);
+    const saved=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});assert.equal(saved.status,201);
+    const data=await (await fetch(url)).json();assert.equal(data.rows.length,1);assert.equal(data.rows[0].note,body.note);assert.equal(data.mode,'manual');
+  }finally{await new Promise(r=>server.close(r));await db.close()}
+});
