@@ -51,6 +51,7 @@ async function captureBenchmarkHistory(forceCatalog=false){
     engine_version:benchmark.engine_version,mode:benchmark.mode,
     matches:benchmark.total_matches,secondary_matches:benchmark.secondary_matches.length,
     matching:benchmark.matching,
+    segments:benchmark.segment_scores.map(s=>({segment:s.segment,score:s.score,level:s.level,matches:s.match_count,reason:s.score==null?s.rationale:null})),
     overall_score:benchmark.overall_score?.score??null,
     reason:benchmark.history_capture?.reason||null
   }));

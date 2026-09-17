@@ -215,7 +215,7 @@ function emailHtml(type,ctx,attachments=[]){
       '<td style="padding:9px 8px;border-bottom:1px solid #e7edf6;font-weight:700;color:#001484;font-size:12px;">'+esc(x.segment)+'</td>'+
       '<td style="padding:9px 8px;border-bottom:1px solid #e7edf6;text-align:center;color:#001484;font-size:12px;">'+esc(x.current==null?'—':x.current+'/100')+'</td>'+
       '<td style="padding:9px 8px;border-bottom:1px solid #e7edf6;text-align:center;font-weight:800;color:'+dc+';font-size:12px;">'+esc(d)+'</td>'+
-      '<td style="padding:9px 8px;border-bottom:1px solid #e7edf6;color:#667399;font-size:11px;">'+esc(x.level||'—')+'</td>'+
+      '<td style="padding:9px 8px;border-bottom:1px solid #e7edf6;color:#667399;font-size:11px;">'+esc(x.level||'—')+(x.current==null&&x.rationale?'<br><span style="display:block;margin-top:4px;font-size:10px;font-weight:400;line-height:1.5;">'+esc(x.rationale)+'</span>':'')+'</td>'+
     '</tr>';
   }).join('');
   const threatBlock=top?(

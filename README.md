@@ -48,7 +48,7 @@ Comparable Product Engine **v2.4 is live**. The dashboard, Match Review and all 
 
 Saved decisions are revalidated against the current catalog and hard gates. A missing or newly ineligible peer remains saved but moves to Review; it never silently falls back to an automatic match. Admin identities and notes remain on the admin-only review endpoint.
 
-Score history is tagged `2.4-live`. Older records are preserved but never used for v2.4 deltas or monthly averages. If the deployment shares an hourly bucket with an old-engine record, that record is preserved and the new history starts in the next available hour. No historical scores are recalculated. The legacy `BENCHMARK_V2_SHADOW_RUN` flag is no longer needed to activate matching; the application uses v2.4 directly.
+Score history is tagged `2.4.1-live`. Included benefits such as “Sınırsız ek uygulamalar” do not turn core tariffs into add-ons; product-name classification is used. Segments without Primary matches include explicit catalog/matching reasons in the dashboard and PDF/email reports. Older records are preserved but never used for current-engine deltas or monthly averages. If the deployment shares an hourly bucket with an old-engine record, that record is preserved and the new history starts in the next available hour. No historical scores are recalculated. The legacy `BENCHMARK_V2_SHADOW_RUN` flag is no longer needed to activate matching; the application uses v2.4 directly.
 
 ### Turkcell Home Internet
 Fixed broadband is monitored separately from mobile. The module tracks providers, technology, speed, contract duration, installation cost, effective monthly price, total cost of ownership and Mbps/100 TL.
