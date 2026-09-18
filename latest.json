@@ -7,8 +7,8 @@
     "timezone": "Asia/Famagusta"
   },
   "run": {
-    "id": "review-20260918T102114998Z",
-    "checked_at": "2026-09-18T10:21:14.998Z",
+    "id": "review-20260918T102524767Z",
+    "checked_at": "2026-09-18T10:25:24.767Z",
     "status": "partial",
     "coverage": [
       {
@@ -16,9 +16,9 @@
         "source_url": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=CY&is_targeted_country=false&media_type=all&search_type=page&sort_data[mode]=total_impressions&sort_data[direction]=desc&view_all_page_id=164143610515",
         "country": "CY",
         "status": "partial",
-        "checked_at": "2026-09-18T10:21:14.998Z",
-        "reviewed_ads": 1,
-        "note": "Ev İnterneti reklamı görsel kanıtıyla incelendi ve yayınlandı. GSM ve MNP incelemesi sürüyor; bu ara kayıt tüm reklamları kapsamaz."
+        "checked_at": "2026-09-18T10:25:24.767Z",
+        "reviewed_ads": 2,
+        "note": "Ev İnterneti ve GSM kategorilerinde iki reklam toplam dört ekran görüntüsüyle incelendi. MNP incelemesi sürüyor; kapsam kısmidir."
       }
     ]
   },
@@ -67,6 +67,55 @@
           "sha256": "19e3a552b64919163cb1e65f3f6bc0c40f9e6dadca73bc9e8c736e93e549f6a6",
           "path": "evidence/19e3a552b64919163cb1e65f3f6bc0c40f9e6dadca73bc9e8c736e93e549f6a6.jpg",
           "captured_at": "2026-09-18T10:20:04.052Z"
+        }
+      ]
+    },
+    {
+      "brand": "Telsim",
+      "page_id": "164143610515",
+      "ad_id": "1053718350996629",
+      "variant_id": "1",
+      "category": "gsm",
+      "category_evidence": "6-17 yaş arası çocuklarımıza özel ilk tarife Red Junior, 2 kat GB avantajıyla Telsim'de.",
+      "title": "Red Junior — 25 GB / 500 DK",
+      "ad_status": "active",
+      "source_url": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=CY&is_targeted_country=false&media_type=all&search_type=page&sort_data[mode]=total_impressions&sort_data[direction]=desc&view_all_page_id=164143610515",
+      "observed_at": "2026-09-18T10:24:39.944Z",
+      "started_on": "2026-09-14",
+      "ad_text": "6-17 yaş arası çocuklarımıza özel ilk tarife Red Junior, 2 kat GB avantajıyla Telsim'de.",
+      "offer": {
+        "price_try": 499,
+        "previous_price_try": 569,
+        "data_gb": 25,
+        "bonus_data_gb": null,
+        "minutes": 500,
+        "speed_mbps": null,
+        "commitment_months": null,
+        "billing_period": "unknown"
+      },
+      "conditions": [
+        "6–17 yaş arası çocuklara yönelik tarife.",
+        "500 dakika Ada içi ve Türkiye yönlerine yönelik gösteriliyor.",
+        "Görselde aşım yok ve Telsimlilerle sınırsız konuşma mesajları var.",
+        "12 ay boyunca FindMyKids uygulaması avantajı belirtiliyor."
+      ],
+      "uncertainties": [
+        "2X mesajının hangi koşulda ve süreyle uygulanacağı küçük yazılarda okunamadı; kota 50 GB olarak varsayılmadı.",
+        "Aylık ücret dönemi ve taahhüt süresi bu incelemede doğrulanmadı.",
+        "Sınırsız mesajlaşma ikonlarının tüm kullanım koşulları okunamadı."
+      ],
+      "visual_summary": "Kırmızı zemin üzerinde çocuk karakterleri, 2X mesajı ve 499 TL fiyat vurgulanıyor. Üst başlık çocuğun ilk hattı için ebeveyne sesleniyor.",
+      "review_required": true,
+      "images": [
+        {
+          "sha256": "77bebddbbda5c8e817d8c1d01f2f8f3734e382404caf7d661bada808eb12cd61",
+          "path": "evidence/77bebddbbda5c8e817d8c1d01f2f8f3734e382404caf7d661bada808eb12cd61.jpg",
+          "captured_at": "2026-09-18T10:24:15.575Z"
+        },
+        {
+          "sha256": "eae513d9abce4d1da8b8e9328f690c54b1f9a925cf2d85dfe33db05b1fa62860",
+          "path": "evidence/eae513d9abce4d1da8b8e9328f690c54b1f9a925cf2d85dfe33db05b1fa62860.jpg",
+          "captured_at": "2026-09-18T10:24:39.944Z"
         }
       ]
     }
