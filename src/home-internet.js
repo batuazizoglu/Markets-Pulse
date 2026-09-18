@@ -1,9 +1,13 @@
 import puppeteer from 'puppeteer';
 import * as cheerio from 'cheerio';
 import {parseAmount as n, normalizeOffer as offer} from './isp-economics.js';
-import {parseISP, socialLinks, parseAlemPackages} from './isp-parsers.js';
+import {parseISP, socialLinks, parseAlemPackages, parseFixnetCampaigns} from './isp-parsers.js';
 import {ISP_SCOPE, ISP_COMPANIES, EXTRA_HOME_SOURCES, LEGACY_COMPANIES, companyCoverage, socialDirectory} from './isp-registry.js';
 const PARSER_VERSION='home-isp-2';
+const compatibleSnapshot=(row,source)=>row?.source_meta_json?.parser_version===PARSER_VERSION&&
+  (row.source_meta_json.source_revision||1)===(source.revision||1);
+const verifiedEmpty=(source,result)=>source.kind==='campaigns'&&result.meta?.campaigns_verified===true;
+const trackedRecords=(products,meta)=>[...(products||[]),...(meta?.campaigns||[])];
 
 const UA='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152 Safari/537.36';
 
@@ -12,13 +16,13 @@ const LEGACY_SOURCES=[
   {slug:'kktcell-superbox',provider:'KKTCELL',name:'Kuzey Kıbrıs Turkcell Superbox',url:'https://www.kktcell.com/internet-paketleri?type=superbox',technology:'4.5G FWA',ownership_group:'Kuzey Kıbrıs Turkcell',parser:'kktcell-superbox'},
   {slug:'lifecell-digital-home',provider:'Turkcell Ev İnterneti',name:'Lifecell Digital Ev İnterneti',url:'https://www.lifecelldigital.com/paketler?altyapi=1&cat=other',technology:'WDSL / Fiber / Sabit Genişbant',ownership_group:'Lifecell Digital Ltd.',parser:'lifecell-dynamic'},
   {slug:'lifecell-digital-superbox',provider:'KKTCELL',name:'Lifecell Digital Superbox',url:'https://www.lifecelldigital.com/paketler?altyapi=2',technology:'4.5G FWA',ownership_group:'Lifecell Digital Ltd.',parser:'lifecell-superbox-dynamic'},
-  {slug:'extend-wdsl',provider:'Extend',name:'Extend WDSL',url:'https://www.extendbroadband.com/urunler-wdsl.php',technology:'WDSL',ownership_group:'Arınet Security & Internet Consultancy Ltd.',parser:'extend-table'},
-  {slug:'extend-fiber',provider:'Extend',name:'Extend FiberNET',url:'https://www.extendbroadband.com/urunler-fibernet.php',technology:'Fiber',ownership_group:'Arınet Security & Internet Consultancy Ltd.',parser:'extend-table'},
+  {slug:'extend-wdsl',provider:'Extend',name:'Extend WDSL',url:'https://www.extendbroadband.com/urunler-wdsl.php',technology:'WDSL',ownership_group:'Arınet Security & Internet Consultancy Ltd.',parser:'extend-table',revision:2},
+  {slug:'extend-fiber',provider:'Extend',name:'Extend FiberNET',url:'https://www.extendbroadband.com/urunler-fibernet.php',technology:'Fiber',ownership_group:'Arınet Security & Internet Consultancy Ltd.',parser:'extend-table',revision:2},
   {slug:'telsim-home',provider:'Telsim',name:'Vodafone Evde İnternet',url:'https://www.kktctelsim.com/tr/internet/evde-internet-ve-red-box/vodafone-evde-internet',technology:'WDSL / ADSL',ownership_group:'KKTC Telsim',parser:'telsim-home'},
   {slug:'telsim-redbox',provider:'Telsim',name:'Telsim Red Box',url:'https://www.kktctelsim.com/tr/internet/evde-internet-ve-red-box/red-box',technology:'5G FWA',ownership_group:'KKTC Telsim',parser:'redbox'},
   {slug:'freenet-home',provider:'FreeNet',name:'FreeNet Ev İnterneti',url:'https://freenetcyp.com/',technology:'WDSL',ownership_group:'FreeNet',parser:'freenet'},
   {slug:'fixnet-home',provider:'FixNet',name:'FixNet Broadband',url:'https://www.fixnetbroadband.com/',technology:'WDSL / Fiber',ownership_group:'FixNet Broadband',parser:'fixnet'},
-  {slug:'towernet-home',provider:'Towernet',name:'Towernet Ev İnterneti',url:'https://towernet.net/#paketler',technology:'WDSL / ADSL',ownership_group:'Towernet',parser:'towernet-bundle'},
+  {slug:'towernet-home',provider:'Towernet',name:'Towernet Ev İnterneti',url:'https://towernet.net/#paketler',aliases:['https://towernet.net/paketler/'],coverage_note:'Eski /paketler/ bağlantısının yönlendirdiği güncel ana sayfa kataloğu izleniyor.',technology:'WDSL / ADSL',ownership_group:'Towernet',parser:'towernet-bundle'},
   {slug:'nethouse-home',provider:'Nethouse',name:'Nethouse Bireysel',url:'https://nethouse.net/tr/',technology:'WDSL / ADSL / VDSL / Fiber',ownership_group:'Netonline Bilişim Şti. Ltd.',parser:'netonline'},
   {slug:'multimax-home',provider:'Multimax',name:'Multimax Bireysel',url:'https://www.mmcyp.com/hizmetler',fetch_url:'https://www.mmcyp.com/?page=customer&action=hizmetler',technology:'WDSL / Fiber / Apartman',ownership_group:'Netonline Bilişim Şti. Ltd.',parser:'netonline'}
 ];
@@ -42,7 +46,10 @@ const TRACK_FIELDS=[
   ['install_fee_try','Kurulum Ücreti','medium'],
   ['unlimited','Limitsiz','high'],
   ['data_limit_gb','Kota','high'],
-  ['technology','Teknoloji','medium']
+  ['technology','Teknoloji','medium'],
+  ['availability','Kampanya durumu','medium'],
+  ['expires_at','Kampanya bitişi','medium'],
+  ['campaign_text','Kampanya koşulları','medium']
 ];
 
 function clean(v){return String(v||'').replace(/\u00a0/g,' ').replace(/\s+/g,' ').trim()}
@@ -85,32 +92,7 @@ function parseKktcell(html,source){
 }
 
 function parseExtendTable(html,source){
-  const $=cheerio.load(html);const out=[];
-  $('table tr').each((_,tr)=>{
-    const cells=$(tr).find('td').map((__,td)=>clean($(td).text())).get();
-    if(cells.length<3)return;
-    const sm=cells[0].match(/(\d+(?:[.,]\d+)?)\s*(?:Mbit|Mb)/i);if(!sm)return;
-    const speed=n(sm[1]);
-    const technology=/fiber/i.test(source.slug)?'Fiber':'WDSL';
-    const name=clean(cells[0]).replace(/\s*[-–]?\s*Unlimited/i,'')||technology+' '+speed+' Mbps';
-    const terms=/fiber/i.test(source.slug)
-      ? [{d:1,b:0,i:1},{d:3,b:0,i:2},{d:6,b:0,i:3},{d:12,b:2,i:4}]
-      : [{d:1,b:0,i:1},{d:3,b:0,i:2},{d:6,b:1,i:3},{d:12,b:3,i:4}];
-    for(const t of terms){
-      if(cells[t.i]==null)continue;const total=n(cells[t.i]);if(total==null)continue;
-      out.push(offer({
-        source_slug:source.slug,provider:source.provider,brand:source.provider,product_family:'fixed',ownership_group:source.ownership_group,source_url:source.url,
-        name:(technology==='Fiber'?'FiberNET ':'WDSL ')+speed+' Mbps',technology,
-        speed_down_mbps:speed,speed_up_mbps:null,data_limit_gb:null,unlimited:true,
-        duration_months:t.d,bonus_months:t.b,total_price_try:total,
-        install_fee_try:(technology==='WDSL'&&t.d<=3)?790:0,
-        features:technology==='WDSL'?['AKK yok','Ücretsiz aktivasyon','Statik IP']:['Limitsiz','KDV dahil'],
-        raw_text:cells.join(' | '),
-        product_key:[source.slug,speed,t.d,t.b].join('|')
-      }));
-    }
-  });
-  return out;
+  return parseISP(html,{...source,parser:'extend-pricing',product_prefix:source.technology==='Fiber'?'FiberNET':source.technology}).map(offer);
 }
 
 function parseLifecellDigital(html,source){
@@ -613,6 +595,7 @@ async function fetchPublicPricingDynamic(source){
 }
 
 export function parserFor(source,html){
+  if(source.parser==='fixnet-campaigns')return {products:[],meta:{...discoveryMeta(html,source),...parseFixnetCampaigns(html,source)}};
   if(source.parser==='kktcell'||source.parser==='kktcell-superbox')return {products:parseKktcell(html,source),meta:discoveryMeta(html,source)};
   if(source.parser==='extend-table')return {products:parseExtendTable(html,source),meta:discoveryMeta(html,source)};
   if(source.parser==='lifecell-digital')return {products:parseLifecellDigital(html,source),meta:discoveryMeta(html,source)};
@@ -665,9 +648,9 @@ export async function fetchSource(source){
       const parsed=parserFor(source,parserHtml);
       result={ok:true,http_status:res.status,response_ms:Date.now()-t0,products:parsed.products,meta:{...parsed.meta,social_links:socialLinks(html,source.url)}};
     }
-    result.meta={...result.meta,parser_version:PARSER_VERSION};
+    result.meta={...result.meta,parser_version:PARSER_VERSION,source_revision:source.revision||1};
     result.products=(result.products||[]).map(p=>({...p,product_url:new URL(p.product_url||source.url,source.url).href,company_ids:source.company_ids,market_segment:source.market_segment||p.market_segment||'residential'}));
-    if(result.ok&&!result.products.length){
+    if(result.ok&&!result.products.length&&!verifiedEmpty(source,result)){
       return {...result,ok:false,status:source.parser==='services'?'discovery':'parse_error',
         error:source.parser==='services'?'Site erişilebilir; paket bilgisi henüz doğrulanamadı':'Paket verisi ayrıştırılamadı; önceki doğrulanmış teklifler korunuyor'};
     }
@@ -733,11 +716,11 @@ export async function scanHomeInternet(pool,{sources=HOME_INTERNET_SOURCES,fetch
     async function worker(){for(;;){
       const source=pending.shift();if(!source)return;
       let fetched=await fetcher(source);
-      fetched.meta={...fetched.meta,parser_version:PARSER_VERSION};
-      if(fetched.ok&&!fetched.products.length)fetched={...fetched,ok:false,status:'parse_error',error:'Paket verisi boş; önceki teklifler korunuyor'};
+      fetched.meta={...fetched.meta,parser_version:PARSER_VERSION,source_revision:source.revision||1};
+      if(fetched.ok&&!fetched.products.length&&!verifiedEmpty(source,fetched))fetched={...fetched,ok:false,status:'parse_error',error:'Paket verisi boş; önceki teklifler korunuyor'};
       const prev=await pool.query(`SELECT payload_json,source_meta_json FROM home_internet_scans WHERE source_slug=$1 AND status='ok' ORDER BY captured_at DESC,id DESC LIMIT 1`,[source.slug]);
       const previousProducts=prev.rows.length&&Array.isArray(prev.rows[0].payload_json)?prev.rows[0].payload_json:[];
-      const sameParser=prev.rows[0]?.source_meta_json?.parser_version===PARSER_VERSION;
+      const sameParser=compatibleSnapshot(prev.rows[0],source);
       if(fetched.ok&&sameParser&&previousProducts.length>=6&&fetched.products.length<previousProducts.length/2){
         fetched={...fetched,ok:false,status:'parse_error',error:'Paket sayısı yarıdan fazla düştü; kaynak kontrolü gerekli',products:[]};
       }
@@ -747,10 +730,13 @@ export async function scanHomeInternet(pool,{sources=HOME_INTERNET_SOURCES,fetch
         fetched.status||(fetched.ok?'ok':'error'),fetched.http_status,fetched.response_ms,fetched.products.length,JSON.stringify(fetched.products),JSON.stringify(fetched.meta||{}),fetched.error||null
       ]);
       const scanId=ins.rows[0].id;
-      const parserBaseline=!sameParser||previousProducts.length===0;
-      const changes=fetched.ok&&prev.rows.length&&!parserBaseline?await writeChanges(pool,source,scanId,previousProducts,fetched.products):0;
+      const parserBaseline=!sameParser||!prev.rows.length;
+      const changes=fetched.ok&&prev.rows.length&&!parserBaseline?await writeChanges(pool,source,scanId,
+        trackedRecords(previousProducts,prev.rows[0].source_meta_json),trackedRecords(fetched.products,fetched.meta)):0;
       results.push({...source,...fetched,changes,captured_at:ins.rows[0].captured_at});
-      console.log('[home-internet]',source.slug,JSON.stringify({ok:fetched.ok,parsed:fetched.products.length,changes,response_ms:fetched.response_ms,error:fetched.error||null,meta:fetched.meta||{}}));
+      const logMeta={...fetched.meta};
+      if(logMeta.campaigns)logMeta.campaigns=logMeta.campaigns.map(({name,availability,expires_at})=>({name,availability,expires_at}));
+      console.log('[home-internet]',source.slug,JSON.stringify({ok:fetched.ok,parsed:fetched.products.length,changes,response_ms:fetched.response_ms,error:fetched.error||null,meta:logMeta}));
     }}
     const completed=await Promise.allSettled(Array.from({length:3},worker));
     const failure=completed.find(x=>x.status==='rejected');if(failure)throw failure.reason;
@@ -778,21 +764,26 @@ function scoreOffer(x){
 }
 
 export function marketPayload(scans,changes,lastGood=[]){
-  const products=[],sources=[];
+  const products=[],sources=[],campaigns=[];
+  const today=new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Famagusta'}).format(new Date());
   const bySlug=new Map(scans.map(r=>[r.source_slug,r]));
   const good=new Map(lastGood.map(r=>[r.source_slug,r]));
   for(const source of HOME_INTERNET_SOURCES){
     const row=bySlug.get(source.slug);
-    const usable=row?.status==='ok'&&row.source_meta_json?.parser_version===PARSER_VERSION;
+    const usable=row?.status==='ok'&&compatibleSnapshot(row,source);
     const fallback=good.get(source.slug);
-    const snapshot=usable?row:fallback?.source_meta_json?.parser_version===PARSER_VERSION?fallback:null;
+    const snapshot=usable?row:compatibleSnapshot(fallback,source)?fallback:null;
     const stale=!usable||snapshot&&Date.now()-new Date(snapshot.captured_at).getTime()>26*3600000;
     const payload=Array.isArray(snapshot?.payload_json)?snapshot.payload_json:[];
+    if(source.kind==='campaigns')campaigns.push(...(snapshot?.source_meta_json?.campaigns||[]).map(c=>({...c,
+      availability:c.expires_at&&c.expires_at<today?'expired':c.availability,
+      stale:!!stale,verified_at:snapshot.captured_at})));
     products.push(...payload.map(x=>({...x,company_ids:source.company_ids,market_segment:source.market_segment||x.market_segment||'residential',
       stale:!!stale,verified_at:snapshot.captured_at,market_score:scoreOffer({...x,stale})})));
     sources.push({...source,captured_at:row?.captured_at||null,
       last_success_at:snapshot?.captured_at||null,status:row?.status||'pending',
       http_status:row?.http_status,response_ms:row?.response_ms,parsed_count:usable?row.parsed_count:0,
+      campaign_count:source.kind==='campaigns'?(snapshot?.source_meta_json?.campaigns||[]).length:0,
       retained_count:!usable?payload.length:0,meta:{...row?.source_meta_json,social_links:row?.source_meta_json?.social_links||snapshot?.source_meta_json?.social_links||[]},error:row?.error||null});
   }
   const companies=companyCoverage(sources,products);
@@ -821,7 +812,7 @@ export function marketPayload(scans,changes,lastGood=[]){
   return {
     generated_at:new Date().toISOString(),
     methodology:'Home Internet v2 • Resmî paket kaynakları. Hediye süre dâhil efektif aylık bedel; kurulum/kablo ayrıca. Gün bazlı paketlerde 30 gün = 1 ay. 12 ay eşdeğer bedel bir taahhüt fiyatı değildir.',
-    scope:ISP_SCOPE,companies,social:socialDirectory(sources),
+    scope:ISP_SCOPE,companies,social:socialDirectory(sources),campaigns,
     metrics:{
       listed_companies:companies.length,tracked_companies:companies.filter(c=>['tracked','partial'].includes(c.status)).length,
       providers:providerCount,sources:sources.length,products:products.length,priced_products:priced.length,

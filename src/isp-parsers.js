@@ -89,17 +89,91 @@ function tables(html,source){
     let tech=source.technology;
     if(source.slug==='enson-adsl'||source.parser==='analiz')tech=ti===0?'ADSL':'VDSL';
     $(table).find('tr').each((_,tr)=>{
-      const cells=$(tr).find('td').map((__,td)=>clean($(td).text())).get();
+      const cells=$(tr).find('td,th').map((__,td)=>clean($(td).text())).get();
       const speed=n((cells[0]?.match(/(\d+(?:[.,]\d+)?)\s*(?:Mbit|Mbps|Mb)/i)||[])[1]);
       if(!speed)return;
       for(let i=1;i<cells.length;i++){
         const t=terms[i],price=n(cells[i]);if(!t||!(price>0))continue;
-        out.push(base(source,{name:tech+' '+speed+' Mbps',technology:tech,speed_down_mbps:speed,
+        out.push(base(source,{name:(source.product_prefix||tech)+' '+speed+' Mbps',technology:tech,speed_down_mbps:speed,
+          speed_up_mbps:source.parser==='extend-pricing'?n(cells[0]?.match(/\/\s*(\d+(?:[.,]\d+)?)\s*(?:Mbit|Mbps|Mb)/i)?.[1]):null,
           duration_months:t.d,bonus_months:t.b,total_price_try:price,raw_text:cells.join(' | '),
           features:source.parser==='enson'?['Adil kullanım ve aktivasyon koşullarını kontrol edin']:[]}));
       }
     });
   });return out;
+}
+function extendPricing(html,source){
+  const $=document(html),text=clean($.root().text());
+  const install=text.match(/1 ve 3 aylık aboneliklerde\s*([\d.,]+)\s*TL\s*kurulum/i);
+  const game=source.slug==='extend-gamepack';
+  return tables(html,source).map(row=>({...row,
+    unlimited:/Adil Kullanım Kotası Yok|Unlimited/i.test(text)?true:null,
+    install_fee_try:game?(row.duration_months>=6&&/6 AY VE YILLIKLARDA KURULUM ÜCRETİ YOK/i.test(text)?0:null):
+      source.technology==='WDSL'&&row.duration_months<=3&&install?n(install[1]):null,
+    features:[/KDV Dahil/i.test(text)?'KDV dahil':null,game?'Noktadan noktaya bağlantı; 3 aylık pakette kurulum ve depozito ayrıca':null].filter(Boolean),
+    product_key:[source.slug,row.speed_down_mbps,row.duration_months,row.bonus_months].join('|')
+  }));
+}
+function xrealnet(html,source){
+  const $=document(html),out=[];
+  $('h3').each((_,h)=>{
+    const name=clean($(h).text()),speed=n(name.match(/^(\d+)\s*Mbps Kablosuz/i)?.[1]);
+    if(!speed)return;
+    let card=$(h);
+    while(card.length&&!/₺\s*[\d.,]+\s*\/\s*Aylık/i.test(clean(card.text())))card=card.parent();
+    const raw=clean(card.text()),price=n(raw.match(/₺\s*([\d.,]+)\s*\/\s*Aylık/i)?.[1]);
+    if(!price||card.find('h3').filter((i,x)=>/Mbps Kablosuz/i.test($(x).text())).length>1)return;
+    out.push(base(source,{name,technology:'WDSL',speed_down_mbps:speed,
+      speed_up_mbps:n(raw.match(/(\d+)\s*Mbps[^\d]{0,20}Upload/i)?.[1]),
+      duration_months:1,total_price_try:price,unlimited:/Limitsiz|Kotasız/i.test(raw)?true:null,
+      features:[/Taahhütsüz/i.test(raw)?'Taahhütsüz':null].filter(Boolean),raw_text:raw}));
+  });return out;
+}
+function comtech(html,source){
+  const $=document(html),text=clean($.root().text());
+  if(source.technology==='Fiber'){
+    if(!/Comtech/i.test(text)||!/fiber [iİı]nternet/i.test(text))return [];
+    return [base(source,{name:'Comtech FiberNet',technology:'Fiber',price_status:'not_published',
+      unlimited:/kotasız/i.test(text)?true:null,features:['Fiyat ve paket hızları yayımlanmıyor; adres bazında teyit gerekli'],raw_text:text.slice(0,1800)})];
+  }
+  const install=text.match(/Yıllık dışındaki aboneliklerde[^\d]{0,30}([\d.,]+)\s*TL\s*kurulum/i);
+  const router=text.match(/cihaz bedeli KDV dahil\s*([\d.,]+)\s*USD/i);
+  return tables(html,source).map(row=>({...row,
+    unlimited:/Kotasız/i.test(text)?true:null,
+    install_fee_try:row.duration_months===12&&/Yıllık abonelikte kurulum bedeli alınmaz/i.test(text)?0:install?n(install[1]):null,
+    features:[/KDV Dahil/i.test(text)?'KDV dahil':null,router?'Router ayrıca; kaynakta önerilen cihaz '+router[1]+' USD, TL karşılığına çevrilmedi':null].filter(Boolean)
+  }));
+}
+function netonlineBusiness(html,source){
+  const $=document(html),text=clean($.root().text());
+  if(!/DEDİKE\s+BAĞLANTI/i.test(text))return [];
+  const rows=[base(source,{name:'Kurumsal Dedike Bağlantı',technology:'Dedike',market_segment:'business',price_status:'quote',
+    unlimited:/adil kullanım kotası uygulanmaz/i.test(text)?true:null,
+    features:['Simetrik, noktadan noktaya bağlantı','Hız ve fiyat için kurumsal teklif gerekli'],raw_text:text.slice(0,1800)})];
+  if($('select[name="s_kurumsal_basvur_hizmet"] option').toArray().some(o=>clean($(o).text())==='Fiber'))
+    rows.push(base(source,{name:'Kurumsal Fiber',technology:'Fiber',market_segment:'business',price_status:'quote',
+      features:['Resmî kurumsal hizmet seçeneklerinde listeleniyor','Hız ve fiyat için kurumsal teklif gerekli'],raw_text:'Kurumsal hizmet seçeneği: Fiber'}));
+  return rows;
+}
+export function parseFixnetCampaigns(html,source,now=new Date()){
+  const $=document(html),campaigns=[];
+  if(!/^Kampanyalar$/i.test(clean($('h1').first().text())))return {campaigns_verified:false,campaigns};
+  $('h3').each((_,h)=>{
+    const card=$(h).parent();if(!card.hasClass('group'))return;
+    const name=clean($(h).text()),raw=clean(card.text());if(!name)return;
+    const date=raw.match(/(\d{2})\.(\d{2})\.(\d{4})/);
+    const expires_at=date?`${date[3]}-${date[2]}-${date[1]}`:null;
+    const today=new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Famagusta'}).format(now);
+    const expired=/Süresi Doldu|Kampanya Sona Erdi/i.test(raw)||expires_at&&expires_at<today;
+    const url=card.find('a[href*="/kampanya"]').first().attr('href');
+    campaigns.push({name,source_slug:source.slug,provider:source.provider,source_url:source.url,
+      product_key:source.slug+'|campaign|'+name.toLocaleLowerCase('tr-TR'),
+      url:url?new URL(url,source.url).href:source.url,
+      availability:expired?'expired':expires_at?'active':'unconfirmed',expires_at,
+      campaign_text:raw.slice(0,6000)});
+  });
+  const empty=/henüz.{0,25}kampanya|kampanya bulunma/i.test(clean($.root().text()));
+  return {campaigns_verified:campaigns.length>0||empty,campaigns};
 }
 function surface(html,source){
   const $=document(html),out=[];
@@ -217,7 +291,8 @@ function extendBusiness(html,source){
 }
 
 export function parseISP(html,source){
-  const parser={'towernet-bundle':parseTowernetBundle,'extend-business':extendBusiness,cypking,netonline:parseNetonline,haypem,surface,primenet,royalnet,goldsurf,enson:tables,analiz:tables,'isp-table':tables,services:parseServices};
+  const parser={'towernet-bundle':parseTowernetBundle,'extend-business':extendBusiness,'extend-pricing':extendPricing,
+    xrealnet,comtech,'netonline-business':netonlineBusiness,cypking,netonline:parseNetonline,haypem,surface,primenet,royalnet,goldsurf,enson:tables,analiz:tables,'isp-table':tables,services:parseServices};
   const rows=(parser[source.parser]||(()=>[]))(html,source);
   return [...new Map(rows.map(r=>[r.product_key||[r.source_slug,r.technology,r.name,r.duration_months,r.duration_days,r.bonus_months,r.bonus_days].join('|'),r])).values()];
 }

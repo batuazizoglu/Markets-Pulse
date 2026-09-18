@@ -408,6 +408,8 @@ body.branded-app :is(.mp-score,.hi-score,.bm-pos,.status){filter:none!important}
 #hiObservationStatus{font-size:12px;margin-left:12px}
 .hi-note{padding:16px 20px;border-bottom:1px solid var(--line);font-size:12px}
 .hi-note p{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6}
+#hiCampaigns summary{cursor:pointer;line-height:1.8;overflow-wrap:anywhere}
+#hiCampaigns summary .status{display:inline-block;white-space:normal}
 .hi-note small{color:var(--muted);float:right}
 .hi-section button:focus-visible,.hi-section input:focus-visible,.hi-section select:focus-visible,.hi-section textarea:focus-visible{outline:3px solid var(--mp-blue);outline-offset:3px}
 @media(max-width:1000px){.hi-social-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.hi-catalog-toolbar{grid-template-columns:repeat(2,minmax(0,1fr))}}
