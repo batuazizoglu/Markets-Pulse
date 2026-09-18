@@ -26,7 +26,7 @@ export function normalizeVision(result,candidate){
     if(offer[k]!==null&&(typeof offer[k]!=='number'||!Number.isFinite(offer[k])||offer[k]<0||!quote||!corpus.includes(quote)||!supportedNumber(offer[k],quote))){offer[k]=null;uncertainties.push(k+' için doğrulanabilir doğrudan okuma bulunamadı.')}
   }
   const periodQuote=fold(result.field_evidence.billing_period);
-  if(!periodQuote||!corpus.includes(periodQuote)||offer.billing_period==='monthly'&&!/aylik|\/\s*ay|per month|monthly/.test(periodQuote))offer.billing_period='unknown';
+  if(!periodQuote||!corpus.includes(periodQuote)||offer.billing_period==='monthly'&&!/aylik|\/\s*ay|per month|monthly/.test(periodQuote)||offer.billing_period==='one_time'&&!/tek sefer|bir defa|one.time/.test(periodQuote))offer.billing_period='unknown';
   // Restricted app quotas and multiplier slogans must never become generic bonus GB.
   if(offer.bonus_data_gb!==null&&/ozgur pass|social pass|sosyal medya|2\s*x|2 kat/.test(corpus)){
     offer.bonus_data_gb=null;uncertainties.push('Uygulamaya özel veya çarpanla belirtilen kota genel internet bonusuna eklenmedi.');

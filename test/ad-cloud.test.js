@@ -91,7 +91,7 @@ test('vision request uses actual image bytes, strict schema, no storage and hand
 test('capture detects blocks and explicit empty results without equating parse failure to no ads',()=>{
   assert.equal(pageState('Log in to continue'),'blocked');assert.equal(pageState('No matching structure'),'unknown');assert.equal(pageState('0 results'),'no_ads');assert.equal(pageState('Library ID: 123456'),'cards');assert.equal(pageState('',429),'blocked');assert.equal(adLibrarySource({brand:'unknown'}),null);
   const dom=new JSDOM('<div><article><span>Library ID: 123456</span><button>See ad details</button><img></article><article><span>Library ID: 234567</span><button>See ad details</button><img></article></div>',{runScripts:'outside-only'});
-  for(const img of dom.window.document.querySelectorAll('img')){Object.defineProperty(img,'naturalWidth',{value:600});Object.defineProperty(img,'naturalHeight',{value:800})}
+  for(const img of dom.window.document.querySelectorAll('img')){Object.defineProperty(img,'naturalWidth',{value:600});Object.defineProperty(img,'naturalHeight',{value:800});img.getBoundingClientRect=()=>({width:400,height:500})}
   const cards=dom.window.eval('('+markAdCards.toString()+')()');assert.equal(cards.length,2);assert.equal(dom.window.document.querySelectorAll('article[data-mp-ad-card]').length,2);dom.window.close();
 });
 test('cloud scan endpoint only queues work, rejects cross-site requests and shares durable throttling',async()=>{

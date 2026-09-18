@@ -31,7 +31,7 @@ export function markAdCards(){
       const ids=new Set([...body.matchAll(idPattern)].map(m=>m[1]));
       if(ids.size>1)break;
       const hasDetails=[...card.querySelectorAll('button,[role="button"]')].some(b=>/See ad details|Reklam Detaylarını Gör/i.test(b.innerText||b.textContent||''));
-      const images=[...card.querySelectorAll('img')].filter(i=>i.naturalWidth>=200&&i.naturalHeight>=150);
+      const images=[...card.querySelectorAll('img')].filter(i=>{const r=i.getBoundingClientRect();return i.naturalWidth>=200&&i.naturalHeight>=150&&r.width>=150&&r.height>=150});
       if(hasDetails&&images.length){
         card.setAttribute('data-mp-ad-card',id);
         found.set(id,{ad_id:id,ad_text:body.slice(0,8000),has_video:Boolean(card.querySelector('video'))});break;
@@ -75,12 +75,14 @@ export async function captureCloudAds(source,onCapture,{maxAds=12,timeoutMs=1100
         const unobscured=await card.evaluate(el=>{const r=el.getBoundingClientRect(),x=Math.min(innerWidth-1,Math.max(1,r.x+r.width/2)),y=Math.min(innerHeight-1,Math.max(1,r.y+Math.min(r.height/2,400)));return el.contains(document.elementFromPoint(x,y))});
         if(!unobscured)continue;
         const box=await card.boundingBox();if(!box||box.height>2600||box.width>1500)continue;
-        const shots=[Buffer.from(await card.screenshot({type:'jpeg',quality:85}))];
+        let creative;
         const images=await card.$$('img');
         for(const img of images){
-          const usable=await img.evaluate(i=>i.complete&&i.naturalWidth>=200&&i.naturalHeight>=150);
-          if(usable){shots.push(Buffer.from(await img.screenshot({type:'jpeg',quality:90})));break}
+          const usable=await img.evaluate(i=>{const r=i.getBoundingClientRect();return i.complete&&i.naturalWidth>=200&&i.naturalHeight>=150&&r.width>=150&&r.height>=150});
+          if(usable){creative=img;break}
         }
+        if(!creative)continue;
+        const shots=[Buffer.from(await card.screenshot({type:'jpeg',quality:85})),Buffer.from(await creative.screenshot({type:'jpeg',quality:90}))];
         if(shots.some(b=>b.length>1500000))continue;
         const at=new Date().toISOString();
         const evidence=shots.map(bytes=>({sha256:createHash('sha256').update(bytes).digest('hex'),bytes,captured_at:at}));
