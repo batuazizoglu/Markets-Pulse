@@ -25,7 +25,7 @@ User authorized regular publication into Markets Pulse and standing deployment p
 3. Read the browser skill and use its supported runtime. Follow public lookup, authentication and block-handling instructions. Do not work around login/bot controls.
 4. Save the exact inspected JPEG screenshot bytes through the browser skill shared-file mechanism. The image should contain the enlarged creative and its ad identity when possible. Up to three images per ad; each below 1.5 MB. Compute SHA-256 on the saved bytes. Use evidence/<sha256>.jpg. Never manufacture or re-render a creative as evidence.
 5. Publish screenshots with GitHub create_blob(base64) and a tree entry using its blob SHA. These are repository-backed assets, not separate Library deliverables. Do not emit base64 in chat.
-6. Publish one atomic GitHub commit containing the new evidence and cumulative latest.json. Advance the existing branch without force. If the branch head changes concurrently, reread and merge observations by (page_id, ad_id, variant_id) using the newest observed_at. Use literal content in structured GitHub arguments. No credentials are needed for the application's read-only feed.
+6. Publish a checkpoint after the first completed category or every 2–4 reviewed ads, before moving to the next group/brand. Each checkpoint is one atomic GitHub commit containing its evidence and cumulative latest.json; do not wait until the entire multi-brand review finishes. Use a unique run.id and actual checked_at for every checkpoint and partial status until intended coverage is complete. Advance the existing branch without force. If the branch head changes concurrently, reread and merge observations by (page_id, ad_id, variant_id) using the newest observed_at. Use literal content in structured GitHub arguments. No credentials are needed for the application's read-only feed.
 7. After writing, fetch latest.json back and verify run.id and expected keys. Report only verified updates/blockers in Turkish, with the live #ads link. The application imports within 15 minutes; don't claim import completion without evidence.
 
 Preserve exact analysis fields and wording for an unchanged offer. Update observed_at but retain the old evidence capture date if reusing identical existing evidence. A new screenshot or wording alone is not a market event. New variants get distinct variant_id.
@@ -65,3 +65,9 @@ Each ad must have:
 - No internal/authenticated account data, cookies, tokens, personal profiles or analyst conversation content.
 
 A blocked run can publish ads unchanged plus updated coverage/run status. It must never publish invented observations. The app validates the entire feed, screenshot hashes and bounded downloads before a transaction; a failed batch leaves previous observations untouched.
+
+## Recovering an interrupted review
+
+Persist an inspected image as soon as it is captured and publish each completed checkpoint immediately. If the browser runtime disconnects, retain all published checkpoints and resume from the last confirmed run. Do not replace successful results with an empty setup/error seed. If the task ends early, keep its partial coverage and report which brands/ads remain unreviewed. A future run reads the published checkpoint before resuming.
+
+The application button **Yeni analizleri aktar** fetches the latest published results immediately; it does not launch a browser review. It is authenticated, same-origin and rate-limited to one request per minute. Runtime sync logs include actual database category/evidence counts so an import can be verified without exposing credentials.
