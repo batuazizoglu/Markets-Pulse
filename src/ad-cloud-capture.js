@@ -1,0 +1,102 @@
+import puppeteer from 'puppeteer';
+import {createHash} from 'node:crypto';
+
+export function adLibrarySource(source){
+  if(!/^\d{5,30}$/.test(source.page_id||''))return null;
+  const q=new URLSearchParams({active_status:'active',ad_type:'all',country:'CY',media_type:'all',search_type:'page',view_all_page_id:source.page_id});
+  return 'https://www.facebook.com/ads/library/?'+q;
+}
+export function pageState(text,httpStatus=200){
+  if(httpStatus===429)return 'blocked';
+  if(httpStatus>=400)return 'error';
+  if(/captcha|confirm you.re human|unusual traffic|temporarily blocked|access denied|giriş yapman gerekiyor|log in to continue|you must log in|reklam kütüphanesi şu anda kullanılamıyor|ad library is currently unavailable/i.test(text))return 'blocked';
+  if(/(?:Library ID|Kütüphane Kodu)\s*:\s*\d{5,30}/i.test(text))return 'cards';
+  if(/(?:^|\n)\s*(?:0 results|0 sonuç|no ads found|sonuç bulunamadı)\s*(?:\n|$)/im.test(text))return 'no_ads';
+  return 'unknown';
+}
+
+// Public rendered DOM only. No private GraphQL calls, saved account sessions or stealth plugins.
+// Exported to exercise the same DOM extraction against representative fixtures.
+export function markAdCards(){
+  const idPattern=/(?:Library ID|Kütüphane Kodu)\s*:\s*(\d{5,30})/gi;
+  const found=new Map();
+  for(const el of document.querySelectorAll('span,div')){
+    const text=el.innerText||el.textContent||'';
+    if(text.length>100||!/(?:Library ID|Kütüphane Kodu)\s*:\s*\d{5,30}/i.test(text))continue;
+    const id=text.match(/(?:Library ID|Kütüphane Kodu)\s*:\s*(\d{5,30})/i)[1];
+    if(found.has(id))continue;
+    let card=el;
+    for(let depth=0;card&&depth<14;depth++,card=card.parentElement){
+      const body=card.innerText||card.textContent||'';
+      const ids=new Set([...body.matchAll(idPattern)].map(m=>m[1]));
+      if(ids.size>1)break;
+      const hasDetails=[...card.querySelectorAll('button,[role="button"]')].some(b=>/See ad details|Reklam Detaylarını Gör/i.test(b.innerText||b.textContent||''));
+      const images=[...card.querySelectorAll('img')].filter(i=>i.naturalWidth>=200&&i.naturalHeight>=150);
+      if(hasDetails&&images.length){
+        card.setAttribute('data-mp-ad-card',id);
+        found.set(id,{ad_id:id,ad_text:body.slice(0,8000),has_video:Boolean(card.querySelector('video'))});break;
+      }
+    }
+  }
+  return [...found.values()];
+}
+function allowedRequest(raw){
+  try{const u=new URL(raw);return u.protocol==='https:'&&['facebook.com','fbcdn.net','fbsbx.com','facebook.net'].some(h=>u.hostname===h||u.hostname.endsWith('.'+h))}catch{return false}
+}
+export async function captureCloudAds(source,onCapture,{maxAds=12,timeoutMs=110000}={}){
+  const url=adLibrarySource(source);
+  if(!url)return {status:'unverified',captured:0,note:'Resmî Facebook sayfa kimliği doğrulanmadı; isim aramasından otomatik marka eşleştirilmedi.'};
+  let browser,timedOut=false,captured=0;
+  const timeout=setTimeout(()=>{timedOut=true;browser?.close().catch(()=>{})},timeoutMs);
+  try{
+    browser=await puppeteer.launch({headless:true,timeout:30000,
+      ...(process.env.PUPPETEER_EXECUTABLE_PATH?{executablePath:process.env.PUPPETEER_EXECUTABLE_PATH}:{}),
+      args:['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage']});
+    if(timedOut)throw new Error('Capture timeout');
+    const page=await browser.newPage();await page.setViewport({width:1440,height:1100,deviceScaleFactor:1.5});
+    await page.setRequestInterception(true);
+    page.on('request',r=>{(allowedRequest(r.url())?r.continue():r.abort()).catch(()=>{})});
+    const response=await page.goto(url,{waitUntil:'domcontentloaded',timeout:45000});
+    const httpStatus=response?.status()||0;
+    if(httpStatus>=400)return {status:httpStatus===403||httpStatus===429?'blocked':'error',captured,note:'Ad Library erişimi HTTP '+httpStatus+' ile sonuçlandı. Reklam yok olarak yorumlanmadı.'};
+    // Click an actual consent choice only; never remove login/challenge overlays.
+    await page.evaluate(()=>{const buttons=[...document.querySelectorAll('button,[role="button"]')];const b=buttons.find(x=>/^(Decline optional cookies|Only allow essential cookies|İsteğe bağlı çerezleri reddet|Yalnızca gerekli çerezlere izin ver)$/i.test((x.innerText||'').trim()));b?.click()});
+    await page.waitForFunction(()=>/(Library ID|Kütüphane Kodu)\s*:|0 results|0 sonuç|no ads found|sonuç bulunamadı|captcha|log in to continue|temporarily blocked|currently unavailable/i.test(document.body.innerText),{timeout:25000}).catch(()=>{});
+    let text=await page.evaluate(()=>document.body.innerText.slice(0,60000));
+    const state=pageState(text,httpStatus);
+    if(state!=='cards')return {status:state==='no_ads'?'no_ads':state==='blocked'?'blocked':'error',captured,note:state==='no_ads'?'CY filtresinde açıkça sıfır sonuç gösterildi.':'Reklam kartları doğrulanamadı; erişim, oturum veya sayfa yapısı kontrolü gerekli.'};
+    const seen=new Set();
+    for(let scroll=0;scroll<4&&captured<maxAds;scroll++){
+      const cards=await page.evaluate(markAdCards);
+      for(const data of cards){
+        if(seen.has(data.ad_id)||captured>=maxAds)continue;seen.add(data.ad_id);
+        const card=await page.$('[data-mp-ad-card="'+data.ad_id+'"]');if(!card)continue;
+        await card.scrollIntoView();
+        const unobscured=await card.evaluate(el=>{const r=el.getBoundingClientRect(),x=Math.min(innerWidth-1,Math.max(1,r.x+r.width/2)),y=Math.min(innerHeight-1,Math.max(1,r.y+Math.min(r.height/2,400)));return el.contains(document.elementFromPoint(x,y))});
+        if(!unobscured)continue;
+        const box=await card.boundingBox();if(!box||box.height>2600||box.width>1500)continue;
+        const shots=[Buffer.from(await card.screenshot({type:'jpeg',quality:85}))];
+        const images=await card.$$('img');
+        for(const img of images){
+          const usable=await img.evaluate(i=>i.complete&&i.naturalWidth>=200&&i.naturalHeight>=150);
+          if(usable){shots.push(Buffer.from(await img.screenshot({type:'jpeg',quality:90})));break}
+        }
+        if(shots.some(b=>b.length>1500000))continue;
+        const at=new Date().toISOString();
+        const evidence=shots.map(bytes=>({sha256:createHash('sha256').update(bytes).digest('hex'),bytes,captured_at:at}));
+        await onCapture({brand:source.brand,page_id:source.page_id,ad_id:data.ad_id,variant_id:'1',source_url:url,
+          observed_at:at,started_on:null,ad_status:/\bInactive\b|Aktif değil/i.test(data.ad_text)?'inactive':/\bActive\b|\bAktif\b/i.test(data.ad_text)?'active':'unknown',
+          ad_text:data.ad_text,has_video:data.has_video,evidence});
+        captured++;
+      }
+      if(captured>=maxAds)break;
+      await page.evaluate(()=>window.scrollBy(0,1000));
+      await new Promise(r=>setTimeout(r,900));
+      text=await page.evaluate(()=>document.body.innerText.slice(0,60000));
+      if(pageState(text)==='blocked')break;
+    }
+    return {status:captured?'partial':'error',captured,note:captured+' reklam görseli bulut sunucusunda kaydedildi. CY filtresi; en fazla '+maxAds+' kart. Video varsa yalnız görünen kare kaydedildi. Görsel analizi ayrı kuyrukta işlenir.'};
+  }catch{
+    return {status:captured?'partial':'error',captured,note:timedOut?'Bulut taraması zaman aşımına uğradı; kaydedilmiş görseller korundu.':'Bulut tarayıcısı reklam kartlarını tamamlayamadı; kaydedilmiş görseller korundu.'};
+  }finally{clearTimeout(timeout);await browser?.close().catch(()=>{})}
+}

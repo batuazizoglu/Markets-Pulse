@@ -15,7 +15,7 @@ function socialUrl(value){
 function number(v){if(v===null)return null;if(typeof v!=='number'||!Number.isFinite(v)||v<0||v>10000000)throw new Error('Geçersiz teklif sayısı');return v}
 function observed(v,now){const t=date(v);if(+new Date(t)>+now+300000)throw new Error('Gelecek tarihli gözlem');return t}
 export function validateAdFeed(input,sources,now=new Date()){
-  if(input?.schema_version!==1||input.producer!=='chatgpt-browser-visual'||!Array.isArray(input.ads)||input.ads.length>400)throw new Error('Geçersiz reklam analiz akışı');
+  if(input?.schema_version!==1||!['chatgpt-browser-visual','cloud-vision'].includes(input.producer)||!Array.isArray(input.ads)||input.ads.length>400)throw new Error('Geçersiz reklam analiz akışı');
   const directory=socialDirectory(sources),brands=new Set([...directory.map(x=>x.brand),'KKTCELL']);
   const run=input.run;
   if(!run||!/^[a-zA-Z0-9_.:-]{8,100}$/.test(run.id)||!['ok','partial','blocked','error'].includes(run.status)||!Array.isArray(run.coverage)||run.coverage.length>60)throw new Error('Geçersiz tarama kaydı');
@@ -149,9 +149,10 @@ export async function getAdReport(pool,start,end,{category}={}){
   const current=await pool.query('SELECT checked_at,status,last_error FROM ad_visual_sync WHERE id=1');
   return {rows:r.rows,checked_at:current.rows[0]?.checked_at||null,status:current.rows[0]?.status||'pending',last_error:current.rows[0]?.last_error||null};
 }
-export function registerAdVisualRoutes(app,pool,sources,{sync=syncAdVisuals,now=Date.now}={}){
+export function registerAdVisualRoutes(app,pool,sources,{sync=syncAdVisuals,now=Date.now,cloudStatus=null}={}){
   let lastManualSync=-Infinity;
   app.post('/api/ad-visuals/sync',async(req,res,next)=>{
+    if(cloudStatus)return res.status(409).json({error:'Tarama artık bulutta çalışıyor. Bulutta tara düğmesini kullanın.'});
     // Existing authentication applies; never accept a caller-controlled source URL.
     if(!req.is('application/json'))return res.status(415).json({error:'JSON gerekli'});
     if(req.get('sec-fetch-site')==='cross-site')return res.status(403).json({error:'Aynı siteden gönderim gerekli'});
@@ -162,7 +163,7 @@ export function registerAdVisualRoutes(app,pool,sources,{sync=syncAdVisuals,now=
     lastManualSync=now();
     try{const result=await sync(pool,sources);res.json({...await getAdVisuals(pool),sync:result})}catch(e){next(e)}
   });
-  app.get('/api/ad-visuals',async(req,res,next)=>{try{res.json(await getAdVisuals(pool))}catch(e){next(e)}});
+  app.get('/api/ad-visuals',async(req,res,next)=>{try{const data=await getAdVisuals(pool);if(cloudStatus){data.cloud=await cloudStatus();data.monitoring.schedule=data.cloud.schedule}res.json(data)}catch(e){next(e)}});
   app.get('/api/ad-visuals/history',async(req,res,next)=>{
     try{const r=await pool.query('SELECT id,observed_at,event_type,analysis_json FROM ad_visual_versions WHERE ad_key=$1 ORDER BY observed_at DESC,id DESC LIMIT 30',[clean(req.query.key,100)]);res.json({rows:r.rows})}catch(e){next(e)}
   });

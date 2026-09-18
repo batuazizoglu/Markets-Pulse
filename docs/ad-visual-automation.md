@@ -1,73 +1,43 @@
-# Markets Pulse scheduled visual advertising analysis
+# Markets Pulse cloud advertising analysis
 
-The producer is a ChatGPT scheduled browser review. The application does not have a vision API key and does not run an independent Meta scraper. It imports the validated public evidence feed every 15 minutes and on startup. Pausing/deleting the ChatGPT task pauses new reviews; the app marks observations older than 48 hours stale. This architecture must remain explicit.
+## Runtime and schedule
 
-## Scope and interpretation
+The Railway application runs the producer itself. No ChatGPT task, personal browser session, GitHub feed or open user tab is required. The legacy ChatGPT producer is retired; do not publish new scheduled observations to `ad-visual-data`. Existing analyzed records and evidence remain in Postgres.
 
-- Three mutually exclusive product groups: home (fixed home broadband, Superbox/Red Box), gsm (ordinary mobile tariffs), mnp (mobile number portability).
-- Classify by explicit visible evidence. A mobile promotion without a visible portability condition is not MNP. Devices-only ads are outside scope; unresolved mixed/illegible product offers go to review.
-- Review Telsim every run. Also review at least six least-recently-checked competitors from src/isp-registry.js, prioritizing verified official social pages. Rotate to cover all listed competitors; unknown official accounts must be recorded as unverified, never replaced by a same-name advertiser.
-- Telsim verified Page ID: 164143610515. Use the user's CY country filter and record it. Official page: https://www.facebook.com/kktctelsim .
-- For other brands corroborate the advertiser with its official website/profile before adding a page ID. Ad Library keyword results alone do not establish advertiser identity.
-- Observe up to 40 relevant ads per run, prioritizing new/changed offers. Report partial coverage if any cap, pagination, video, variants or blocked access prevents full inspection.
-- Inspect the actual advertising images with the supported browser skill, not only captions/search snippets. Enlarge cards and inspect fine print when legible. For video, state that only the observed frame was analyzed; do not claim full video review.
-- No guessed prices, expiry dates, plan periods, taxes, commitments or automatic arithmetic from 2X/bonus headlines. Separate base GB, bonus GB, current and crossed-out price. Unread values are null plus uncertainties. Preserve tariff-add-on, age, region and new-customer/MNP conditions.
-- This output never changes official product catalogs, CPE scores or automatic matching.
-- Seeing an ad for the first time is an observation, not proof of launch. Do not mark ads inactive because they disappeared from a partial or failed scan. Only explicit inactive evidence supports inactive.
-- Never submit forms, buy products, contact people or use credentials outside supported authentication. On access failure record the failure and keep prior analyses.
+Every minute the server worker checks its durable queue. At or after 06:00 Asia/Famagusta it schedules one daily batch (catching up after downtime), containing Telsim and six least-recently-queued competitors. `ad_cloud_control.scheduled_day` prevents duplicate daily scheduling across restarts. A database lease serializes workers across replicas. Interrupted source jobs retry at most three times; completed screenshots survive every retry. Manual scans use the same queue, coalesce active brand jobs and have a durable five-minute throttle.
 
-## Authorized publication
+The **Bulutta tara** button queues work and returns immediately. The user can close the page. **Sonuçları yenile** reads the current state without scheduling another job or disrupting expanded cards automatically.
 
-User authorized regular publication into Markets Pulse and standing deployment permission. This producer may update ONLY branch ad-visual-data of batuazizoglu/Markets-Pulse. Never change main, application code, secrets, configuration, users or emails. The data branch contains publicly visible advertising evidence only and does not trigger main deployments.
+## Capture and identity
 
-1. Read this document and src/ad-visual.js from main using the GitHub plugin.
-2. Read latest.json and the branch head of ad-visual-data. Preserve all existing ads and per-brand coverage entries that were not reviewed, including their original timestamps. Refresh only observations actually made in this run. Retain at most 400 recent ads (90 days); the application's database keeps prior versions.
-3. Read the browser skill and use its supported runtime. Follow public lookup, authentication and block-handling instructions. Do not work around login/bot controls.
-4. Save the exact inspected JPEG screenshot bytes through the browser skill shared-file mechanism. The image should contain the enlarged creative and its ad identity when possible. Up to three images per ad; each below 1.5 MB. Compute SHA-256 on the saved bytes. Use evidence/<sha256>.jpg. Never manufacture or re-render a creative as evidence.
-5. Publish screenshots with GitHub create_blob(base64) and a tree entry using its blob SHA. These are repository-backed assets, not separate Library deliverables. Do not emit base64 in chat.
-6. Publish a checkpoint after the first completed category or every 2–4 reviewed ads, before moving to the next group/brand. Each checkpoint is one atomic GitHub commit containing its evidence and cumulative latest.json; do not wait until the entire multi-brand review finishes. Use a unique run.id and actual checked_at for every checkpoint and partial status until intended coverage is complete. Advance the existing branch without force. If the branch head changes concurrently, reread and merge observations by (page_id, ad_id, variant_id) using the newest observed_at. Use literal content in structured GitHub arguments. No credentials are needed for the application's read-only feed.
-7. After writing, fetch latest.json back and verify run.id and expected keys. Report only verified updates/blockers in Turkish, with the live #ads link. The application imports within 15 minutes; don't claim import completion without evidence.
+`src/ad-cloud-capture.js` launches headless Chromium in Railway and reads public rendered Ad Library cards. Only registry-verified numeric Facebook page IDs are scanned. A known profile URL or similarly named keyword result is not enough to assign advertiser identity; unresolved brands are recorded as unverified. CY is the recorded country filter. Each source run saves up to 12 visible ad cards, with the card identity and a separate creative screenshot when available. This bounded scan is partial coverage, not a count of all active campaigns or all variants.
 
-Preserve exact analysis fields and wording for an unchanged offer. Update observed_at but retain the old evidence capture date if reusing identical existing evidence. A new screenshot or wording alone is not a market event. New variants get distinct variant_id.
+The collector uses normal public page navigation with no login credentials, private GraphQL requests, stealth plugins, proxy rotation or challenge bypass. A real cookie consent option may be clicked; login/challenge overlays are never removed. Access failures and DOM parsing failures are not interpreted as zero ads. Video analysis covers only the captured frame. Entire video playback and carousel traversal are not implemented.
 
-## latest.json version 1
+Every screenshot is SHA-256 checked and saved directly to `ad_visual_evidence` before model inference. `ad_cloud_candidates` stores the evidence references, advertiser/ad identity, caption and actual capture time in the same transaction. Captured but unanalyzed cards do not appear as completed analyses. Old validated cards are never removed just because a scan fails or misses them.
 
-Top-level:
-- schema_version: 1
-- producer: "chatgpt-browser-visual"
-- schedule: {enabled: true, description: "Her sabah; Telsim günlük, diğer rakipler dönüşümlü", timezone: "Asia/Famagusta"}
-- run: {id: unique safe ASCII string 8–100 chars, checked_at: ISO timestamp, status: "ok"|"partial"|"blocked"|"error", coverage: [...]}
-- ads: cumulative array, max 400
+## Vision connection
 
-Coverage:
-{brand, source_url, country: "CY"|"TR"|"ALL", status: "ok"|"partial"|"blocked"|"error"|"unverified"|"no_ads", checked_at: ISO timestamp, reviewed_ads: integer|null, note}
-Use current time only for sources actually attempted. "no_ads" requires explicit empty results for a verified page/filter. An approximate result heading is not an exact campaign count. "ok" for a run requires complete intended coverage; otherwise use partial/blocked/error.
+Configure the following directly in the Railway app service Variables panel; never put credentials in the repository or chat:
 
-Each ad must have:
-- ad_id and page_id: observed decimal strings (5–30 digits); brand: exact registry brand (or KKTCELL)
-- variant_id: stable ASCII letters/digits/underscore/dash; default "1"
-- category: home|gsm|mnp|review
-- category_evidence: visible offer/caption evidence supporting the category
-- title: concise exact offer name
-- source_url: observed HTTPS facebook.com/instagram.com URL, no credentials; use the actual inspected Ad Library page URL
-- ad_status: active|inactive|unknown; started_on: YYYY-MM-DD|null
-- observed_at: ISO timestamp no later than run.checked_at
-- ad_text: visible advertising caption
-- offer: {price_try, previous_price_try, data_gb, bonus_data_gb, minutes, speed_mbps, commitment_months, billing_period}
-  All numeric keys are required, finite non-negative numbers or null.
-  billing_period: monthly|one_time|unknown. Do not infer a monthly period from the brand/price alone.
-- conditions: array of observed conditions (max 20)
-- uncertainties: array of missing/illegible/ambiguous details (max 20)
-- visual_summary: concise assessment of the layout/message, labeled as interpretation when necessary
-- review_required: boolean
-- images: [{sha256: 64 lowercase hex, path: "evidence/<same-sha256>.jpg", captured_at: ISO timestamp}]
-  At least one real inspected screenshot required. Do not add an ad without evidence.
-- No internal/authenticated account data, cookies, tokens, personal profiles or analyst conversation content.
+- `OPENAI_API_KEY`: required for visual inference. Without it, cloud capture continues and candidates wait in Postgres; the UI explicitly says the analysis connection is missing.
+- `AD_VISION_MODEL`: optional, default `gpt-4.1-mini` (image input and structured output support required).
+- `AD_VISION_DAILY_LIMIT`: optional, default 40 external calls per KKTC calendar day, clamped to 1–100. Failed calls count toward the limit.
 
-A blocked run can publish ads unchanged plus updated coverage/run status. It must never publish invented observations. The app validates the entire feed, screenshot hashes and bounded downloads before a transaction; a failed batch leaves previous observations untouched.
+The worker submits actual JPEG bytes to the OpenAI Responses API with `store:false`, a strict JSON schema, no tools and a bounded response. It does not send credentials, user records or private account pages as model input. Provider response bodies and authorization headers are never logged. Setup errors, refusals, timeouts and rate limits remain explicit failed/pending work; at most three attempts per candidate capture are permitted. The paid-call counter is reserved in Postgres before each request so restarts cannot reset the budget.
 
-## Recovering an interrupted review
+Official implementation references: [image inputs](https://developers.openai.com/api/docs/guides/images-vision), [structured outputs](https://developers.openai.com/api/docs/guides/structured-outputs), [model capabilities](https://developers.openai.com/api/docs/models/gpt-4.1-mini).
 
-Persist an inspected image as soon as it is captured and publish each completed checkpoint immediately. If the browser runtime disconnects, retain all published checkpoints and resume from the last confirmed run. Do not replace successful results with an empty setup/error seed. If the task ends early, keep its partial coverage and report which brands/ads remain unreviewed. A future run reads the published checkpoint before resuming.
+## Extraction contract and publication
 
-The application button **Yeni analizleri aktar** fetches the latest published results immediately; it does not launch a browser review. It is authenticated, same-origin and rate-limited to one request per minute. Runtime sync logs include actual database category/evidence counts so an import can be verified without exposing credentials.
+Home internet (`home`), ordinary mobile tariffs (`gsm`) and explicit number portability (`mnp`) remain separate. Unclear or out-of-scope creatives enter `review`. Each numeric field needs a direct quote containing the value; unsupported values become null. Never add app-restricted Özgür Pass to general GB or multiply a 2X headline into a total. The subscription period and commitment must be visible, not assumed from the price or the duration of an app benefit. A 6+6 message alone is not converted into a verified 12-month contract. Small unreadable text remains an uncertainty. All machine-produced analyses retain condition-verification flags.
+
+Each completed analysis passes the existing `validateAdFeed` contract with producer `cloud-vision`, then uses a transactional one-ad import. Evidence is already in Postgres; no GitHub asset download is involved. Capturing and analyzing are separate timestamps. Failed or absent observations never deactivate previous ads, and this output does not change product catalogs or CPE scores. The UI exposes source status, captured counts, pending/analyzed counts, heartbeat and missing connection state independently from the last successful analysis.
+
+Existing `chatgpt-browser-visual` manifests remain readable for historical maintenance, but the production server no longer polls or imports the old GitHub feed. `/api/ad-visuals/sync` returns a migration message in cloud mode; all new work uses `/api/ad-visuals/scan`.
+
+## Verification and operation
+
+`node --test test/ad-cloud.test.js test/ad-visual.test.js` exercises real database transactions with synthetic isolated evidence. CI also checks desktop/mobile views. No production model key is needed for tests. Unit tests validate the API request contract but do not prove a particular live account has model access; a successful production inference must be verified after configuring the key.
+
+Logs `[ad-cloud-capture]` report source outcome and captured count. `[ad-cloud-worker]` reports cloud mode, vision configuration, candidate counts and daily calls; it never labels a missing-key run successful. Confirm the deployment commit, worker logs, source outcomes and an actually analyzed candidate before claiming end-to-end operation. A server-side Meta block may still require a separately authorized data source; do not bypass it.

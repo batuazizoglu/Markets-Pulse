@@ -262,5 +262,46 @@ CREATE TABLE IF NOT EXISTS ad_visual_sync (
   last_error TEXT,
   last_attempt_at TIMESTAMPTZ
 );
+CREATE TABLE IF NOT EXISTS ad_cloud_control (
+  id INTEGER PRIMARY KEY CHECK(id=1),
+  scheduled_day TEXT,
+  manual_after TIMESTAMPTZ,
+  lease_owner TEXT,
+  lease_until TIMESTAMPTZ,
+  heartbeat_at TIMESTAMPTZ,
+  vision_day TEXT,
+  vision_calls INTEGER NOT NULL DEFAULT 0
+);
+INSERT INTO ad_cloud_control(id) VALUES(1) ON CONFLICT DO NOTHING;
+CREATE TABLE IF NOT EXISTS ad_cloud_jobs (
+  id BIGSERIAL PRIMARY KEY,
+  batch_key TEXT NOT NULL,
+  brand TEXT NOT NULL,
+  source_json JSONB NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  available_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  started_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ,
+  captured INTEGER NOT NULL DEFAULT 0,
+  note TEXT,
+  UNIQUE(batch_key,brand)
+);
+CREATE INDEX IF NOT EXISTS idx_ad_cloud_jobs_queue ON ad_cloud_jobs(status,available_at);
+CREATE TABLE IF NOT EXISTS ad_cloud_candidates (
+  ad_key TEXT PRIMARY KEY,
+  job_id BIGINT NOT NULL REFERENCES ad_cloud_jobs(id),
+  fingerprint TEXT NOT NULL,
+  payload JSONB NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  analysis_json JSONB,
+  last_error TEXT,
+  available_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  observed_at TIMESTAMPTZ NOT NULL,
+  analyzed_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_ad_cloud_candidates_queue ON ad_cloud_candidates(status,available_at);
 
 `;

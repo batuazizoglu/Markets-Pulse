@@ -14,13 +14,14 @@ function offerText(o={}){
 }
 function frame(root,home=false){
   root.classList.add('av-root');root.dataset.home=home?'1':'0';
-  root.innerHTML='<div class="av-heading"><div><h2>'+(home?'Ev İnterneti Reklam Analizi':'Reklam Görsel Analizi')+'</h2><p>Görsellerden okunan teklifler, kampanya koşulları ve tarihli kanıtlar.</p></div><button class="btn" data-av-refresh>Yeni analizleri aktar</button></div>'+
+  root.innerHTML='<div class="av-heading"><div><h2>'+(home?'Ev İnterneti Reklam Analizi':'Reklam Görsel Analizi')+'</h2><p>Görsellerden okunan teklifler, kampanya koşulları ve tarihli kanıtlar.</p></div><button class="btn" data-av-scan>Bulutta tara</button><button class="btn" data-av-refresh>Sonuçları yenile</button></div>'+
     (home?'<p><a href="#ads">GSM ve MNP reklamlarını ayrı görüntüle →</a></p>':'<nav class="av-tabs" aria-label="Reklam kategorileri"></nav><label class="av-filter">Marka <select data-av-brand aria-label="Reklam markası"><option value="all">Tüm markalar</option></select></label>')+
-    '<div class="av-status" role="status">İnceleme bilgileri yükleniyor…</div><div class="av-cards"></div><details class="av-coverage"><summary>İnceleme kapsamı ve kaynak durumu</summary><div></div></details>'+
+    '<div class="av-status" role="status">İnceleme bilgileri yükleniyor…</div><div class="av-job-message" role="status"></div><div class="av-cards"></div><details class="av-cloud"><summary>Bulut taraması ve analiz kuyruğu</summary><div></div></details><details class="av-coverage"><summary>İnceleme kapsamı ve kaynak durumu</summary><div></div></details>'+
     '<p class="av-help">Sayılar reklam kayıtlarını gösterir; aynı kampanya farklı reklam kimlikleriyle yayınlanabilir. Görseldeki teklif, paket kataloğuna ve karşılaştırma skoruna otomatik uygulanmaz.</p>';
   root.addEventListener('click',e=>{
     const b=e.target.closest('button');if(!b)return;
     if(b.hasAttribute('data-av-refresh'))load(true);
+    if(b.hasAttribute('data-av-scan'))scan();
     if(b.dataset.avCategory)setCategory(b.dataset.avCategory);
     if(b.dataset.avHistory)history(b);
   });
@@ -50,6 +51,13 @@ function render(){
     if(brand){brand.innerHTML='<option value="all">Tüm markalar</option>'+[...new Set(rows.map(x=>x.brand))].sort().map(x=>'<option value="'+esc(x)+'">'+esc(x)+'</option>').join('');brand.value=state.brand}
     const schedule=m.schedule?.enabled?m.schedule.description:'Düzenli inceleme planı henüz etkin değil';
     root.querySelector('.av-status').innerHTML='<b>'+esc(statusText[m.status]||'İnceleme bekleniyor')+'</b><span>'+esc(schedule)+' • KKTC saati</span><span>Son inceleme: '+stamp(m.checked_at)+' • Uygulamaya aktarım: '+stamp(m.imported_at)+'</span>'+(m.last_error?'<span>'+esc(m.last_error)+'</span>':'');
+    const cloud=state.data.cloud;
+    if(cloud){
+      root.querySelector('.av-status').innerHTML+='<span><b>'+esc(cloud.vision_configured?'Görsel analiz bağlantısı tanımlı':'Görsel analiz bağlantısı bekleniyor')+'</b> • '+esc(cloud.worker_online?'Sunucu görevi çalışıyor':'Sunucu görevi kontrol edilmeli')+'</span><span>'+esc(cloud.message)+'</span>';
+      const cs={queued:'Kuyrukta',running:'Taranıyor',retry:'Yeniden denenecek',partial:'Görseller kaydedildi',unverified:'Sayfa kimliği doğrulanmadı',blocked:'Erişim engeli',error:'Tarama tamamlanamadı',no_ads:'Bu filtrede reklam yok'};
+      const c=cloud.candidates||{};
+      root.querySelector('.av-cloud div').innerHTML='<p>Analiz bekleyen: '+Number((c.pending||0)+(c.retry||0))+' • Analizi tamamlanan: '+Number(c.analyzed||0)+' • Hatalı: '+Number(c.error||0)+'</p><p>Sunucu kontrolü: '+stamp(cloud.worker_heartbeat)+'</p>'+ (cloud.sources||[]).map(s=>'<div class="av-source"><b>'+esc(s.brand)+'</b><span>'+esc(cs[s.status]||s.status)+' • '+Number(s.captured||0)+' kayıt</span><p>'+esc(s.note||'Henüz tamamlanmadı.')+'</p></div>').join('');
+    }else root.querySelector('.av-cloud div').textContent='Bulut görevi bilgileri bekleniyor.';
     const selected=rows.filter(a=>a.category===category&&(home||state.brand==='all'||a.brand===state.brand));
     root.querySelector('.av-cards').innerHTML=selected.map(card).join('')||'<div class="av-empty">Bu kategoride henüz doğrulanmış görsel analizi yok. Bu durum reklam olmadığı anlamına gelmez; inceleme kapsamını aşağıdan kontrol edin.</div>';
     root.querySelector('.av-coverage div').innerHTML=(m.coverage||[]).map(c=>'<div class="av-source"><b>'+esc(c.brand)+'</b><span>'+esc(c.stale?'Yeni inceleme bekleniyor':statusText[c.status]||c.status)+' • '+esc(c.country)+' • '+stamp(c.checked_at)+'</span><p>'+esc(c.note)+'</p><a href="'+esc(safeLink(c.source_url))+'" target="_blank" rel="noopener noreferrer">Kaynağı aç ↗</a></div>').join('')||'<p>Henüz kaynak inceleme kaydı yok.</p>';
@@ -70,11 +78,20 @@ function load(force=false){
   state.loading=(async()=>{
     for(const b of document.querySelectorAll('[data-av-refresh]'))b.disabled=true;
     try{
-      const r=await fetch(force?'/api/ad-visuals/sync':'/api/ad-visuals',force?{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}:{cache:'no-store'});
+      const r=await fetch('/api/ad-visuals',{cache:'no-store'});
       const data=await r.json();if(!r.ok)throw new Error(data.error||'Reklam analizi alınamadı');state.data=data;state.loaded=Date.now();render();
     }
     catch(e){for(const el of document.querySelectorAll('.av-status'))el.textContent=e.message}
   })().finally(()=>{state.loading=null;for(const b of document.querySelectorAll('[data-av-refresh]'))b.disabled=false});return state.loading;
+}
+async function scan(){
+  for(const b of document.querySelectorAll('[data-av-scan]'))b.disabled=true;
+  try{
+    const r=await fetch('/api/ad-visuals/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}),data=await r.json();
+    if(!r.ok)throw new Error(data.error||'Bulut taraması başlatılamadı');
+    for(const el of document.querySelectorAll('.av-job-message'))el.textContent=data.message+' Sonuçlar için Sonuçları yenile düğmesini kullanın.';
+  }catch(e){for(const el of document.querySelectorAll('.av-job-message'))el.textContent=e.message}
+  finally{for(const b of document.querySelectorAll('[data-av-scan]'))b.disabled=false}
 }
 function setCategory(category){if(!Object.hasOwn(labels,category))return;state.category=category;render()}
 function mountHome(){const root=document.getElementById('hiAdVisualMount');if(!root)return;if(!root.classList.contains('av-root'))frame(root,true);load()}
