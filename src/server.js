@@ -26,7 +26,7 @@ app.use(express.json({limit:'1mb'}));
 
 registerAuth(app,pool,path.join(__dirname,'..','public'));
 registerSocialWatchRoutes(app,pool,HOME_INTERNET_SOURCES);
-registerAdVisualRoutes(app,pool);
+registerAdVisualRoutes(app,pool,HOME_INTERNET_SOURCES);
 
 const localMidnightSql = `(date_trunc('day', NOW() AT TIME ZONE 'Asia/Famagusta') AT TIME ZONE 'Asia/Famagusta')`;
 const latestPackagesSql = `SELECT p.id,p.identity_base,p.current_name,p.first_seen_at,p.last_seen_at,p.active,p.missing_count,p.last_position,

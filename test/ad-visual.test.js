@@ -6,7 +6,7 @@ import {readFile} from 'node:fs/promises';
 import {JSDOM} from 'jsdom';
 import {SCHEMA_SQL} from '../src/schema.js';
 import {HOME_INTERNET_SOURCES} from '../src/home-internet.js';
-import {validateAdFeed,adMeaningHash,importAdFeed,getAdVisuals,getAdReport,syncAdVisuals,AD_FEED_ROOT} from '../src/ad-visual.js';
+import {validateAdFeed,adMeaningHash,importAdFeed,getAdVisuals,getAdReport,syncAdVisuals,registerAdVisualRoutes,AD_FEED_ROOT} from '../src/ad-visual.js';
 import {adVisualReportHtml} from '../src/ad-visual-report.js';
 const jpeg=Buffer.from([255,216,255,224,0,0,255,217]),hash=createHash('sha256').update(jpeg).digest('hex');
 const start=new Date(Date.now()-3600000),iso=n=>new Date(+start+n*60000).toISOString();
@@ -74,6 +74,35 @@ test('corrupt screenshots and failed imports cannot replace prior validated data
     const data=await getAdVisuals(db);assert.equal(data.rows.length,1);assert.equal(data.monitoring.status,'sync_error');
   }finally{await db.close()}
 });
+test('a valid checkpoint clears the initial setup error and logs persisted category/evidence totals',async()=>{
+  const db=await dbFixture();
+  try{
+    const failed=valid(fixture());failed.ads=[];failed.run.status='error';
+    await importAdFeed(db,failed);
+    const checkpoint=fixture('home',1);
+    const fetcher=async url=>new Response(url.endsWith('latest.json')?JSON.stringify(checkpoint):jpeg);
+    const result=await syncAdVisuals(db,HOME_INTERNET_SOURCES,{fetcher});
+    assert.equal(result.imported,1);assert.deepEqual(result.stored_groups,{home:1});assert.equal(result.stored_evidence,1);
+    const data=await getAdVisuals(db);assert.equal(data.monitoring.status,'partial');assert.equal(data.monitoring.last_error,null);assert.equal(data.rows.length,1);
+  }finally{await db.close()}
+});
+test('manual sync imports immediately, rejects cross-site requests and bounds repeated work',async()=>{
+  const {default:express}=await import('express');const db=await dbFixture();
+  let calls=0,clock=100000;
+  const app=express();app.use(express.json());
+  registerAdVisualRoutes(app,db,HOME_INTERNET_SOURCES,{now:()=>clock,sync:async()=>{calls++;return importAdFeed(db,valid(fixture()),{fetcher:async()=>new Response(jpeg)})}});
+  const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
+  const url='http://127.0.0.1:'+server.address().port+'/api/ad-visuals/sync';
+  try{
+    const post=headers=>fetch(url,{method:'POST',headers,body:'{}'});
+    assert.equal((await post({'Content-Type':'application/json',Origin:'https://other.example'})).status,403);
+    assert.equal((await post({'Content-Type':'application/json','Sec-Fetch-Site':'cross-site'})).status,403);
+    assert.equal((await post({'Content-Type':'text/plain'})).status,415);assert.equal(calls,0);
+    const response=await post({'Content-Type':'application/json'});assert.equal(response.status,200);assert.equal((await response.json()).groups.gsm,1);assert.equal(calls,1);
+    const limited=await post({'Content-Type':'application/json'});assert.equal(limited.status,429);assert.equal(limited.headers.get('retry-after'),'60');assert.equal(calls,1);
+    clock+=60000;assert.equal((await post({'Content-Type':'application/json'})).status,200);assert.equal(calls,2);
+  }finally{await new Promise(r=>server.close(r));await db.close()}
+});
 test('report includes separate categories, qualifies first observations and escapes stored analysis',()=>{
   const ad=valid(fixture('mnp')).ads[0];ad.title='<img src=x onerror=bad()>';
   const html=adVisualReportHtml({checked_at:iso(0),status:'partial',rows:[{event_type:'first_seen',analysis_json:ad}]});
@@ -85,7 +114,8 @@ test('report includes separate categories, qualifies first observations and esca
 test('UI category navigation isolates GSM/MNP and home embeds only fixed-home ads with evidence links',async()=>{
   const ads=['home','gsm','mnp'].map((category,i)=>({...valid(fixture(category)).ads[0],key:'key'+i,ad_id:String(123450+i),title:category==='mnp'?'<script>bad()</script>':category,stale:i===1}));
   const dom=new JSDOM('<main class="shell"><div id="hiAdVisualMount"></div></main>',{url:'https://www.marketspulse.cloud/#ads',runScripts:'outside-only'});
-  dom.window.fetch=async()=>({ok:true,json:async()=>({rows:ads,groups:{home:1,gsm:1,mnp:1},monitoring:{status:'partial',checked_at:iso(0),schedule:{enabled:true,description:'Her sabah'},coverage:[]}})});
+  const requests=[];
+  dom.window.fetch=async(url,options)=>{requests.push({url,options});return {ok:true,json:async()=>({rows:ads,groups:{home:1,gsm:1,mnp:1},monitoring:{status:'partial',checked_at:iso(0),schedule:{enabled:true,description:'Her sabah'},coverage:[]}})}};
   try{
     dom.window.eval(await readFile(new URL('../public/ad-visual.js',import.meta.url),'utf8'));
     await dom.window.AdVisualUI.load();const d=dom.window.document;
@@ -97,5 +127,8 @@ test('UI category navigation isolates GSM/MNP and home embeds only fixed-home ad
     dom.window.AdVisualUI.setCategory('gsm');assert.match(d.querySelector('#ad-visual-section .av-flags').textContent,/Son doğrulanmış/);
     assert.equal(d.querySelector('#hiAdVisualMount .av-card h3').textContent,'home');
     assert.match(d.querySelector('.av-image a')?.href||d.querySelector('.av-image').href,/\/api\/ad-visuals\/evidence\//);
+    d.querySelector('#ad-visual-section [data-av-refresh]').click();await dom.window.AdVisualUI.load();
+    assert.equal(requests.at(-1).url,'/api/ad-visuals/sync');assert.equal(requests.at(-1).options.method,'POST');
+    assert.equal(d.querySelector('#ad-visual-section [data-av-refresh]').disabled,false);
   }finally{dom.window.close()}
 });

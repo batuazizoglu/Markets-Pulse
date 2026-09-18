@@ -119,7 +119,10 @@ export function syncAdVisuals(pool,sources,{fetcher=fetch}={}){
       const feed=validateAdFeed(JSON.parse(bytes.toString('utf8')),sources);
       const result=await importAdFeed(pool,feed,{fetcher});
       await pool.query('UPDATE ad_visual_sync SET last_error=NULL,last_attempt_at=NOW() WHERE id=1');
-      console.log('[ad-visual-sync]',JSON.stringify(result));return result;
+      const counts=await pool.query('SELECT category,count(*)::int count FROM ad_visual_items GROUP BY category');
+      const evidence=await pool.query('SELECT count(*)::int count FROM ad_visual_evidence');
+      const verified={...result,stored_groups:Object.fromEntries(counts.rows.map(x=>[x.category,x.count])),stored_evidence:evidence.rows[0].count};
+      console.log('[ad-visual-sync]',JSON.stringify(verified));return verified;
     }catch(e){
       const message=clean(e.message,300);
       await pool.query('INSERT INTO ad_visual_sync(id,last_error,last_attempt_at) VALUES(1,$1,NOW()) ON CONFLICT(id) DO UPDATE SET last_error=$1,last_attempt_at=NOW()',[message]);
@@ -146,7 +149,19 @@ export async function getAdReport(pool,start,end,{category}={}){
   const current=await pool.query('SELECT checked_at,status,last_error FROM ad_visual_sync WHERE id=1');
   return {rows:r.rows,checked_at:current.rows[0]?.checked_at||null,status:current.rows[0]?.status||'pending',last_error:current.rows[0]?.last_error||null};
 }
-export function registerAdVisualRoutes(app,pool){
+export function registerAdVisualRoutes(app,pool,sources,{sync=syncAdVisuals,now=Date.now}={}){
+  let lastManualSync=-Infinity;
+  app.post('/api/ad-visuals/sync',async(req,res,next)=>{
+    // Existing authentication applies; never accept a caller-controlled source URL.
+    if(!req.is('application/json'))return res.status(415).json({error:'JSON gerekli'});
+    if(req.get('sec-fetch-site')==='cross-site')return res.status(403).json({error:'Aynı siteden gönderim gerekli'});
+    const origin=req.get('origin');
+    if(origin){try{if(new URL(origin).host!==req.get('host'))return res.status(403).json({error:'Geçersiz kaynak'})}catch{return res.status(403).json({error:'Geçersiz kaynak'})}}
+    const wait=Math.ceil((60000-(now()-lastManualSync))/1000);
+    if(wait>0)return res.set('Retry-After',String(wait)).status(429).json({error:'Yeni aktarım için '+wait+' saniye bekleyin.'});
+    lastManualSync=now();
+    try{const result=await sync(pool,sources);res.json({...await getAdVisuals(pool),sync:result})}catch(e){next(e)}
+  });
   app.get('/api/ad-visuals',async(req,res,next)=>{try{res.json(await getAdVisuals(pool))}catch(e){next(e)}});
   app.get('/api/ad-visuals/history',async(req,res,next)=>{
     try{const r=await pool.query('SELECT id,observed_at,event_type,analysis_json FROM ad_visual_versions WHERE ad_key=$1 ORDER BY observed_at DESC,id DESC LIMIT 30',[clean(req.query.key,100)]);res.json({rows:r.rows})}catch(e){next(e)}

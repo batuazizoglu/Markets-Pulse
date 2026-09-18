@@ -14,7 +14,7 @@ function offerText(o={}){
 }
 function frame(root,home=false){
   root.classList.add('av-root');root.dataset.home=home?'1':'0';
-  root.innerHTML='<div class="av-heading"><div><h2>'+(home?'Ev İnterneti Reklam Analizi':'Reklam Görsel Analizi')+'</h2><p>Görsellerden okunan teklifler, kampanya koşulları ve tarihli kanıtlar.</p></div><button class="btn" data-av-refresh>Sonuçları yenile</button></div>'+
+  root.innerHTML='<div class="av-heading"><div><h2>'+(home?'Ev İnterneti Reklam Analizi':'Reklam Görsel Analizi')+'</h2><p>Görsellerden okunan teklifler, kampanya koşulları ve tarihli kanıtlar.</p></div><button class="btn" data-av-refresh>Yeni analizleri aktar</button></div>'+
     (home?'<p><a href="#ads">GSM ve MNP reklamlarını ayrı görüntüle →</a></p>':'<nav class="av-tabs" aria-label="Reklam kategorileri"></nav><label class="av-filter">Marka <select data-av-brand aria-label="Reklam markası"><option value="all">Tüm markalar</option></select></label>')+
     '<div class="av-status" role="status">İnceleme bilgileri yükleniyor…</div><div class="av-cards"></div><details class="av-coverage"><summary>İnceleme kapsamı ve kaynak durumu</summary><div></div></details>'+
     '<p class="av-help">Sayılar reklam kayıtlarını gösterir; aynı kampanya farklı reklam kimlikleriyle yayınlanabilir. Görseldeki teklif, paket kataloğuna ve karşılaştırma skoruna otomatik uygulanmaz.</p>';
@@ -68,9 +68,13 @@ function load(force=false){
   if(state.loading)return state.loading;
   if(!force&&state.data&&Date.now()-state.loaded<60000){render();return Promise.resolve()}
   state.loading=(async()=>{
-    try{const r=await fetch('/api/ad-visuals',{cache:'no-store'});if(!r.ok)throw new Error('Reklam analizi alınamadı');state.data=await r.json();state.loaded=Date.now();render()}
+    for(const b of document.querySelectorAll('[data-av-refresh]'))b.disabled=true;
+    try{
+      const r=await fetch(force?'/api/ad-visuals/sync':'/api/ad-visuals',force?{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}:{cache:'no-store'});
+      const data=await r.json();if(!r.ok)throw new Error(data.error||'Reklam analizi alınamadı');state.data=data;state.loaded=Date.now();render();
+    }
     catch(e){for(const el of document.querySelectorAll('.av-status'))el.textContent=e.message}
-  })().finally(()=>{state.loading=null});return state.loading;
+  })().finally(()=>{state.loading=null;for(const b of document.querySelectorAll('[data-av-refresh]'))b.disabled=false});return state.loading;
 }
 function setCategory(category){if(!Object.hasOwn(labels,category))return;state.category=category;render()}
 function mountHome(){const root=document.getElementById('hiAdVisualMount');if(!root)return;if(!root.classList.contains('av-root'))frame(root,true);load()}
