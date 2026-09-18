@@ -6,10 +6,11 @@ import {validateObservation} from '../src/social-watch.js';
 import {HOME_INTERNET_SOURCES,marketPayload} from '../src/home-internet.js';
 import {normalizeOffer} from '../src/isp-economics.js';
 
-async function fixture(){
+async function fixture(campaigns=[]){
   const source=HOME_INTERNET_SOURCES.find(x=>x.slug==='kibrisonline-home');
   const products=Array.from({length:5},(_,i)=>normalizeOffer({source_slug:source.slug,provider:source.provider,name:i===0?'<img src=x onerror=alert(1)>':'Plan '+i,technology:'WDSL',duration_months:12,bonus_months:2,total_price_try:1000+i*100,speed_down_mbps:10+i,product_key:'plan'+i,source_url:source.url}));
   const data=marketPayload([{source_slug:source.slug,captured_at:new Date().toISOString(),status:'ok',parsed_count:5,payload_json:products,source_meta_json:{parser_version:'home-isp-2'}}],[]);
+  data.campaigns=campaigns;
   const dom=new JSDOM('<main class="shell"></main>',{url:'https://marketspulse.cloud/#home',runScripts:'outside-only'});
   dom.window.fetch=async url=>({ok:true,json:async()=>url.includes('social-observations')?{rows:[{id:1,brand:'Telsim',kind:'ad',source_url:'https://www.facebook.com/kktctelsim',note:'<script>alert(1)</script>',created_at:new Date().toISOString()}]}:data});
   dom.window.eval(await readFile(new URL('../public/home-internet.js',import.meta.url),'utf8'));
@@ -49,6 +50,17 @@ test('observation input accepts only known brands and official HTTPS social doma
   const input={brand:'Telsim',kind:'ad',source_url:'https://www.facebook.com/ads/library/?id=123',note:'Yeni kampanya'};
   assert.equal(validateObservation(input,HOME_INTERNET_SOURCES).brand,'Telsim');
   for(const change of [{brand:'Unknown'},{kind:'email'},{source_url:'https://facebook.com.evil.example/a'},{source_url:'javascript:alert(1)'},{source_url:'https://user:pass@facebook.com/a'},{note:'x'}])assert.throws(()=>validateObservation({...input,...change},HOME_INTERNET_SOURCES));
+});
+test('campaigns show expiry separately from prices, escape content and hide in FWA view',async()=>{
+  const dom=await fixture([{provider:'FixNet',name:'Eski hediye',availability:'expired',expires_at:'2025-07-30',campaign_text:'<img src=x onerror=alert(1)>',url:'https://www.fixnetbroadband.com/kampanyalar',verified_at:new Date().toISOString()}]);
+  try{
+    const d=dom.window.document;
+    assert.match(d.querySelector('#hiCampaigns').textContent,/Süresi doldu/);
+    assert.match(d.querySelector('#hiCampaignCount').textContent,/0 güncel aktif/);
+    assert.equal(d.querySelectorAll('#hiCampaigns img').length,0);
+    assert.doesNotMatch(d.querySelector('#hiProducts').textContent,/Eski hediye/);
+    dom.window.HomeInternetUI.setFamily('fwa');assert.equal(d.querySelector('#hiCampaignPanel').hidden,true);
+  }finally{dom.window.close()}
 });
 
 test('social observation endpoint persists validated notes and blocks cross-site writes',async()=>{

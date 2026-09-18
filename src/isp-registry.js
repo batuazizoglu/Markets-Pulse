@@ -53,7 +53,7 @@ export const ISP_COMPANIES = [
     "brand": "Comtech",
     "id": "comtech",
     "legal_name": "Comtech Ticaret Ltd.",
-    "website": "https://www.comtechmax.com/",
+    "website": "http://www.comtechmax.com/",
     "website_status": "verified"
   },
   {
@@ -207,7 +207,7 @@ export const ISP_COMPANIES = [
     "brand": "Xrealnet",
     "id": "xrealnet",
     "legal_name": "Xrealnet İnternet Ltd.",
-    "website": "https://www.xrealnet.com/",
+    "website": "https://xrealinternet.com/",
     "website_status": "verified"
   }
 ];
@@ -260,6 +260,15 @@ export const ISP_SOCIALS = {
   }
 };
 export const EXTRA_HOME_SOURCES = [
+  {slug:'extend-vdsl',provider:'Extend',name:'Extend • VDSL',url:'https://www.extendbroadband.com/urunler-vdsl.php',parser:'extend-pricing',technology:'VDSL',company_ids:['arinet'],ownership_group:'Arınet Security & Internet Consultancy Ltd.'},
+  {slug:'extend-gamepack',provider:'Extend',name:'Extend • Game Pack',url:'https://www.extendbroadband.com/urunler-gamepack.php',parser:'extend-pricing',technology:'WDSL',product_prefix:'Game Pack',company_ids:['arinet'],ownership_group:'Arınet Security & Internet Consultancy Ltd.'},
+  {slug:'broadmax-apartment',provider:'Broadmax',name:'Broadmax • Apartman',url:'https://www.broadmax.net/hizmetler-apartman',fetch_url:'https://www.broadmax.net/?page=customer&action=hizmetler-apartman',aliases:['https://www.broadmax.net/apartman-fiyat2/'],coverage_note:'Apartman paketleri güncel resmî katalogdan alınıyor.',parser:'netonline',technology:'Apartman WDSL',company_ids:['broadmax'],ownership_group:'Broadmax İletişim Ltd.'},
+  {slug:'multimax-apartment',provider:'Multimax',name:'Multimax • Ev / Apartman',url:'https://www.mmcyp.com/hizmetler-apartman',fetch_url:'https://www.mmcyp.com/?page=customer&action=hizmetler-apartman',aliases:['https://www.mmcyp.com/ev-apartman.php'],coverage_note:'Eski ev-apartman.php adresi 404 dönüyor; güncel Apartman kataloğu izleniyor.',parser:'netonline',technology:'Apartman WDSL',company_ids:['netonline'],ownership_group:'Netonline Bilişim Şti. Ltd.'},
+  {slug:'multimax-plus',provider:'Multimax',name:'Multimax • WDSL Plus',url:'https://www.mmcyp.com/hizmetler-wdsl-plus',fetch_url:'https://www.mmcyp.com/?page=customer&action=hizmetler-wdsl-plus',parser:'netonline',technology:'WDSL Plus',company_ids:['netonline'],ownership_group:'Netonline Bilişim Şti. Ltd.'},
+  {slug:'multimax-ozgur',provider:'Multimax',name:'Multimax • Özgür Paketler (eski kaynak)',url:'https://www.mmcyp.com/ozgur-paketler.php',coverage_note:'Özgür Paketler bağlantısı 404 dönüyor. Güncel eşdeğeri doğrulanamadı; Plus paketleri ayrı bir kategoridir.',parser:'isp-table',technology:'WDSL',company_ids:['netonline'],ownership_group:'Netonline Bilişim Şti. Ltd.'},
+  {slug:'multimax-business',provider:'Multimax',name:'Multimax • Kurumsal',url:'https://www.mmcyp.com/kurumsal',fetch_url:'https://www.mmcyp.com/?page=customer&action=kurumsal',aliases:['https://www.mmcyp.com/kurumsal-paketler.php'],coverage_note:'Eski kurumsal-paketler.php adresi 404 dönüyor. Güncel sayfada dedike bağlantı hizmeti var; hız ve fiyat yayımlanmıyor.',parser:'netonline-business',technology:'Dedike',market_segment:'business',company_ids:['netonline'],ownership_group:'Netonline Bilişim Şti. Ltd.'},
+  {slug:'comtech-wireless',provider:'Comtech',name:'Comtech • Wireless',url:'http://www.comtechmax.com/comtech_wireless.html',parser:'comtech',technology:'WDSL',company_ids:['comtech'],ownership_group:'Comtech Ticaret Ltd.'},
+  {slug:'fixnet-campaigns',provider:'FixNet',name:'FixNet • Kampanyalar',url:'https://www.fixnetbroadband.com/kampanyalar',parser:'fixnet-campaigns',kind:'campaigns',technology:'Kampanya',company_ids:['fixnet'],ownership_group:'Fixnet Broadband Ltd.'},
   {
     "slug": "kibrisonline-home",
     "provider": "Kıbrıs Online",
@@ -291,6 +300,8 @@ export const EXTRA_HOME_SOURCES = [
     "provider": "Broadmax",
     "name": "Broadmax • Fiber",
     "url": "https://www.broadmax.net/hizmetler-fiber",
+    "aliases": ["https://www.broadmax.net/fiberoptik-internet-fiyat"],
+    "coverage_note": "Güncel Fiber kataloğu izleniyor; eski bağlantı paket listesini doğrudan yüklemiyor.",
     "parser": "netonline",
     "company_ids": [
       "broadmax"
@@ -499,13 +510,13 @@ export const EXTRA_HOME_SOURCES = [
   {
     "slug": "comtech-home",
     "provider": "Comtech",
-    "name": "Comtech • Sabit Genişbant",
-    "url": "https://www.comtechmax.com/",
-    "parser": "services",
+    "name": "Comtech • FiberNet",
+    "url": "http://www.comtechmax.com/comtech_fibernet.html",
+    "parser": "comtech",
     "company_ids": [
       "comtech"
     ],
-    "technology": "Sabit Genişbant",
+    "technology": "Fiber",
     "ownership_group": "Comtech Ticaret Ltd."
   },
   {
@@ -536,7 +547,7 @@ export const EXTRA_HOME_SOURCES = [
   {
     "slug": "fixnet-flex-super-internet",
     "provider": "FixNet",
-    "name": "FixNet • WDSL / Fiber",
+    "name": "FixNet • Flex Süper İnternet",
     "url": "https://www.fixnetbroadband.com/tarifeler/flex-super-internet",
     "parser": "fixnet-dynamic",
     "company_ids": [
@@ -548,7 +559,7 @@ export const EXTRA_HOME_SOURCES = [
   {
     "slug": "fixnet-exclusive-internet",
     "provider": "FixNet",
-    "name": "FixNet • WDSL / Fiber",
+    "name": "FixNet • Exclusive İnternet",
     "url": "https://www.fixnetbroadband.com/tarifeler/exclusive-internet",
     "parser": "fixnet-dynamic",
     "company_ids": [
@@ -560,7 +571,7 @@ export const EXTRA_HOME_SOURCES = [
   {
     "slug": "fixnet-iste-internet",
     "provider": "FixNet",
-    "name": "FixNet • WDSL / Fiber",
+    "name": "FixNet • İş’te İnternet",
     "url": "https://www.fixnetbroadband.com/tarifeler/iste-internet",
     "parser": "fixnet-dynamic",
     "company_ids": [
@@ -573,7 +584,7 @@ export const EXTRA_HOME_SOURCES = [
   {
     "slug": "fixnet-oyuncu-paketleri",
     "provider": "FixNet",
-    "name": "FixNet • WDSL / Fiber",
+    "name": "FixNet • Oyuncu Paketleri",
     "url": "https://www.fixnetbroadband.com/tarifeler/oyuncu-paketleri",
     "parser": "fixnet-dynamic",
     "company_ids": [
@@ -585,7 +596,7 @@ export const EXTRA_HOME_SOURCES = [
   {
     "slug": "fixnet-yayinci-paketleri",
     "provider": "FixNet",
-    "name": "FixNet • WDSL / Fiber",
+    "name": "FixNet • Yayıncı Paketleri",
     "url": "https://www.fixnetbroadband.com/tarifeler/yayinci-paketleri",
     "parser": "fixnet-dynamic",
     "company_ids": [
@@ -670,8 +681,8 @@ export const EXTRA_HOME_SOURCES = [
     "slug": "xrealnet-home",
     "provider": "Xrealnet",
     "name": "Xrealnet • Sabit Genişbant",
-    "url": "https://www.xrealnet.com/",
-    "parser": "services",
+    "url": "https://xrealinternet.com/internet-paketlerimiz/",
+    "parser": "xrealnet",
     "company_ids": [
       "xrealnet"
     ],
