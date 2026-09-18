@@ -730,6 +730,6 @@ export function socialDirectory(sources) {
     else {query.set('search_type','keyword_unordered');query.set('q',b.brand)}
     return {...b,...social,ad_library_url:'https://www.facebook.com/ads/library/?'+query,
       ad_library_type:social.page_id?'verified_page':'brand_search',
-      automatic_status:'connection_required'};
+      automatic_status:'see_ad_visuals'};
   }).sort((a,b)=>a.brand.localeCompare(b.brand,'tr'));
 }

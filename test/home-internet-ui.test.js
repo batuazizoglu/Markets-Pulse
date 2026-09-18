@@ -34,11 +34,11 @@ test('home views expose comparison, all BTHK companies and last source panel',as
     d.querySelector('[data-clear-selection]').click();assert.equal(d.querySelector('#hiSelectedCount').textContent,'');
   }finally{dom.window.close()}
 });
-test('social view distinguishes brand search, manual notes and missing automation',async()=>{
+test('social view distinguishes brand search, manual notes and separate visual analysis',async()=>{
   const dom=await fixture();try{
     const d=dom.window.document;dom.window.HomeInternetUI.setView('social');await new Promise(r=>setTimeout(r,30));
     assert.equal(d.querySelector('#hiMarketViews').hidden,true);
-    assert.match(d.querySelector('#hiSocialView').textContent,/Otomatik veri bağlantısı kurulmadı/);
+    assert.match(d.querySelector('#hiSocialView').textContent,/Reklam görselleri ayrı analiz ediliyor/);
     assert.match(d.querySelector('#hiSocialCards').textContent,/Marka araması/);
     assert.equal(d.querySelectorAll('#hiObservations script').length,0);
     const select=d.querySelector('#hiAdCountry');select.value='CY';select.dispatchEvent(new dom.window.Event('change'));

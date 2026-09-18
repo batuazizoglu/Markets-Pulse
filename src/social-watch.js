@@ -13,7 +13,7 @@ export function validateObservation(input,sources){
 }
 export function registerSocialWatchRoutes(app,pool,sources){
   app.get('/api/home-internet/social-observations',async(req,res,next)=>{
-    try{const r=await pool.query('SELECT id,brand,kind,source_url,note,created_at FROM social_watch_observations ORDER BY created_at DESC,id DESC LIMIT 200');res.json({rows:r.rows,mode:'manual',automatic_status:'connection_required'})}catch(e){next(e)}
+    try{const r=await pool.query('SELECT id,brand,kind,source_url,note,created_at FROM social_watch_observations ORDER BY created_at DESC,id DESC LIMIT 200');res.json({rows:r.rows,mode:'manual',automatic_status:'see_ad_visuals'})}catch(e){next(e)}
   });
   app.post('/api/home-internet/social-observations',async(req,res,next)=>{
     // JSON and same-origin requests only. Authentication is applied by registerAuth.

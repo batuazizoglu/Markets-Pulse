@@ -3,6 +3,8 @@ import { collectMonthlyData } from './monthly-report-data.js';
 import { currentBenchmark } from './live-benchmark.js';
 import { ENGINE_VERSION } from './comparable-engine.js';
 import { getHomeInternetMarket } from './home-internet.js';
+import {getAdReport} from './ad-visual.js';
+import {adVisualReportHtml} from './ad-visual-report.js';
 
 export const REPORT_TZ = 'Asia/Famagusta';
 export const REPORT_NAMES = {
@@ -124,12 +126,14 @@ export async function buildReportContext(pool, type, options={},loaders={current
   const days = reportDays(type,options.days);
   const periodEnd = new Date(), periodStart = new Date(periodEnd.getTime()-days*86400000);
 
+  const ad_analysis_html=['daily','weekly','monthly','home','fwa'].includes(type)?adVisualReportHtml(await getAdReport(pool,periodStart,periodEnd,{category:['home','fwa'].includes(type)?'home':undefined})):'';
+
   if(type==='monthly'){
     const [data,benchmark,sources,home]=await Promise.all([
       collectMonthlyData(pool,periodStart,periodEnd),loaders.currentBenchmark(pool),loaders.sourceHealth(pool),loaders.getHomeInternetMarket(pool,{refresh:false})
     ]);
     const changes=data.changes,daily_home=dailyHomeSections({...home,changes:data.homeChanges},30,periodEnd);
-    return {type,title:REPORT_NAMES[type],days,period_start:periodStart.toISOString(),period_end:periodEnd.toISOString(),generated_at:periodEnd.toISOString(),
+    return {ad_analysis_html,type,title:REPORT_NAMES[type],days,period_start:periodStart.toISOString(),period_end:periodEnd.toISOString(),generated_at:periodEnd.toISOString(),
       market:marketPulseFromRows(changes,30,periodEnd),benchmark,sources,changes,stats:changeStats(changes),score_deltas:scoreDeltas(benchmark,data.baseline),evidence:data.evidence,daily_home,
       monthly:{...data.summary,trend:data.trend,coverage:data.coverage,total_changes:changes.length+data.homeChanges.length}};
   }
@@ -147,7 +151,7 @@ export async function buildReportContext(pool, type, options={},loaders={current
     });
     const sources=(home.sources||[]).filter(s=>type==='fwa'?['kktcell-superbox','lifecell-digital-superbox','telsim-redbox'].includes(s.slug):!['kktcell-superbox','lifecell-digital-superbox','telsim-redbox'].includes(s.slug));
     return {
-      type,title:REPORT_NAMES[type],days,
+      ad_analysis_html,type,title:REPORT_NAMES[type],days,
       period_start:periodStart.toISOString(),period_end:periodEnd.toISOString(),generated_at:new Date().toISOString(),
       home:{...home,products,changes,sources},
       changes,stats:changeStats(changes),sources
@@ -162,7 +166,7 @@ export async function buildReportContext(pool, type, options={},loaders={current
   const [market,benchmark,sources,changes,baseline,evidence]=results;
   const daily_home=(type==='daily'||type==='weekly')?dailyHomeSections(results[6],days):null;
   return {
-    type,title:REPORT_NAMES[type]||'Markets Pulse Raporu',days,
+    ad_analysis_html,type,title:REPORT_NAMES[type]||'Markets Pulse Raporu',days,
     period_start:periodStart.toISOString(),period_end:periodEnd.toISOString(),generated_at:new Date().toISOString(),
     market,benchmark,sources,changes,stats:changeStats(changes),score_deltas:scoreDeltas(benchmark,baseline),evidence,
     daily_home

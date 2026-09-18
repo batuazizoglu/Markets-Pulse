@@ -22,6 +22,8 @@ jobs:
       - run: npm test
       - name: Home internet desktop and mobile layouts
         run: node test/home-internet-layout.mjs
+      - name: Ad analysis desktop and mobile layouts
+        run: node test/ad-visual-layout.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:

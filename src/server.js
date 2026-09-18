@@ -18,6 +18,7 @@ import { registerAuth, bootstrapInitialUsers } from './auth.js';
 import { registerEvidenceRoutes } from './evidence-archive.js';
 import { reportDays } from './report-data.js';
 import {registerSocialWatchRoutes} from './social-watch.js';
+import {registerAdVisualRoutes,syncAdVisuals} from './ad-visual.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -25,6 +26,7 @@ app.use(express.json({limit:'1mb'}));
 
 registerAuth(app,pool,path.join(__dirname,'..','public'));
 registerSocialWatchRoutes(app,pool,HOME_INTERNET_SOURCES);
+registerAdVisualRoutes(app,pool);
 
 const localMidnightSql = `(date_trunc('day', NOW() AT TIME ZONE 'Asia/Famagusta') AT TIME ZONE 'Asia/Famagusta')`;
 const latestPackagesSql = `SELECT p.id,p.identity_base,p.current_name,p.first_seen_at,p.last_seen_at,p.active,p.missing_count,p.last_position,
@@ -279,6 +281,8 @@ cron.schedule('5 * * * *',()=>captureBenchmarkHistory(false).catch(e=>console.er
 cron.schedule(process.env.HOME_INTERNET_CRON||'12 * * * *',()=>scanHomeInternet(pool).catch(e=>console.error('home internet scan failed',e)),{timezone});
 cron.schedule(process.env.REPORT_DAILY_CRON||'0 8 * * *',()=>scheduledReportEmail('daily'),{timezone});
 cron.schedule(process.env.REPORT_WEEKLY_CRON||'15 8 * * 1',()=>scheduledReportEmail('weekly'),{timezone});
+cron.schedule('7,22,37,52 * * * *',()=>syncAdVisuals(pool,HOME_INTERNET_SOURCES).catch(e=>console.error('ad visual sync failed',e)),{timezone});
+setTimeout(()=>syncAdVisuals(pool,HOME_INTERNET_SOURCES).catch(e=>console.error('startup ad visual sync failed',e)),8000);
 setTimeout(warmKktcellCatalog,1500);
 setTimeout(()=>scanAll().catch(e=>console.error('startup scan failed',e)),5000);
 setTimeout(()=>captureBenchmarkHistory(false).catch(e=>console.error('startup benchmark history failed',e)),25000);
