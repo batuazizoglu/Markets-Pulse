@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "producer": "chatgpt-browser-visual",
+  "schedule": {
+    "enabled": true,
+    "description": "Her sabah; Telsim günlük, diğer rakipler dönüşümlü",
+    "timezone": "Asia/Famagusta"
+  },
+  "run": {
+    "id": "setup-20260918T082154080Z",
+    "checked_at": "2026-09-18T08:21:54.080Z",
+    "status": "error",
+    "coverage": [
+      {
+        "brand": "Telsim",
+        "source_url": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=CY&is_targeted_country=false&media_type=all&search_type=page&sort_data[mode]=total_impressions&sort_data[direction]=desc&view_all_page_id=164143610515",
+        "country": "CY",
+        "status": "error",
+        "checked_at": "2026-09-18T08:21:54.080Z",
+        "reviewed_ads": 0,
+        "note": "Zamanlanmış inceleme kuruldu. Kurulum sırasında tarayıcı çalışma ortamının bağlantısı kesildi; görsel kanıt aktarımı tamamlanamadığı için ilk analiz kayıtları henüz yayınlanmadı. Bu durum reklam olmadığı anlamına gelmez."
+      }
+    ]
+  },
+  "ads": []
+}
