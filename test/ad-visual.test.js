@@ -128,7 +128,7 @@ test('UI category navigation isolates GSM/MNP and home embeds only fixed-home ad
     assert.equal(d.querySelector('#hiAdVisualMount .av-card h3').textContent,'home');
     assert.match(d.querySelector('.av-image a')?.href||d.querySelector('.av-image').href,/\/api\/ad-visuals\/evidence\//);
     d.querySelector('#ad-visual-section [data-av-refresh]').click();await dom.window.AdVisualUI.load();
-    assert.equal(requests.at(-1).url,'/api/ad-visuals/sync');assert.equal(requests.at(-1).options.method,'POST');
+    assert.equal(requests.at(-1).url,'/api/ad-visuals');assert.equal(requests.at(-1).options.cache,'no-store');
     assert.equal(d.querySelector('#ad-visual-section [data-av-refresh]').disabled,false);
   }finally{dom.window.close()}
 });

@@ -291,7 +291,7 @@ The `Ev İnterneti` area has **Rakip Takip**, **Ürün Karşılaştırma**, and 
 - Comparison supports 2–4 offers, displays source/time/contract details and flags different technologies, speeds, terms or service types. Fixed and FWA offers are selected separately.
 - The social view provides verified account links and country-selectable Ad Library links. Telsim's supplied page ID is 164143610515. Unknown page IDs use an explicitly labelled brand search.
 - Social observations are manual, authenticated records with a Facebook/Instagram source link and note. They are saved in `social_watch_observations`; no message or email is sent.
-- **Scheduled visual analysis** uses a ChatGPT browser review and a separate `ad-visual-data` branch. The application imports validated observations and JPEG evidence every 15 minutes. This is a scheduled external producer, not a Meta API integration or an in-app vision model. Social post notes remain manual; unverified/blocked sources and observations older than 48 hours are explicitly labeled. See [producer instructions](docs/ad-visual-automation.md).
+- **Cloud visual analysis** runs in Railway with a durable Postgres queue: public Ad Library screenshots, bounded vision inference and separate home/GSM/MNP results. Daily scheduling and retries run independently of ChatGPT and user browser sessions. The UI distinguishes captured images, pending analysis, missing API configuration and source failures. See [cloud operation instructions](docs/ad-visual-automation.md).
 
 Additional API endpoints:
 
@@ -309,8 +309,8 @@ Automated tests cover catalog scope, price separators, gift periods, failed-scan
 
 - A dedicated **Reklam Analizi** route exposes **Ev İnterneti**, **GSM Paketleri**, and **MNP / Numara Taşıma** separately. Home internet also embeds only the home category in Reklam & Sayfalar.
 - Captured screenshots, caption, prices, allowance/speed, observed conditions, uncertainties, advertiser/ad/variant identity, and capture/observation timestamps are preserved. Unknown values remain null. Read-only endpoints are protected by the existing application authentication.
-- SHA-256 evidence validation, fixed GitHub origin/path, size limits, same-run deduplication, chronological upserts, and transactional imports prevent partial/corrupt batches from replacing good data. HTTP failures preserve prior observations. Missing ads are never automatically deactivated.
+- SHA-256 evidence validation, bounded capture/model calls, persistent leases and retry limits, chronological upserts and transactional publication preserve previous observations. Missing ads are never automatically deactivated. The legacy GitHub importer remains available only for historical maintenance, not scheduled production work.
 - Business field changes create history versions; screenshot/timestamp/prose-only changes do not. Reports label first observations separately from changes and do not equate first observation with launch.
 - Daily, weekly and monthly reports include category-specific visual-analysis summaries. Home/FWA reports include home-category advertising.
-- No keys, private data or write tokens are needed in the application for this feed. The scheduled producer needs a working GitHub connection and browser session. Stopping its ChatGPT automation stops new reviews.
+- Cloud capture runs on the server; inference needs `OPENAI_API_KEY` in Railway. Optional `AD_VISION_MODEL` and `AD_VISION_DAILY_LIMIT` configure the model and persistent daily call cap. Without a key, evidence waits safely in the queue and the UI explicitly reports the missing connection. The old ChatGPT task and GitHub feed are retired.
 - Verification: node --test test/ad-visual.test.js; node test/ad-visual-layout.mjs. CI verifies 1440px/390px layouts for all three categories and existing home views, using synthetic data.
