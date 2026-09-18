@@ -7,8 +7,8 @@
     "timezone": "Asia/Famagusta"
   },
   "run": {
-    "id": "review-20260918T102524767Z",
-    "checked_at": "2026-09-18T10:25:24.767Z",
+    "id": "review-20260918T102738101Z",
+    "checked_at": "2026-09-18T10:27:38.101Z",
     "status": "partial",
     "coverage": [
       {
@@ -16,9 +16,9 @@
         "source_url": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=CY&is_targeted_country=false&media_type=all&search_type=page&sort_data[mode]=total_impressions&sort_data[direction]=desc&view_all_page_id=164143610515",
         "country": "CY",
         "status": "partial",
-        "checked_at": "2026-09-18T10:25:24.767Z",
-        "reviewed_ads": 2,
-        "note": "Ev İnterneti ve GSM kategorilerinde iki reklam toplam dört ekran görüntüsüyle incelendi. MNP incelemesi sürüyor; kapsam kısmidir."
+        "checked_at": "2026-09-18T10:27:38.101Z",
+        "reviewed_ads": 3,
+        "note": "Ev İnterneti, GSM ve MNP kategorilerinde üç reklam, altı gerçek ekran görüntüsüyle incelendi. Diğer MNP varyantlarının incelemesi sürüyor; kapsam kısmidir."
       }
     ]
   },
@@ -116,6 +116,55 @@
           "sha256": "eae513d9abce4d1da8b8e9328f690c54b1f9a925cf2d85dfe33db05b1fa62860",
           "path": "evidence/eae513d9abce4d1da8b8e9328f690c54b1f9a925cf2d85dfe33db05b1fa62860.jpg",
           "captured_at": "2026-09-18T10:24:39.944Z"
+        }
+      ]
+    },
+    {
+      "brand": "Telsim",
+      "page_id": "164143610515",
+      "ad_id": "2369399446797102",
+      "variant_id": "1",
+      "category": "mnp",
+      "category_evidence": "Numaranızın hiçbir rakamı değişmeden avantajlarla Telsimli olmak için tıklayın.",
+      "title": "Numara Taşıma — 18 GB + 22 GB Özgür Pass",
+      "ad_status": "active",
+      "source_url": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=CY&is_targeted_country=false&media_type=all&search_type=page&sort_data[mode]=total_impressions&sort_data[direction]=desc&view_all_page_id=164143610515",
+      "observed_at": "2026-09-18T10:27:00.903Z",
+      "started_on": "2026-09-02",
+      "ad_text": "Numaranızın hiçbir rakamı değişmeden avantajlarla Telsimli olmak için tıklayın.",
+      "offer": {
+        "price_try": 649,
+        "previous_price_try": null,
+        "data_gb": 18,
+        "bonus_data_gb": null,
+        "minutes": 400,
+        "speed_mbps": null,
+        "commitment_months": null,
+        "billing_period": "unknown"
+      },
+      "conditions": [
+        "Numara taşıma çağrısı içeren reklam.",
+        "400 dakika Ada içi ve Türkiye yönüne yönelik belirtiliyor.",
+        "18 GB genel kota yanında Facebook ve Instagram ikonlarıyla 22 GB Özgür Pass gösteriliyor; bu kota genel kullanım bonusu olarak toplanmadı.",
+        "Sınırsız WhatsApp ve Messenger mesajı var.",
+        "Freezonelularla sınırsız konuşma mesajı var."
+      ],
+      "uncertainties": [
+        "Küçük yazılardaki yaş, taahhüt, ücret dönemi ve geçerlilik koşulları okunamadı.",
+        "Özgür Pass ve sınırsız uygulama haklarının ayrıntılı kullanım istisnaları doğrulanmadı."
+      ],
+      "visual_summary": "Parlak sarı-yeşil dikey zemin üzerinde kırmızı yazılar; 18 GB, 22 GB Özgür Pass ve 649 TL belirgin. Sınırsız uygulama ve Freezone içi konuşma mesajları üst bölümde.",
+      "review_required": true,
+      "images": [
+        {
+          "sha256": "08da6292cf732766000207e3d8de72f0cb049127d6ce9d98eeef1d3ffdda5b8d",
+          "path": "evidence/08da6292cf732766000207e3d8de72f0cb049127d6ce9d98eeef1d3ffdda5b8d.jpg",
+          "captured_at": "2026-09-18T10:26:15.392Z"
+        },
+        {
+          "sha256": "a570ecfd7d823ccb1018c1601cef7501fc3dd69b1fecb04abd621dd5f0f80056",
+          "path": "evidence/a570ecfd7d823ccb1018c1601cef7501fc3dd69b1fecb04abd621dd5f0f80056.jpg",
+          "captured_at": "2026-09-18T10:27:00.903Z"
         }
       ]
     }
