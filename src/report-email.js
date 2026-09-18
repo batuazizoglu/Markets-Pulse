@@ -270,6 +270,7 @@ function emailHtml(type,ctx,attachments=[]){
         '</table><p style="font-size:11px;color:#667399">'+esc(b.methodology||'')+' '+esc(b.score_methodology||'')+' '+esc(b.history_note||'')+'</p>'+
       '</td></tr>'+
       (['daily','weekly','monthly'].includes(type)?dailyHomeEmailBlocks(ctx):'')+
+      (ctx.ad_analysis_html?'<tr><td class="mp-pad" style="padding:0 28px 18px">'+ctx.ad_analysis_html+'</td></tr>':'')+
       (type==='monthly'?'<tr><td class="mp-pad" style="padding:0 28px 18px">'+monthlyOverviewHtml(ctx,{compact:true})+'</td></tr>':'')+
       '<tr><td class="mp-pad" style="padding:0 28px 18px;">'+
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f7f9fc;border:1px solid #e2e8f1;border-radius:12px;"><tr><td style="padding:14px 16px;">'+

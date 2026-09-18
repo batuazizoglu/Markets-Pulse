@@ -229,4 +229,38 @@ CREATE TABLE IF NOT EXISTS social_watch_observations (
   created_by BIGINT REFERENCES app_users(id) ON DELETE SET NULL
 );
 CREATE INDEX IF NOT EXISTS idx_social_watch_brand_time ON social_watch_observations(brand,created_at DESC);
+CREATE TABLE IF NOT EXISTS ad_visual_evidence (
+  sha256 TEXT PRIMARY KEY,
+  jpeg BYTEA NOT NULL,
+  imported_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS ad_visual_items (
+  ad_key TEXT PRIMARY KEY,
+  brand TEXT NOT NULL,
+  category TEXT NOT NULL CHECK(category IN ('home','gsm','mnp','review')),
+  first_seen_at TIMESTAMPTZ NOT NULL,
+  observed_at TIMESTAMPTZ NOT NULL,
+  meaning_hash TEXT NOT NULL,
+  analysis_json JSONB NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ad_visual_versions (
+  id BIGSERIAL PRIMARY KEY,
+  ad_key TEXT NOT NULL REFERENCES ad_visual_items(ad_key),
+  observed_at TIMESTAMPTZ NOT NULL,
+  event_type TEXT NOT NULL CHECK(event_type IN ('first_seen','changed')),
+  analysis_json JSONB NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ad_visual_versions_time ON ad_visual_versions(observed_at DESC);
+CREATE TABLE IF NOT EXISTS ad_visual_sync (
+  id INTEGER PRIMARY KEY CHECK(id=1),
+  run_id TEXT,
+  checked_at TIMESTAMPTZ,
+  imported_at TIMESTAMPTZ,
+  status TEXT,
+  coverage_json JSONB,
+  schedule_json JSONB,
+  last_error TEXT,
+  last_attempt_at TIMESTAMPTZ
+);
+
 `;

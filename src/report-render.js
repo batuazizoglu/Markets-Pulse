@@ -147,6 +147,7 @@ export function renderReportHtml(ctx){
         '<p>Seçilmiş ürünler ve son '+Math.min(35,section.changes.length)+' / '+section.changes.length+' değişiklik gösterilir. Ürün tablosu güncel katalogdan ilk '+Math.min(family==='fixed'?55:30,section.products.length)+' / '+section.products.length+' teklifi içerir.</p>';
     }
   }
+  content+=ctx.ad_analysis_html||'';
   const monthlyCss=ctx.type==='monthly'?'thead{display:table-header-group}tr,.kpi,.evidence-card{break-inside:avoid}h2,h3{break-after:avoid}td{overflow-wrap:anywhere}.two{display:block}.two>div{margin-bottom:12px}':'';
   return '<!doctype html><html lang="tr"><head><meta charset="utf-8"><style>'+css()+monthlyCss+'</style></head><body><div class="header"><div>'+logoSvg()+'</div><div class="meta"><b>'+esc(ctx.title)+'</b>'+esc(range)+'<br>Üretim: '+esc(localStamp(ctx.generated_at))+'</div></div><h1>'+esc(ctx.title)+'</h1><div class="sub">'+esc(subtitle)+'</div>'+content+'<div class="footer"><span>Markets Pulse by Turkcell</span><span>Daha fazla veri • Daha güçlü kararlar</span></div></body></html>';
 }
