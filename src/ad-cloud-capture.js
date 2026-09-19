@@ -7,12 +7,17 @@ export function adLibrarySource(source){
   return 'https://www.facebook.com/ads/library/?'+q;
 }
 export function pageState(text,httpStatus=200){
-  if(httpStatus===429)return 'blocked';
+  if(httpStatus===429)return 'rate_limited';
   if(httpStatus>=400)return 'error';
   if(/captcha|confirm you.re human|unusual traffic|temporarily blocked|access denied|giriş yapman gerekiyor|log in to continue|you must log in|reklam kütüphanesi şu anda kullanılamıyor|ad library is currently unavailable/i.test(text))return 'blocked';
   if(/(?:Library ID|Kütüphane Kodu)\s*:\s*\d{5,30}/i.test(text))return 'cards';
   if(/(?:^|\n)\s*(?:0 results|0 sonuç|no ads found|sonuç bulunamadı|no ads match your search criteria|hiçbir reklam arama kriterinizle eşleşmiyor)\s*(?:\n|$)/im.test(text))return 'no_ads';
   return 'unknown';
+}
+export function captureRetryDelay(value,now=Date.now()){
+  const seconds=Number(value);
+  const delay=value&&Number.isFinite(seconds)?seconds*1000:Date.parse(value||'')-now;
+  return Math.max(15*60000,Math.min(86400000,Number.isFinite(delay)?delay:15*60000));
 }
 
 // Public rendered DOM only. No private GraphQL calls, saved account sessions or stealth plugins.
@@ -31,7 +36,7 @@ export function markAdCards(){
       const ids=new Set([...body.matchAll(idPattern)].map(m=>m[1]));
       if(ids.size>1)break;
       const hasDetails=[...card.querySelectorAll('button,[role="button"]')].some(b=>/See ad details|Reklam Detaylarını Gör/i.test(b.innerText||b.textContent||''));
-      const images=[...card.querySelectorAll('img')].filter(i=>{const r=i.getBoundingClientRect();return i.naturalWidth>=200&&i.naturalHeight>=150&&r.width>=150&&r.height>=150});
+      const images=[...card.querySelectorAll('img,video')].filter(i=>{const r=i.getBoundingClientRect();return (i.tagName==='VIDEO'?i.readyState>=2&&i.videoWidth>=200&&i.videoHeight>=150:i.naturalWidth>=200&&i.naturalHeight>=150)&&r.width>=150&&r.height>=150});
       if(hasDetails&&images.length){
         card.setAttribute('data-mp-ad-card',id);
         found.set(id,{ad_id:id,ad_text:body.slice(0,8000),has_video:Boolean(card.querySelector('video'))});break;
@@ -58,13 +63,13 @@ export async function captureCloudAds(source,onCapture,{maxAds=12,timeoutMs=1100
     page.on('request',r=>{(allowedRequest(r.url())?r.continue():r.abort()).catch(()=>{})});
     const response=await page.goto(url,{waitUntil:'domcontentloaded',timeout:45000});
     const httpStatus=response?.status()||0;
-    if(httpStatus>=400)return {status:httpStatus===403||httpStatus===429?'blocked':'error',captured,note:'Ad Library erişimi HTTP '+httpStatus+' ile sonuçlandı. Reklam yok olarak yorumlanmadı.'};
+    if(httpStatus>=400)return {status:httpStatus===429?'rate_limited':httpStatus===403?'blocked':'error',http_status:httpStatus,reason:'HTTP_'+httpStatus,retry_after_ms:httpStatus===429?captureRetryDelay(response.headers()['retry-after']):undefined,captured,note:'Ad Library erişimi HTTP '+httpStatus+' ile sonuçlandı. '+(httpStatus===429?'Kaynağın hız sınırı için beklenip sınırlı yeniden deneme yapılacak.':'Reklam yok olarak yorumlanmadı.')};
     // Click an actual consent choice only; never remove login/challenge overlays.
     await page.evaluate(()=>{const buttons=[...document.querySelectorAll('button,[role="button"]')];const b=buttons.find(x=>/^(Decline optional cookies|Only allow essential cookies|İsteğe bağlı çerezleri reddet|Yalnızca gerekli çerezlere izin ver)$/i.test((x.innerText||'').trim()));b?.click()});
-    await page.waitForFunction(()=>/(Library ID|Kütüphane Kodu)\s*:|0 results|0 sonuç|no ads found|sonuç bulunamadı|captcha|log in to continue|temporarily blocked|currently unavailable/i.test(document.body.innerText),{timeout:25000}).catch(()=>{});
+    await page.waitForFunction(()=>/(Library ID|Kütüphane Kodu)\s*:|0 results|0 sonuç|no ads found|sonuç bulunamadı|no ads match your search criteria|hiçbir reklam arama kriterinizle eşleşmiyor|captcha|log in to continue|temporarily blocked|currently unavailable/i.test(document.body.innerText),{timeout:25000}).catch(()=>{});
     let text=await page.evaluate(()=>document.body.innerText.slice(0,60000));
     const state=pageState(text,httpStatus);
-    if(state!=='cards')return {status:state==='no_ads'?'no_ads':state==='blocked'?'blocked':'error',captured,note:state==='no_ads'?'CY filtresinde açıkça sıfır sonuç gösterildi.':'Reklam kartları doğrulanamadı; erişim, oturum veya sayfa yapısı kontrolü gerekli.'};
+    if(state!=='cards')return {status:state==='no_ads'?'no_ads':state==='blocked'?'blocked':'error',http_status:httpStatus,reason:state==='blocked'?'ACCESS_RESTRICTED':state==='no_ads'?'NO_MATCHING_ADS':'CARDS_NOT_FOUND',captured,note:state==='no_ads'?'CY filtresinde açıkça sıfır sonuç gösterildi.':'Reklam kartları doğrulanamadı; erişim, oturum veya sayfa yapısı kontrolü gerekli.'};
     const seen=new Set();
     for(let scroll=0;scroll<4&&captured<maxAds;scroll++){
       const cards=await page.evaluate(markAdCards);
@@ -76,9 +81,9 @@ export async function captureCloudAds(source,onCapture,{maxAds=12,timeoutMs=1100
         if(!unobscured)continue;
         const box=await card.boundingBox();if(!box||box.height>2600||box.width>1500)continue;
         let creative;
-        const images=await card.$$('img');
+        const images=await card.$$('img,video');
         for(const img of images){
-          const usable=await img.evaluate(i=>{const r=i.getBoundingClientRect();return i.complete&&i.naturalWidth>=200&&i.naturalHeight>=150&&r.width>=150&&r.height>=150});
+          const usable=await img.evaluate(i=>{const r=i.getBoundingClientRect();return (i.tagName==='VIDEO'?i.readyState>=2&&i.videoWidth>=200&&i.videoHeight>=150:i.complete&&i.naturalWidth>=200&&i.naturalHeight>=150)&&r.width>=150&&r.height>=150});
           if(usable){creative=img;break}
         }
         if(!creative)continue;

@@ -2,7 +2,7 @@ import {createHash} from 'node:crypto';
 import {socialDirectory} from './isp-registry.js';
 
 export const AD_FEED_ROOT='https://raw.githubusercontent.com/batuazizoglu/Markets-Pulse/ad-visual-data/';
-export const AD_CATEGORIES={home:'Ev İnterneti',gsm:'GSM Paketleri',mnp:'MNP / Numara Taşıma',review:'İnceleme Bekleyen'};
+export const AD_CATEGORIES={home:'Ev İnterneti',gsm:'GSM Paketleri',mnp:'MNP / Numara Taşıma',review:'Diğer / Belirsiz'};
 const sha=b=>createHash('sha256').update(b).digest('hex');
 const clean=(v,max=2000)=>String(v??'').trim().slice(0,max);
 const date=v=>{const d=new Date(v);if(!v||!Number.isFinite(+d))throw new Error('Geçersiz inceleme tarihi');return d.toISOString()};
@@ -47,10 +47,16 @@ export function validateAdFeed(input,sources,now=new Date()){
     offer.billing_period=a.offer.billing_period;
     const seen=observed(a.observed_at,now);
     if(seen>at||images.some(x=>x.captured_at>seen))throw new Error('Gözlem ve kanıt tarihleri tutarsız');
+    let ai_analysis;
+    if(input.producer==='cloud-vision'&&a.ai_analysis){
+      const ai=a.ai_analysis,analyzed_at=observed(ai.analyzed_at,now);
+      if(ai.status!=='completed'||!Number.isInteger(ai.pass)||ai.pass<1||ai.pass>100||!clean(ai.model,100)||analyzed_at>at)throw new Error('Geçersiz AI inceleme kaydı');
+      ai_analysis={status:'completed',analyzed_at,pass:ai.pass,model:clean(ai.model,100)};
+    }
     return {key,ad_id:a.ad_id,page_id:a.page_id,variant_id:variant,brand:a.brand,category:a.category,category_evidence:evidence,title:clean(a.title,250),
       source_url:socialUrl(a.source_url),ad_status:a.ad_status,observed_at:seen,started_on:a.started_on&&/^\d{4}-\d{2}-\d{2}$/.test(a.started_on)?a.started_on:null,
       ad_text:clean(a.ad_text,5000),offer,conditions:list(a.conditions),uncertainties:list(a.uncertainties),visual_summary:clean(a.visual_summary),
-      review_required:a.review_required===true||a.category==='review',images};
+      review_required:a.review_required===true||a.category==='review',images,...(ai_analysis?{ai_analysis}:{})};
   });
   const schedule=input.schedule;
   if(!schedule||typeof schedule.enabled!=='boolean'||schedule.timezone!=='Asia/Famagusta'||!clean(schedule.description,200))throw new Error('Zamanlama bilgisi gerekli');
@@ -69,7 +75,7 @@ async function boundedFetch(path,maxBytes,fetcher){
   for await(const chunk of res.body){size+=chunk.length;if(size>maxBytes)throw new Error('Analiz dosyası çok büyük');chunks.push(Buffer.from(chunk))}
   return Buffer.concat(chunks);
 }
-export async function importAdFeed(pool,feed,{fetcher=fetch}={}){
+export async function importAdFeed(pool,feed,{fetcher=fetch,reanalysis=false}={}){
   const current=(await pool.query('SELECT checked_at,run_id FROM ad_visual_sync WHERE id=1')).rows[0];
   if(current?.run_id===feed.run.id)return {duplicate:true,imported:0};
   if(current?.checked_at&&+new Date(current.checked_at)>+new Date(feed.run.checked_at))return {older:true,imported:0};
@@ -94,11 +100,17 @@ export async function importAdFeed(pool,feed,{fetcher=fetch}={}){
     if(lock.run_id===feed.run.id||lock.checked_at&&+new Date(lock.checked_at)>+new Date(feed.run.checked_at)){await client.query('ROLLBACK');return {duplicate:true,imported:0}}
     for(const [hash,bytes] of assets)await client.query('INSERT INTO ad_visual_evidence(sha256,jpeg) VALUES($1,$2) ON CONFLICT DO NOTHING',[hash,bytes]);
     for(const ad of feed.ads){
-      const prior=(await client.query('SELECT meaning_hash,observed_at FROM ad_visual_items WHERE ad_key=$1',[ad.key])).rows[0];
-      if(prior&&+new Date(prior.observed_at)>=+new Date(ad.observed_at))continue;
+      const prior=(await client.query('SELECT meaning_hash,observed_at,analysis_json FROM ad_visual_items WHERE ad_key=$1',[ad.key])).rows[0];
+      const sameObservation=prior&&+new Date(prior.observed_at)===+new Date(ad.observed_at);
+      const revised=sameObservation&&reanalysis&&ad.ai_analysis&&
+        +new Date(ad.ai_analysis.analyzed_at)>+new Date(prior.analysis_json.ai_analysis?.analyzed_at||0)&&
+        JSON.stringify((ad.images||[]).map(x=>x.sha256).sort())===JSON.stringify((prior.analysis_json.images||[]).map(x=>x.sha256).sort());
+      if(prior&&(+new Date(prior.observed_at)>+new Date(ad.observed_at)||sameObservation&&!revised))continue;
       const meaning=adMeaningHash(ad);
       await client.query('INSERT INTO ad_visual_items(ad_key,brand,category,first_seen_at,observed_at,meaning_hash,analysis_json) VALUES($1,$2,$3,$4,$4,$5,$6::jsonb) ON CONFLICT(ad_key) DO UPDATE SET brand=EXCLUDED.brand,category=EXCLUDED.category,observed_at=EXCLUDED.observed_at,meaning_hash=EXCLUDED.meaning_hash,analysis_json=EXCLUDED.analysis_json',[ad.key,ad.brand,ad.category,ad.observed_at,meaning,JSON.stringify(ad)]);
-      if(!prior||prior.meaning_hash!==meaning){
+      if(revised){
+        await client.query('INSERT INTO ad_visual_versions(ad_key,observed_at,event_type,analysis_json) VALUES($1,$2,$3,$4::jsonb)',[ad.key,ad.ai_analysis.analyzed_at,'analysis_updated',JSON.stringify(ad)]);
+      }else if(!prior||prior.meaning_hash!==meaning){
         await client.query('INSERT INTO ad_visual_versions(ad_key,observed_at,event_type,analysis_json) VALUES($1,$2,$3,$4::jsonb)',[ad.key,ad.observed_at,prior?'changed':'first_seen',JSON.stringify(ad)]);
         changed++;
       }
@@ -132,12 +144,13 @@ export function syncAdVisuals(pool,sources,{fetcher=fetch}={}){
 }
 export async function getAdVisuals(pool,{now=new Date()}={}){
   const [data,sync]=await Promise.all([
-    pool.query('SELECT ad_key,first_seen_at,observed_at,analysis_json FROM ad_visual_items ORDER BY observed_at DESC,ad_key LIMIT 400'),
+    pool.query('SELECT a.ad_key,a.first_seen_at,a.observed_at,a.analysis_json,c.status ai_queue_status,c.analyzed_at,c.review_round FROM ad_visual_items a LEFT JOIN ad_cloud_candidates c ON c.ad_key=a.ad_key ORDER BY a.observed_at DESC,a.ad_key LIMIT 400'),
     pool.query('SELECT * FROM ad_visual_sync WHERE id=1')
   ]);
   const status=sync.rows[0]||{};
   const stale=t=>!t||+now-+new Date(t)>48*3600000;
-  const rows=data.rows.map(x=>({...x.analysis_json,first_seen_at:x.first_seen_at,stale:stale(x.observed_at)}));
+  const rows=data.rows.map(x=>({...x.analysis_json,first_seen_at:x.first_seen_at,stale:stale(x.observed_at),ai_queue_status:x.ai_queue_status||null,
+    ai_analysis:x.analysis_json.ai_analysis||(x.analyzed_at?{status:'completed',analyzed_at:x.analyzed_at,pass:x.ai_queue_status==='analyzed'?(x.review_round||0)+1:Math.max(1,x.review_round||0)}:null)}));
   return {generated_at:now.toISOString(),categories:AD_CATEGORIES,rows,
     groups:Object.fromEntries(Object.keys(AD_CATEGORIES).map(k=>[k,rows.filter(x=>x.category===k).length])),
     monitoring:{...status,stale:stale(status.checked_at),status:status.last_error?'sync_error':!status.checked_at?'pending':stale(status.checked_at)?'stale':status.status,
@@ -145,7 +158,7 @@ export async function getAdVisuals(pool,{now=new Date()}={}){
 }
 export async function getAdReport(pool,start,end,{category}={}){
   const params=[date(start),date(end)];if(category)params.push(category);
-  const r=await pool.query("SELECT event_type,analysis_json,observed_at FROM ad_visual_versions WHERE observed_at >= $1 AND observed_at < $2 "+(category?"AND analysis_json->>'category'=$3 ":'')+"ORDER BY observed_at DESC,id DESC",params);
+  const r=await pool.query("SELECT event_type,analysis_json,observed_at FROM ad_visual_versions WHERE observed_at >= $1 AND observed_at < $2 AND event_type IN ('first_seen','changed') "+(category?"AND analysis_json->>'category'=$3 ":'')+"ORDER BY observed_at DESC,id DESC",params);
   const current=await pool.query('SELECT checked_at,status,last_error FROM ad_visual_sync WHERE id=1');
   return {rows:r.rows,checked_at:current.rows[0]?.checked_at||null,status:current.rows[0]?.status||'pending',last_error:current.rows[0]?.last_error||null};
 }
