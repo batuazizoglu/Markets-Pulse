@@ -145,7 +145,7 @@ export function createCloudWorker(pool,sources,{capture=captureCloudAds,analyze=
       }
       const analysis=await analyzeNextCloudCandidate(pool,sources,owner,{env,analyze});
       const status=await getCloudStatus(pool,{env});
-      log('[ad-cloud-worker]',JSON.stringify({mode:'cloud',analysis:analysis.status,vision_configured:status.vision_configured,candidates:status.candidates,calls_today:status.calls_today,scheduled_day:localCloudTime().day}));
+      log('[ad-cloud-worker]',JSON.stringify({mode:'cloud',analysis:analysis.status,code:analysis.code||null,vision_configured:status.vision_configured,candidates:status.candidates,calls_today:status.calls_today,scheduled_day:localCloudTime().day}));
       return {scan,analysis};
     }catch(e){log('[ad-cloud-worker]',JSON.stringify({status:'error',code:/^CLOUD_[A-Z_]+$/.test(e.message)?e.message:'WORKER_ERROR'}));return {status:'error'}}
     finally{try{if(lease)await pool.query('UPDATE ad_cloud_control SET lease_owner=NULL,lease_until=NULL,heartbeat_at=NOW() WHERE id=1 AND lease_owner=$1',[owner])}finally{running=false}}
