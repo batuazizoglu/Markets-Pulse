@@ -18,6 +18,21 @@ async function assertLease(db,owner){
   const r=await db.query('SELECT lease_owner,lease_until FROM ad_cloud_control WHERE id=1 FOR UPDATE');
   if(r.rows[0]?.lease_owner!==owner||+new Date(r.rows[0]?.lease_until)<=Date.now())throw new Error('CLOUD_LEASE_LOST');
 }
+export async function queueNewCloudSources(pool,sources,owner){
+  const verified=socialDirectory(sources).filter(source=>adLibrarySource(source));
+  return transaction(pool,async db=>{
+    await assertLease(db,owner);
+    const added=[];
+    for(const source of verified){
+      // Historical unverified jobs do not mean this numeric page has been scanned.
+      const seen=await db.query("SELECT id FROM ad_cloud_jobs WHERE brand=$1 AND source_json->>'page_id'=$2 LIMIT 1",[source.brand,source.page_id]);
+      if(seen.rows.length)continue;
+      const result=await db.query("INSERT INTO ad_cloud_jobs(batch_key,brand,source_json) VALUES($1,$2,$3::jsonb) ON CONFLICT DO NOTHING RETURNING id",['source-'+source.page_id,source.brand,JSON.stringify(source)]);
+      if(result.rows.length)added.push(source.brand);
+    }
+    return added;
+  });
+}
 export async function queueCloudReview(pool,sources,{manual=false,now=new Date()}={}){
   const local=localCloudTime(now);
   if(!manual&&local.hour<6)return {queued:0};
@@ -129,6 +144,8 @@ export function createCloudWorker(pool,sources,{capture=captureCloudAds,analyze=
     try{
       const lock=await pool.query("UPDATE ad_cloud_control SET lease_owner=$1,lease_until=NOW()+INTERVAL '10 minutes',heartbeat_at=NOW() WHERE id=1 AND (lease_until IS NULL OR lease_until<NOW()) RETURNING id",[owner]);
       if(!lock.rows.length)return {status:'busy'};lease=true;
+      const added=await queueNewCloudSources(pool,sources,owner);
+      if(added.length)log('[ad-cloud-sources]',JSON.stringify({registered:added.length,brands:added}));
       await queueCloudReview(pool,sources);
       await pool.query("UPDATE ad_cloud_candidates SET status='error',last_error=COALESCE(last_error,'VISION_RETRY_EXHAUSTED') WHERE status='retry' AND attempts>=3 AND available_at<=NOW()");
       // An interrupted capture resumes from persisted candidates and remains bounded to three tries.

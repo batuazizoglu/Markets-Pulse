@@ -11,7 +11,7 @@ export function pageState(text,httpStatus=200){
   if(httpStatus>=400)return 'error';
   if(/captcha|confirm you.re human|unusual traffic|temporarily blocked|access denied|giriş yapman gerekiyor|log in to continue|you must log in|reklam kütüphanesi şu anda kullanılamıyor|ad library is currently unavailable/i.test(text))return 'blocked';
   if(/(?:Library ID|Kütüphane Kodu)\s*:\s*\d{5,30}/i.test(text))return 'cards';
-  if(/(?:^|\n)\s*(?:0 results|0 sonuç|no ads found|sonuç bulunamadı)\s*(?:\n|$)/im.test(text))return 'no_ads';
+  if(/(?:^|\n)\s*(?:0 results|0 sonuç|no ads found|sonuç bulunamadı|no ads match your search criteria|hiçbir reklam arama kriterinizle eşleşmiyor)\s*(?:\n|$)/im.test(text))return 'no_ads';
   return 'unknown';
 }
 

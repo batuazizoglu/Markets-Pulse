@@ -212,17 +212,27 @@ export const ISP_COMPANIES = [
   }
 ];
 export const ISP_SOCIALS = {
+  "Nethouse": {
+    "facebook": "https://www.facebook.com/nethousenetworks/",
+    "page_id": "159064954156749"
+  },
   "Kıbrıs Online": {
-    "facebook": "https://www.facebook.com/kibrisonline/",
-    "instagram": "https://www.instagram.com/kibrisonlineofficial/"
+    "facebook": "https://www.facebook.com/kibrisonlineofficial/",
+    "instagram": "https://www.instagram.com/kibrisonlineofficial/",
+    "page_id": "107418628779416"
   },
   "Multimax": {
     "facebook": "https://www.facebook.com/mmcyp",
-    "instagram": "https://www.instagram.com/multimaxiletisimltd/"
+    "instagram": "https://www.instagram.com/multimaxiletisimltd/",
+    "page_id": "159594837428220"
   },
   "Broadmax": {
     "facebook": "https://www.facebook.com/broadmaxinternet/",
-    "instagram": "https://www.instagram.com/broadmaxcyprus/"
+    "instagram": "https://www.instagram.com/broadmaxcyprus/",
+    "page_id": "546525498748970"
+  },
+  "FixNet": {
+    "page_id": "1435421553398998"
   },
   "Haypem": {
     "facebook": "https://www.facebook.com/haypemnet",
@@ -725,7 +735,7 @@ export function socialDirectory(sources) {
     for(const s of sources.filter(s=>s.provider===b.brand))for(const link of s.meta?.social_links||[]){
       if(!social[link.platform])social[link.platform]=link.url;
     }
-    const query=new URLSearchParams({active_status:'active',ad_type:'all',country:'ALL',media_type:'all'});
+    const query=new URLSearchParams({active_status:'active',ad_type:'all',country:'CY',media_type:'all'});
     if(social.page_id){query.set('search_type','page');query.set('view_all_page_id',social.page_id)}
     else {query.set('search_type','keyword_unordered');query.set('q',b.brand)}
     return {...b,...social,ad_library_url:'https://www.facebook.com/ads/library/?'+query,

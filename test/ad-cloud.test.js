@@ -6,7 +6,7 @@ import {JSDOM} from 'jsdom';
 import {SCHEMA_SQL} from '../src/schema.js';
 import {HOME_INTERNET_SOURCES} from '../src/home-internet.js';
 import {getAdVisuals} from '../src/ad-visual.js';
-import {createCloudWorker,queueCloudReview,getCloudStatus,localCloudTime,analyzeNextCloudCandidate,registerCloudRoutes} from '../src/ad-cloud.js';
+import {createCloudWorker,queueCloudReview,queueNewCloudSources,getCloudStatus,localCloudTime,analyzeNextCloudCandidate,registerCloudRoutes} from '../src/ad-cloud.js';
 import {adLibrarySource,pageState,markAdCards} from '../src/ad-cloud-capture.js';
 import {normalizeVision,analyzeCloudImage} from '../src/ad-cloud-vision.js';
 const jpeg=Buffer.from([255,216,255,224,0,0,255,217]),hash=createHash('sha256').update(jpeg).digest('hex');
@@ -43,6 +43,25 @@ test('server capture persists evidence without a model key; subsequent worker an
     assert.equal(second.analysis.status,'analyzed');assert.equal(calls,1);
     const data=await getAdVisuals(db);assert.equal(data.groups.mnp,1);assert.equal(data.rows[0].offer.price_try,799);assert.equal(data.monitoring.schedule.timezone,'Asia/Famagusta');
     assert.equal((await db.query('SELECT count(*)::int n FROM ad_visual_versions')).rows[0].n,1);
+  }finally{await db.close()}
+});
+test('newly verified pages enter the queue even after daily scheduling and do not repeat on restart',async()=>{
+  const db=await dbFixture();
+  try{
+    await queueCloudReview(db,HOME_INTERNET_SOURCES,{now:new Date('2026-09-19T03:00:00Z')});
+    await db.query("UPDATE ad_cloud_jobs SET status='unverified',source_json=source_json-'page_id' WHERE brand NOT IN ('Telsim','Cypking')");
+    await db.query("UPDATE ad_cloud_control SET lease_owner='registration-test',lease_until=NOW()+INTERVAL '10 minutes'");
+    const added=await queueNewCloudSources(db,HOME_INTERNET_SOURCES,'registration-test');
+    assert.equal(added.length,5);
+    assert.equal((await queueCloudReview(db,HOME_INTERNET_SOURCES,{now:new Date('2026-09-19T05:00:00Z')})).queued,0);
+    const registered=(await db.query("SELECT source_json FROM ad_cloud_jobs WHERE batch_key LIKE 'source-%'")).rows;
+    assert.equal(registered.length,5);
+    for(const {source_json:source} of registered){
+      const url=new URL(adLibrarySource(source));
+      assert.equal(url.searchParams.get('country'),'CY');assert.equal(url.searchParams.get('view_all_page_id'),source.page_id);
+    }
+    await db.query("UPDATE ad_cloud_jobs SET status='no_ads' WHERE batch_key LIKE 'source-%'");
+    assert.deepEqual(await queueNewCloudSources(db,HOME_INTERNET_SOURCES,'registration-test'),[]);
   }finally{await db.close()}
 });
 test('leases exclude another process; interrupted capture resumes and keeps prior evidence',async()=>{
@@ -90,6 +109,9 @@ test('vision request uses actual image bytes, strict schema, no storage and hand
 });
 test('capture detects blocks and explicit empty results without equating parse failure to no ads',()=>{
   assert.equal(pageState('Log in to continue'),'blocked');assert.equal(pageState('No matching structure'),'unknown');assert.equal(pageState('0 results'),'no_ads');assert.equal(pageState('Library ID: 123456'),'cards');assert.equal(pageState('',429),'blocked');assert.equal(adLibrarySource({brand:'unknown'}),null);
+  assert.equal(pageState('Hiçbir reklam arama kriterinizle eşleşmiyor'),'no_ads');
+  assert.equal(pageState('No ads match your search criteria'),'no_ads');
+  assert.equal(pageState('Log in to continue\nNo ads match your search criteria'),'blocked');
   const dom=new JSDOM('<div><article><span>Library ID: 123456</span><button>See ad details</button><img></article><article><span>Library ID: 234567</span><button>See ad details</button><img></article></div>',{runScripts:'outside-only'});
   for(const img of dom.window.document.querySelectorAll('img')){Object.defineProperty(img,'naturalWidth',{value:600});Object.defineProperty(img,'naturalHeight',{value:800});img.getBoundingClientRect=()=>({width:400,height:500})}
   const cards=dom.window.eval('('+markAdCards.toString()+')()');assert.equal(cards.length,2);assert.equal(dom.window.document.querySelectorAll('article[data-mp-ad-card]').length,2);dom.window.close();

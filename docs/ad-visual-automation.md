@@ -8,6 +8,8 @@ Every minute the server worker checks its durable queue. At or after 06:00 Asia/
 
 The **Bulutta tara** button queues work and returns immediately. The user can close the page. **Sonuçları yenile** reads the current state without scheduling another job or disrupting expanded cards automatically.
 
+Newly verified numeric pages receive one initial source job on the next worker tick, even when the daily batch has already been scheduled. Historical jobs without that page ID do not suppress registration. The worker lease and durable source batch key prevent repeated registration on restart; normal rotation applies afterward. This does not reset or increase the daily model-call budget.
+
 ## Capture and identity
 
 `src/ad-cloud-capture.js` launches headless Chromium in Railway and reads public rendered Ad Library cards. Only registry-verified numeric Facebook page IDs are scanned. A known profile URL or similarly named keyword result is not enough to assign advertiser identity; unresolved brands are recorded as unverified. CY is the recorded country filter. Each source run saves up to 12 visible ad cards, with the card identity and a separate creative screenshot when available. This bounded scan is partial coverage, not a count of all active campaigns or all variants.
@@ -15,6 +17,20 @@ The **Bulutta tara** button queues work and returns immediately. The user can cl
 The collector uses normal public page navigation with no login credentials, private GraphQL requests, stealth plugins, proxy rotation or challenge bypass. A real cookie consent option may be clicked; login/challenge overlays are never removed. Access failures and DOM parsing failures are not interpreted as zero ads. Video analysis covers only the captured frame. Entire video playback and carousel traversal are not implemented.
 
 Every screenshot is SHA-256 checked and saved directly to `ad_visual_evidence` before model inference. `ad_cloud_candidates` stores the evidence references, advertiser/ad identity, caption and actual capture time in the same transaction. Captured but unanalyzed cards do not appear as completed analyses. Old validated cards are never removed just because a scan fails or misses them.
+
+### Additional verified pages — 2026-09-19
+
+The user supplied these Ad Library page IDs. Their selected advertiser headings were checked on Meta's public Ad Library with **CY / active ads / all ad types**. They map to existing product-provider brands, not duplicate companies.
+
+| Provider | Meta advertiser heading | Facebook page ID |
+| --- | --- | --- |
+| Nethouse | Nethouse | `159064954156749` |
+| Kıbrıs Online | Kibrisonline | `107418628779416` |
+| Multimax | Multimax Iletisim Limited | `159594837428220` |
+| Broadmax | Broadmax Internet | `546525498748970` |
+| FixNet | FixNet Broadband | `1435421553398998` |
+
+Kıbrıs Online's advertiser links to `https://www.facebook.com/kibrisonlineofficial/`; its previous Facebook profile link was corrected. FixNet's selected CY/active filter explicitly showed no matching ads at verification time. This is a point-in-time observation, not evidence of permanent inactivity. The collector recognizes the explicit English/Turkish no-match messages, after checking for access blocks and ad cards. Directory Ad Library links also use CY to match cloud collection.
 
 ## Vision connection
 
