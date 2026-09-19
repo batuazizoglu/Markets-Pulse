@@ -303,5 +303,10 @@ CREATE TABLE IF NOT EXISTS ad_cloud_candidates (
   analyzed_at TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_ad_cloud_candidates_queue ON ad_cloud_candidates(status,available_at);
+ALTER TABLE ad_cloud_candidates ADD COLUMN IF NOT EXISTS review_round INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE ad_cloud_control ADD COLUMN IF NOT EXISTS analysis_manual_after TIMESTAMPTZ;
+ALTER TABLE ad_cloud_control ADD COLUMN IF NOT EXISTS capture_after TIMESTAMPTZ;
+ALTER TABLE ad_visual_versions DROP CONSTRAINT IF EXISTS ad_visual_versions_event_type_check;
+ALTER TABLE ad_visual_versions ADD CONSTRAINT ad_visual_versions_event_type_check CHECK(event_type IN ('first_seen','changed','analysis_updated'));
 
 `;

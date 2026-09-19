@@ -5,9 +5,9 @@ import {PGlite} from '@electric-sql/pglite';
 import {JSDOM} from 'jsdom';
 import {SCHEMA_SQL} from '../src/schema.js';
 import {HOME_INTERNET_SOURCES} from '../src/home-internet.js';
-import {getAdVisuals} from '../src/ad-visual.js';
-import {createCloudWorker,queueCloudReview,queueNewCloudSources,getCloudStatus,localCloudTime,analyzeNextCloudCandidate,registerCloudRoutes} from '../src/ad-cloud.js';
-import {adLibrarySource,pageState,markAdCards} from '../src/ad-cloud-capture.js';
+import {getAdVisuals,getAdReport} from '../src/ad-visual.js';
+import {createCloudWorker,queueCloudReview,queueNewCloudSources,queueStoredAdReviews,getCloudStatus,localCloudTime,analyzeNextCloudCandidate,registerCloudRoutes} from '../src/ad-cloud.js';
+import {adLibrarySource,pageState,markAdCards,captureRetryDelay} from '../src/ad-cloud-capture.js';
 import {normalizeVision,analyzeCloudImage} from '../src/ad-cloud-vision.js';
 const jpeg=Buffer.from([255,216,255,224,0,0,255,217]),hash=createHash('sha256').update(jpeg).digest('hex');
 const env={OPENAI_API_KEY:'synthetic-test-only',AD_VISION_DAILY_LIMIT:'1'};
@@ -38,11 +38,56 @@ test('server capture persists evidence without a model key; subsequent worker an
     assert.equal((await db.query('SELECT count(*)::int n FROM ad_visual_evidence')).rows[0].n,1);
     // Prevent new captures: test proves persistent backlog is sufficient after process replacement.
     await db.query("UPDATE ad_cloud_jobs SET status='unverified' WHERE status='queued'");
+    await db.query("UPDATE ad_cloud_control SET capture_after=NOW()+INTERVAL '1 hour'");
     let calls=0;
     const second=await createCloudWorker(db,HOME_INTERNET_SOURCES,{capture:async()=>{throw Error('must not recapture')},env,analyze:async c=>{calls++;return normalizeVision(vision(),c)},log:()=>{}})();
     assert.equal(second.analysis.status,'analyzed');assert.equal(calls,1);
     const data=await getAdVisuals(db);assert.equal(data.groups.mnp,1);assert.equal(data.rows[0].offer.price_try,799);assert.equal(data.monitoring.schedule.timezone,'Asia/Famagusta');
     assert.equal((await db.query('SELECT count(*)::int n FROM ad_visual_versions')).rows[0].n,1);
+  }finally{await db.close()}
+});
+test('ambiguous images receive a second AI pass without recapture or false market changes',async()=>{
+  const db=await dbFixture();let calls=0;
+  const analyze=async candidate=>{calls++;const result=vision();if(calls===1){result.category='review';result.category_evidence='İlk okuma belirsiz'}else{assert.equal(candidate.previous_analysis.category,'review');result.title='AI ile düzeltilen numara taşıma teklifi'}return normalizeVision(result,candidate)};
+  const worker=createCloudWorker(db,HOME_INTERNET_SOURCES,{capture,analyze,env:{...env,AD_VISION_DAILY_LIMIT:'10'},log:()=>{}});
+  try{
+    await queueCloudReview(db,HOME_INTERNET_SOURCES,{manual:true});await worker();
+    const first=(await getAdVisuals(db)).rows[0];assert.equal(first.category,'review');assert.equal(first.ai_analysis.status,'completed');
+    await db.query("UPDATE ad_cloud_jobs SET status='unverified' WHERE status='queued'");
+    await worker();
+    const second=(await getAdVisuals(db)).rows[0];assert.equal(second.category,'mnp');assert.equal(second.ai_analysis.pass,2);
+    assert.equal(second.observed_at,first.observed_at);assert.equal(second.images[0].sha256,first.images[0].sha256);
+    assert.equal((await db.query("SELECT count(*)::int n FROM ad_visual_versions WHERE event_type='analysis_updated'")).rows[0].n,1);
+    const report=await getAdReport(db,new Date(Date.now()-60000).toISOString(),new Date(Date.now()+60000).toISOString());assert.equal(report.rows.length,1);assert.equal(report.rows[0].event_type,'first_seen');
+    await worker();assert.equal(calls,2);
+  }finally{await db.close()}
+});
+test('AI also reads historical review cards and does not endlessly retry a completed ambiguous category',async()=>{
+  const db=await dbFixture();let calls=0;
+  const analyze=async candidate=>{calls++;const v=vision();v.category='review';v.category_evidence='Cihaz tanıtımı';return normalizeVision(v,candidate)};
+  const worker=createCloudWorker(db,HOME_INTERNET_SOURCES,{capture,analyze,env:{...env,AD_VISION_DAILY_LIMIT:'10'},log:()=>{}});
+  try{
+    await queueCloudReview(db,HOME_INTERNET_SOURCES,{manual:true});await worker();
+    await db.query("UPDATE ad_cloud_jobs SET status='unverified' WHERE status='queued'");
+    // A historical published card with stored evidence but no cloud candidate.
+    await db.query('DELETE FROM ad_cloud_candidates');
+    assert.equal((await queueStoredAdReviews(db,HOME_INTERNET_SOURCES)).queued,1);
+    assert.equal((await getAdVisuals(db)).rows[0].ai_queue_status,'pending');
+    await worker();const row=(await getAdVisuals(db)).rows[0];assert.equal(row.category,'review');assert.equal(row.ai_analysis.pass,2);
+    await worker();assert.equal(calls,2);assert.equal((await queueStoredAdReviews(db,HOME_INTERNET_SOURCES)).queued,0);
+  }finally{await db.close()}
+});
+test('capture rate limits preserve Retry-After and pause other sources without blocking stored-image analysis',async()=>{
+  assert.equal(captureRetryDelay('1800'),1800000);assert.equal(captureRetryDelay('bad'),900000);
+  assert.equal(captureRetryDelay('2026-09-19T08:00:00Z',Date.parse('2026-09-19T07:00:00Z')),3600000);
+  const db=await dbFixture();let captures=0;
+  const limited=async()=>{captures++;return {status:'rate_limited',http_status:429,retry_after_ms:1800000,captured:0,note:'Ad Library erişimi HTTP 429'}};
+  try{
+    await queueCloudReview(db,HOME_INTERNET_SOURCES,{manual:true});
+    const worker=createCloudWorker(db,HOME_INTERNET_SOURCES,{capture:limited,env:{},log:()=>{}});
+    await worker();await worker();assert.equal(captures,1);
+    const job=(await db.query("SELECT status,available_at FROM ad_cloud_jobs WHERE brand='Telsim'")).rows[0];assert.equal(job.status,'retry');assert.ok(+new Date(job.available_at)>Date.now()+1700000);
+    assert.ok(+new Date((await getCloudStatus(db,{env:{}})).capture_after)>Date.now()+1700000);
   }finally{await db.close()}
 });
 test('newly verified pages enter the queue even after daily scheduling and do not repeat on restart',async()=>{
@@ -108,13 +153,15 @@ test('vision request uses actual image bytes, strict schema, no storage and hand
   await assert.rejects(analyzeCloudImage({},[jpeg],{env,fetcher:async()=>new Response('secret provider error',{status:401})}),/VISION_AUTH_ERROR/);
 });
 test('capture detects blocks and explicit empty results without equating parse failure to no ads',()=>{
-  assert.equal(pageState('Log in to continue'),'blocked');assert.equal(pageState('No matching structure'),'unknown');assert.equal(pageState('0 results'),'no_ads');assert.equal(pageState('Library ID: 123456'),'cards');assert.equal(pageState('',429),'blocked');assert.equal(adLibrarySource({brand:'unknown'}),null);
+  assert.equal(pageState('Log in to continue'),'blocked');assert.equal(pageState('No matching structure'),'unknown');assert.equal(pageState('0 results'),'no_ads');assert.equal(pageState('Library ID: 123456'),'cards');assert.equal(pageState('',429),'rate_limited');assert.equal(adLibrarySource({brand:'unknown'}),null);
   assert.equal(pageState('Hiçbir reklam arama kriterinizle eşleşmiyor'),'no_ads');
   assert.equal(pageState('No ads match your search criteria'),'no_ads');
   assert.equal(pageState('Log in to continue\nNo ads match your search criteria'),'blocked');
   const dom=new JSDOM('<div><article><span>Library ID: 123456</span><button>See ad details</button><img></article><article><span>Library ID: 234567</span><button>See ad details</button><img></article></div>',{runScripts:'outside-only'});
   for(const img of dom.window.document.querySelectorAll('img')){Object.defineProperty(img,'naturalWidth',{value:600});Object.defineProperty(img,'naturalHeight',{value:800});img.getBoundingClientRect=()=>({width:400,height:500})}
-  const cards=dom.window.eval('('+markAdCards.toString()+')()');assert.equal(cards.length,2);assert.equal(dom.window.document.querySelectorAll('article[data-mp-ad-card]').length,2);dom.window.close();
+  const videoCard=dom.window.document.createElement('article');videoCard.innerHTML='<span>Library ID: 345678</span><button>See ad details</button><video></video>';dom.window.document.body.append(videoCard);
+  const video=videoCard.querySelector('video');Object.defineProperties(video,{readyState:{value:2},videoWidth:{value:600},videoHeight:{value:400}});video.getBoundingClientRect=()=>({width:400,height:300});
+  const cards=dom.window.eval('('+markAdCards.toString()+')()');assert.equal(cards.length,3);assert.equal(dom.window.document.querySelectorAll('article[data-mp-ad-card]').length,3);assert.equal(cards.find(x=>x.ad_id==='345678').has_video,true);dom.window.close();
 });
 test('cloud scan endpoint only queues work, rejects cross-site requests and shares durable throttling',async()=>{
   const {default:express}=await import('express');const db=await dbFixture();
@@ -126,5 +173,10 @@ test('cloud scan endpoint only queues work, rejects cross-site requests and shar
     assert.equal((await post({'Content-Type':'application/json'})).status,202);
     assert.equal((await post({'Content-Type':'application/json'})).status,429);
     assert.equal((await db.query('SELECT count(*)::int n FROM ad_cloud_candidates')).rows[0].n,0);
+    const aiUrl=url.replace('/scan','/analyze');
+    assert.equal((await fetch(aiUrl,{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://other.example'},body:'{}'})).status,403);
+    assert.equal((await fetch(aiUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:'https://untrusted.example/'})})).status,400);
+    assert.equal((await fetch(aiUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).status,202);
+    assert.equal((await fetch(aiUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).status,429);
   }finally{await new Promise(r=>server.close(r));await db.close()}
 });
