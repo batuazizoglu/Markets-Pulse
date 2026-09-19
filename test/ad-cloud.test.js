@@ -77,6 +77,19 @@ test('AI also reads historical review cards and does not endlessly retry a compl
     await worker();assert.equal(calls,2);assert.equal((await queueStoredAdReviews(db,HOME_INTERNET_SOURCES)).queued,0);
   }finally{await db.close()}
 });
+test('older missing-quote classifications receive one bounded corrective pass',async()=>{
+  const db=await dbFixture();let calls=0;
+  const analyze=async candidate=>{calls++;const v=vision();v.category='review';v.category_evidence='Kategori için açık ve doğrulanabilir ifade bulunamadı.';return normalizeVision(v,candidate)};
+  const worker=createCloudWorker(db,HOME_INTERNET_SOURCES,{capture,analyze,env:{...env,AD_VISION_DAILY_LIMIT:'10'},log:()=>{}});
+  try{
+    await queueCloudReview(db,HOME_INTERNET_SOURCES,{manual:true});await worker();
+    await db.query("UPDATE ad_cloud_jobs SET status='unverified' WHERE status='queued'");
+    await worker();assert.equal((await getAdVisuals(db)).rows[0].ai_analysis.pass,2);
+    const corrective=await worker();assert.equal(corrective.analysis.category_evidence_missing,true);
+    assert.equal((await getAdVisuals(db)).rows[0].ai_analysis.pass,3);
+    await worker();assert.equal(calls,3);assert.equal((await queueStoredAdReviews(db,HOME_INTERNET_SOURCES)).queued,0);
+  }finally{await db.close()}
+});
 test('capture rate limits preserve Retry-After and pause other sources without blocking stored-image analysis',async()=>{
   assert.equal(captureRetryDelay('1800'),1800000);assert.equal(captureRetryDelay('bad'),900000);
   assert.equal(captureRetryDelay('2026-09-19T08:00:00Z',Date.parse('2026-09-19T07:00:00Z')),3600000);
@@ -141,7 +154,9 @@ test('vision normalizer refuses invented totals, unsupported commitments and cat
   v.offer.bonus_data_gb=25;v.field_evidence.bonus_data_gb='25 GB Özgür Pass';v.offer.commitment_months=12;v.field_evidence.commitment_months='6+6 ay';
   v.offer.billing_period='monthly';v.field_evidence.billing_period='799 TL';
   const a=normalizeVision(v,candidate);assert.equal(a.offer.data_gb,null);assert.equal(a.offer.bonus_data_gb,null);assert.equal(a.offer.commitment_months,null);assert.equal(a.offer.billing_period,'unknown');assert.match(a.uncertainties.join(' '),/yalnız yakalanan karesi/);
-  v.category_evidence='MNP yeni müşteriler';assert.equal(normalizeVision(v,candidate).category,'review');
+  v.category_evidence='MNP yeni müşteriler';assert.equal(normalizeVision(v,{...candidate,ad_text:'Ürün tanıtımı'}).category,'review');
+  const supported=normalizeVision(v,candidate);assert.equal(supported.category,'mnp');assert.ok((v.visible_text+' '+candidate.ad_text).includes(supported.category_evidence));
+  v.category='review';assert.equal(normalizeVision(v,candidate).category,'review');
 });
 test('vision request uses actual image bytes, strict schema, no storage and handles provider refusal',async()=>{
   let body;

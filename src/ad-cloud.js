@@ -67,7 +67,7 @@ export async function queueStoredAdReviews(pool,sources,{manual=false,key=null,n
     const rows=(await db.query(`SELECT a.ad_key,a.analysis_json,c.ad_key candidate_key,c.review_round FROM ad_visual_items a
       LEFT JOIN ad_cloud_candidates c ON c.ad_key=a.ad_key
       WHERE ${key?'a.ad_key=$1':"a.category='review'"}
-      AND (c.ad_key IS NULL OR (c.status IN ('analyzed'${manual?",'error'":''}) AND c.review_round<${manual?'99':'1'}))
+      AND (c.ad_key IS NULL OR (c.status IN ('analyzed'${manual?",'error'":''}) AND ${manual?'c.review_round<99':"(c.review_round<1 OR (c.review_round<2 AND a.analysis_json->>'category_evidence'='Kategori için açık ve doğrulanabilir ifade bulunamadı.'))"}))
       ORDER BY a.observed_at,a.ad_key LIMIT 400`,key?[key]:[])).rows;
     const directory=socialDirectory(sources);let queued=0,missing_evidence=0;
     for(const row of rows){
@@ -148,7 +148,7 @@ export async function analyzeNextCloudCandidate(pool,sources,owner,{env=process.
       await transaction(pool,async db=>{await assertLease(db,owner);await db.query('UPDATE ad_cloud_candidates SET analysis_json=$1::jsonb WHERE ad_key=$2 AND fingerprint=$3',[JSON.stringify(analysis),candidate.ad_key,candidate.fingerprint])});
     }
     await publishCloudAnalysis(pool,sources,candidate,analysis,owner);
-    return {status:'analyzed',brand:candidate.payload.brand,ad_id:candidate.payload.ad_id,category:analysis.category,pass:analysis.ai_analysis?.pass||1};
+    return {status:'analyzed',brand:candidate.payload.brand,ad_id:candidate.payload.ad_id,category:analysis.category,category_evidence_missing:analysis.category_evidence==='Kategori için açık ve doğrulanabilir ifade bulunamadı.',pass:analysis.ai_analysis?.pass||1};
   }catch(e){
     const code=/^(VISION_[A-Z0-9_]+|CLOUD_[A-Z0-9_]+)$/.test(e.message)?e.message:'VISION_VALIDATION_ERROR';
     await pool.query("UPDATE ad_cloud_candidates SET status=CASE WHEN attempts>=3 THEN 'error' ELSE 'retry' END,last_error=$1 WHERE ad_key=$2",[code,candidate.ad_key]);
@@ -213,7 +213,7 @@ export function createCloudWorker(pool,sources,{capture=captureCloudAds,analyze=
       const analysis=await analyzeNextCloudCandidate(pool,sources,owner,{env,analyze});
       const status=await getCloudStatus(pool,{env});
       if(!reportedSources){log('[ad-cloud-source-status]',JSON.stringify(status.sources.map(s=>({brand:s.brand,status:s.status,http_status:Number(s.note?.match(/HTTP (\d{3})/)?.[1])||null}))));reportedSources=true}
-      log('[ad-cloud-worker]',JSON.stringify({mode:'cloud',analysis:analysis.status,code:analysis.code||null,brand:analysis.brand||null,category:analysis.category||null,pass:analysis.pass||null,vision_configured:status.vision_configured,candidates:status.candidates,calls_today:status.calls_today,scheduled_day:localCloudTime().day}));
+      log('[ad-cloud-worker]',JSON.stringify({mode:'cloud',analysis:analysis.status,code:analysis.code||null,brand:analysis.brand||null,category:analysis.category||null,category_evidence_missing:analysis.category_evidence_missing??null,pass:analysis.pass||null,vision_configured:status.vision_configured,candidates:status.candidates,calls_today:status.calls_today,scheduled_day:localCloudTime().day}));
       return {scan,analysis};
     }catch(e){log('[ad-cloud-worker]',JSON.stringify({status:'error',code:/^CLOUD_[A-Z_]+$/.test(e.message)?e.message:'WORKER_ERROR'}));return {status:'error'}}
     finally{try{if(lease)await pool.query('UPDATE ad_cloud_control SET lease_owner=NULL,lease_until=NULL,heartbeat_at=NOW() WHERE id=1 AND lease_owner=$1',[owner])}finally{running=false}}
