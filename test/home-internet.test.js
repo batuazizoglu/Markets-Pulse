@@ -82,7 +82,9 @@ test('Meta search shortcuts never imply connected automation or zero ads',()=>{
   const rows=socialDirectory(HOME_INTERNET_SOURCES);
   const telsim=rows.find(x=>x.brand==='Telsim');
   assert.match(telsim.ad_library_url,/164143610515/);assert.equal(telsim.automatic_status,'connection_required');
-  assert.equal(rows.find(x=>x.brand==='Kıbrıs Online').ad_library_type,'brand_search');
+  const unresolved=rows.find(x=>!x.page_id);assert.ok(unresolved);
+  assert.equal(unresolved.ad_library_type,'brand_search');
+  assert.equal(new URL(unresolved.ad_library_url).searchParams.get('q'),unresolved.brand);
   assert.ok(rows.every(x=>x.ad_count===undefined));
 });
 
