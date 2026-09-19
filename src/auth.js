@@ -157,6 +157,8 @@ export function registerAuth(app,pool,publicDir){
     res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('X-Frame-Options','DENY');
     res.setHeader('Referrer-Policy','strict-origin-when-cross-origin');res.setHeader('Permissions-Policy','camera=(), microphone=(), geolocation=()');next();
   });
+  // Share previews can read this public artwork without access to application data.
+  app.get('/brand/markets-pulse-social-v1.png',(req,res)=>res.sendFile(publicDir+'/brand/markets-pulse-social-v1.png',{maxAge:'1y',immutable:true}));
   app.get(['/login','/login.html'],(req,res)=>res.sendFile(publicDir+'/login.html'));
   app.get(['/change-password','/change-password.html'],async(req,res)=>{if(!await getUser(pool,req))return res.redirect('/login');res.sendFile(publicDir+'/change-password.html')});
 

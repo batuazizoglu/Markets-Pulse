@@ -1,0 +1,50 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { once } from 'node:events';
+import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import express from 'express';
+import { load } from 'cheerio';
+import { registerAuth } from '../src/auth.js';
+
+test('anonymous share previews expose the approved cover while application data stays protected',async t=>{
+  const publicDir=fileURLToPath(new URL('../public/',import.meta.url));
+  const app=express();
+  registerAuth(app,{query(){throw new Error('Anonymous share previews must not access the database')}},publicDir);
+  app.get('/api/packages',(req,res)=>res.json({private:true}));
+  app.use(express.static(publicDir));
+  const server=app.listen(0,'127.0.0.1');
+  t.after(()=>new Promise(resolve=>server.close(resolve)));
+  await once(server,'listening');
+  const origin='http://127.0.0.1:'+server.address().port;
+  const page=await fetch(origin+'/',{headers:{'user-agent':'facebookexternalhit/1.1'}});
+  assert.equal(page.status,200);
+  assert.equal(new URL(page.url).pathname,'/login');
+  const $=load(await page.text());
+  assert.equal($('meta[property="og:title"]').attr('content'),'Markets Pulse | Pazar ve Rekabet Analizi');
+  assert.equal($('meta[name="twitter:card"]').attr('content'),'summary_large_image');
+  const coverUrl=$('meta[property="og:image"]').attr('content');
+  assert.equal(coverUrl,'https://www.marketspulse.cloud/brand/markets-pulse-social-v1.png');
+  assert.equal($('meta[name="twitter:image"]').attr('content'),coverUrl);
+  const index=load(await readFile(publicDir+'index.html','utf8'));
+  assert.equal(index('meta[property="og:image"]').attr('content'),coverUrl);
+  const image=await fetch(origin+new URL(coverUrl).pathname);
+  assert.equal(image.status,200);
+  assert.match(image.headers.get('content-type'),/^image\/png/);
+  assert.match(image.headers.get('cache-control'),/immutable/);
+  const bytes=Buffer.from(await image.arrayBuffer());
+  assert.deepEqual(bytes,await readFile(publicDir+'brand/markets-pulse-social-v1.png'));
+  assert.equal(bytes.readUInt32BE(16),Number($('meta[property="og:image:width"]').attr('content')));
+  assert.equal(bytes.readUInt32BE(20),Number($('meta[property="og:image:height"]').attr('content')));
+  const head=await fetch(origin+new URL(coverUrl).pathname,{method:'HEAD'});
+  assert.equal(head.status,200);
+  assert.equal(Number(head.headers.get('content-length')),bytes.length);
+  const privateApi=await fetch(origin+'/api/packages');
+  assert.equal(privateApi.status,401);
+  assert.equal((await privateApi.json()).code,'AUTH_REQUIRED');
+  for(const pathname of ['/index.html','/brand/market-pulse-logo-dark.svg']){
+    const response=await fetch(origin+pathname,{redirect:'manual'});
+    assert.equal(response.status,302);
+    assert.equal(response.headers.get('location'),'/login');
+  }
+});
