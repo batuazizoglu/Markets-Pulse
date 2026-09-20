@@ -2,19 +2,21 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import {captureTransportConfig,captureTransportStatus,allowedAdRequest,openCaptureProxy} from '../src/ad-capture-proxy.js';
-import {captureCloudAds,markAdCards} from '../src/ad-cloud-capture.js';
+import {captureCloudAds,markAdCards,captureRetryDelay} from '../src/ad-cloud-capture.js';
 
 // These fixtures never connect to Meta: the local upstream itself terminates
 // CONNECT and echoes the synthetic tunnel payload.
-async function upstreamFixture({status=200}={}){
+async function upstreamFixture({status=200,retryAfter,plans}={}){
   const requests=[],payloads=[],sockets=new Set();
   const server=http.createServer((req,res)=>res.writeHead(405).end());
   server.on('connection',socket=>{sockets.add(socket);socket.on('close',()=>sockets.delete(socket));socket.on('error',()=>{})});
   server.on('connect',(req,socket,head)=>{
     requests.push({target:req.url,headers:req.headers});
-    if(status!==200){
+    const plan=plans?.[requests.length-1]||{status,retryAfter};
+    if(plan.status!==200){
       const body='synthetic-upstream-private-error';
-      socket.end(`HTTP/1.1 ${status} Denied\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`);
+      const respond=()=>socket.end(`HTTP/1.1 ${plan.status} Denied\r\n${plan.retryAfter?'Retry-After: '+plan.retryAfter+'\r\n':''}Content-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`);
+      if(plan.delay)setTimeout(respond,plan.delay);else respond();
       return;
     }
     socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
@@ -71,7 +73,7 @@ test('capture transport defaults and invalid proxy configuration fail closed wit
     const env={AD_CAPTURE_TRANSPORT:'proxy',...values};
     const config=captureTransportConfig(env),status=captureTransportStatus(env);
     assert.equal(config.mode,'proxy');assert.equal(config.configured,false);assert.equal(config.code,'PROXY_CONFIG_INVALID');
-    assert.deepEqual(Object.keys(status).sort(),['code','configured','message','mode']);
+    assert.deepEqual(Object.keys(status).sort(),['code','configured','message','mode','proxy_count']);
     assert.equal(status.configured,false);assert.equal(status.code,'PROXY_CONFIG_INVALID');
     assert.doesNotMatch(JSON.stringify(status),/inline-user|inline-password|synthetic-private|proxy\.example|socks5/);
     await assert.rejects(openCaptureProxy(config),error=>error.message==='PROXY_CONFIG_INVALID');
@@ -79,7 +81,7 @@ test('capture transport defaults and invalid proxy configuration fail closed wit
   const privateEnv={AD_CAPTURE_TRANSPORT:'proxy',AD_CAPTURE_PROXY_URL:'http://private-user:private-password@proxy.example.test:8080'};
   const publicStatus=captureTransportStatus(privateEnv);
   assert.equal(publicStatus.configured,true);
-  assert.deepEqual(Object.keys(publicStatus).sort(),['code','configured','message','mode']);
+  assert.deepEqual(Object.keys(publicStatus).sort(),['code','configured','message','mode','proxy_count']);
   assert.doesNotMatch(JSON.stringify(publicStatus),/private-user|private-password|proxy\.example|8080/);
 });
 
@@ -152,7 +154,7 @@ for(const [status,code] of [[403,'PROXY_ACCESS_DENIED'],[407,'PROXY_AUTH_FAILED'
 
 const syntheticSource={brand:'Synthetic test',page_id:'164143610515'};
 const syntheticProxyEnv={AD_CAPTURE_TRANSPORT:'proxy',AD_CAPTURE_PROXY_URL:'http://synthetic-user:synthetic-password@proxy.example.test:8080'};
-function captureFixture({status=403,url='https://www.facebook.com/ads/library/',gotoError=null,failure=null}={}){
+function captureFixture({status=403,url='https://www.facebook.com/ads/library/',gotoError=null,failure=null,details=null}={}){
   const calls={launches:[],proxyOpens:0,browserCloses:0,proxyCloses:0,evaluates:0,gotos:[],interception:null,handlers:{}};
   const page={
     async setViewport(){},async setRequestInterception(value){calls.interception=value},
@@ -164,7 +166,7 @@ function captureFixture({status=403,url='https://www.facebook.com/ads/library/',
   };
   return {calls,page,options:{env:syntheticProxyEnv,
     async launch(options){calls.launches.push(options);return {async newPage(){return page},async close(){calls.browserCloses++}}},
-    async openProxy(config){calls.proxyOpens++;assert.equal(config.mode,'proxy');return {server:'http://127.0.0.1:43210',async close(){calls.proxyCloses++},getFailure:()=>failure}}
+    async openProxy(config){calls.proxyOpens++;calls.selected=config;assert.equal(config.mode,'proxy');return {server:'http://127.0.0.1:43210',async close(){calls.proxyCloses++},getFailure:()=>failure,getFailureDetails:()=>details}}
   }};
 }
 
@@ -226,4 +228,146 @@ test('an access restriction appearing after a scroll ends capture without anothe
   assert.equal(cardsChecked,1);assert.equal(bodyReads,2);assert.equal(captures,0);
   assert.equal(fixture.calls.launches.length,1);assert.equal(fixture.calls.gotos.length,1);
   assert.equal(fixture.calls.browserCloses,1);assert.equal(fixture.calls.proxyCloses,1);
+});
+
+test('proxy pool validates the complete list, canonical endpoints and private health keys',()=>{
+  const entries=[{id:'one',url:'http://private-user:private-password@PROXY.example.test:80'},{id:'two',url:'https://second.example.test:8443',username:'second-user',password:'second-password'}];
+  const env={AD_CAPTURE_PROXIES:JSON.stringify(entries)},config=captureTransportConfig(env);
+  assert.equal(config.configured,true);assert.equal(config.mode,'proxy');assert.equal(config.proxies.length,2);
+  assert.equal(config.proxies[0].upstreamUrl,'http://private-user:private-password@proxy.example.test/');
+  assert.equal(config.upstreamUrl,config.proxies[0].upstreamUrl);
+  for(const proxy of config.proxies)assert.match(proxy.key,/^[a-f0-9]{64}$/);
+  const same=captureTransportConfig({AD_CAPTURE_PROXIES:JSON.stringify([{id:'renamed',url:'http://private-user:private-password@proxy.example.test/'}])});
+  assert.equal(same.proxies[0].key,config.proxies[0].key,'health identity is stable across public label edits');
+  const rotated=captureTransportConfig({AD_CAPTURE_PROXIES:JSON.stringify([{...entries[0],url:'http://private-user:new-password@proxy.example.test/'}])});
+  assert.notEqual(rotated.proxies[0].key,config.proxies[0].key,'updated credentials have a distinct health identity');
+  const safe=captureTransportStatus(env);
+  assert.equal(safe.proxy_count,2);
+  assert.doesNotMatch(JSON.stringify(safe),/private-user|private-password|second-user|second-password|example\.test|upstreamUrl|"key"/);
+  for(const pool of [[],{},null,Array(6).fill(entries[0]),[entries[0],{...entries[1],id:'one'}],[{...entries[0],id:'private user'}],[{...entries[0],id:'x'.repeat(33)}],[{...entries[0],password:42}],[{...entries[0],unused:true}],[entries[0],{id:'duplicate',url:'http://other:credentials@proxy.example.test/'}],[entries[0],{id:'bad',url:'socks5://proxy.example.test:8080'}]]){
+    const invalid=captureTransportConfig({AD_CAPTURE_PROXIES:JSON.stringify(pool)});
+    assert.equal(invalid.configured,false);assert.equal(invalid.code,'PROXY_CONFIG_INVALID');assert.equal(invalid.proxies,undefined);
+  }
+  for(const extra of [{AD_CAPTURE_PROXY_URL:entries[0].url},{AD_CAPTURE_PROXY_USERNAME:'unused'},{AD_CAPTURE_PROXY_PASSWORD:'unused'}])assert.equal(captureTransportConfig({...env,...extra}).code,'PROXY_CONFIG_INVALID');
+  assert.equal(captureTransportConfig({AD_CAPTURE_PROXIES:'secret malformed JSON'}).code,'PROXY_CONFIG_INVALID');
+  assert.equal(captureTransportConfig({...env,AD_CAPTURE_TRANSPORT:'direct'}).mode,'direct');
+});
+
+for(const [status,reason,transportOnly] of [[401,'PROXY_ACCESS_DENIED',false],[429,'PROXY_RATE_LIMITED',false],[451,'PROXY_ACCESS_DENIED',false],[500,'PROXY_FAILED',false],[502,'PROXY_CONNECTION_FAILED',true],[503,'PROXY_CONNECTION_FAILED',true],[504,'PROXY_CONNECTION_FAILED',true]]){
+  test(`upstream CONNECT ${status} has precise transport eligibility and closes further requests`,async()=>{
+    const upstream=await upstreamFixture({status,retryAfter:'172800'});let bridge,connection;
+    try{
+      bridge=await openCaptureProxy(captureTransportConfig({AD_CAPTURE_PROXY_URL:upstream.url}));
+      connection=await connectThrough(bridge.server,'www.facebook.com:443');
+      assert.notEqual(connection.status,200);assert.equal(bridge.getFailure(),reason);
+      assert.equal(bridge.getFailureDetails().transport_only,transportOnly);
+      if(status===429)assert.equal(bridge.getFailureDetails().retry_after_ms,172800000,'48-hour provider limit must not be shortened to24hours');
+      connection.socket.destroy();connection=await connectThrough(bridge.server,'cdn.fbcdn.net:443');
+      assert.notEqual(connection.status,200);assert.equal(upstream.requests.length,1);
+    }finally{connection?.socket.destroy();await bridge?.close();await upstream.close()}
+  });
+}
+
+test('actual upstream connection refusal is eligible for failover without guessing from browser text',async()=>{
+  const upstream=await upstreamFixture(),url=upstream.url;await upstream.close();
+  const bridge=await openCaptureProxy(captureTransportConfig({AD_CAPTURE_PROXY_URL:url}));let connection;
+  try{
+    connection=await connectThrough(bridge.server,'www.facebook.com:443');
+    assert.notEqual(connection.status,200);
+    assert.deepEqual(bridge.getFailureDetails(),{reason:'PROXY_CONNECTION_FAILED',transport_only:true});
+  }finally{connection?.socket.destroy();await bridge.close()}
+});
+
+for(const statuses of [[403,502],[502,403],[429,503],[500,429]]){
+  test(`concurrent CONNECT ${statuses.join(' then ')} keeps the terminal restriction latched`,async()=>{
+    const upstream=await upstreamFixture({plans:statuses.map((status,i)=>({status,delay:40+i*40,retryAfter:'7200'}))});let bridge,connections=[];
+    try{
+      bridge=await openCaptureProxy(captureTransportConfig({AD_CAPTURE_PROXY_URL:upstream.url}));
+      connections=await Promise.all([connectThrough(bridge.server,'www.facebook.com:443'),connectThrough(bridge.server,'cdn.fbcdn.net:443')]);
+      assert.equal(upstream.requests.length,2);
+      assert.equal(bridge.getFailure(),statuses.includes(403)?'PROXY_ACCESS_DENIED':'PROXY_RATE_LIMITED');
+      assert.equal(bridge.getFailureDetails().transport_only,false);
+      if(statuses.includes(429))assert.equal(bridge.getFailureDetails().retry_after_ms,7200000);
+    }finally{for(const connection of connections)connection.socket.destroy();await bridge?.close();await upstream.close()}
+  });
+}
+
+test('capture uses the explicitly selected pool member exactly once',async()=>{
+  const fixture=captureFixture(),selected={mode:'proxy',configured:true,code:null,id:'second',upstreamUrl:'https://other-user:other-password@other.example.test:8443/',key:'synthetic-key'};
+  const result=await captureCloudAds(syntheticSource,async()=>{}, {...fixture.options,proxyConfig:selected});
+  assert.equal(result.reason,'HTTP_403');assert.equal(fixture.calls.selected,selected);assert.equal(fixture.calls.proxyOpens,1);
+  assert.doesNotMatch(JSON.stringify(fixture.calls.launches),/other-user|other-password|other\.example|synthetic-key/);
+});
+
+test('only a proved connection failure before navigation can allow pool failover',async()=>{
+  for(const details of [null,{reason:'PROXY_CONNECTION_FAILED',transport_only:true},{reason:'PROXY_CONNECTION_FAILED',transport_only:false},{reason:'PROXY_AUTH_FAILED',transport_only:false},{reason:'PROXY_RATE_LIMITED',transport_only:false,retry_after_ms:7200000}]){
+    const fixture=captureFixture({gotoError:new Error('net::ERR_TUNNEL_CONNECTION_FAILED private details'),details});
+    const result=await captureCloudAds(syntheticSource,async()=>{},fixture.options);
+    assert.equal(result.transport_only,details?.transport_only===true);
+    assert.equal(result.reason,details?.reason||'PROXY_FAILED');
+    assert.equal(result.status,details?.reason==='PROXY_RATE_LIMITED'?'rate_limited':'blocked');
+    if(details?.reason==='PROXY_RATE_LIMITED')assert.equal(result.retry_after_ms,7200000);
+    assert.doesNotMatch(JSON.stringify(result),/private details|ERR_TUNNEL/);assert.equal(fixture.calls.proxyOpens,1);
+  }
+});
+
+test('source access responses and redirects outrank concurrent asset connection failures',async()=>{
+  const details={reason:'PROXY_CONNECTION_FAILED',transport_only:true};
+  for(const status of [401,403,407,429,451]){
+    const fixture=captureFixture({status,details}),result=await captureCloudAds(syntheticSource,async()=>{},fixture.options);
+    assert.equal(result.reason,'HTTP_'+status);assert.equal(result.transport_only,false);assert.equal(fixture.calls.evaluates,0);
+  }
+  const login=captureFixture({status:200,url:'https://www.facebook.com/login/',details});
+  assert.equal((await captureCloudAds(syntheticSource,async()=>{},login.options)).reason,'ACCESS_RESTRICTED');
+  for(const body of ['Access denied','No matching DOM structure here']){
+    const fixture=captureFixture({status:200,details});
+    fixture.page.evaluate=async fn=>String(fn).includes('document.body.innerText')?body:undefined;
+    const result=await captureCloudAds(syntheticSource,async()=>{},fixture.options);
+    assert.equal(result.reason,body==='Access denied'?'ACCESS_RESTRICTED':'CARDS_NOT_FOUND');assert.notEqual(result.transport_only,true);
+  }
+});
+
+test('an observed origin denial wins even when main navigation subsequently throws',async()=>{
+  const fixture=captureFixture({details:{reason:'PROXY_CONNECTION_FAILED',transport_only:true}});
+  fixture.page.goto=async()=>{
+    fixture.calls.handlers.response({url:()=> 'https://cdn.fbcdn.net/image.jpg',status:()=>403,headers:()=>({})});
+    throw new Error('net::ERR_TUNNEL_CONNECTION_FAILED');
+  };
+  const result=await captureCloudAds(syntheticSource,async()=>{},fixture.options);
+  assert.equal(result.reason,'HTTP_403');assert.equal(result.transport_only,false);
+});
+
+test('a successful main response before navigation timeout prevents asset outage failover',async()=>{
+  const fixture=captureFixture({details:{reason:'PROXY_CONNECTION_FAILED',transport_only:true}}),mainFrame={};
+  fixture.page.mainFrame=()=>mainFrame;
+  fixture.page.goto=async()=>{
+    fixture.calls.handlers.response({url:()=> 'https://www.facebook.com/ads/library/',status:()=>200,request:()=>({isNavigationRequest:()=>true,frame:()=>mainFrame}),headers:()=>({})});
+    throw new Error('Navigation timeout with unrelated asset outage');
+  };
+  const result=await captureCloudAds(syntheticSource,async()=>{},fixture.options);
+  assert.equal(result.reason,'PROXY_CONNECTION_FAILED');assert.equal(result.transport_only,false);
+});
+
+test('capture deadline returns while proxy setup is pending and disposes a late bridge',async()=>{
+  let resolveProxy,closed=0,launched=0;
+  const pending=new Promise(resolve=>{resolveProxy=resolve});
+  const result=await captureCloudAds(syntheticSource,async()=>{}, {env:syntheticProxyEnv,timeoutMs:10,openProxy:()=>pending,launch:async()=>{launched++;throw new Error('must not launch')}});
+  assert.equal(result.status,'error');assert.notEqual(result.transport_only,true);assert.equal(launched,0);
+  resolveProxy({async close(){closed++}});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(closed,1);assert.equal(launched,0);
+});
+
+test('a browser navigation timeout is not a proxy outage even without a main response',async()=>{
+  const fixture=captureFixture({gotoError:Object.assign(new Error('Navigation timeout'),{name:'TimeoutError'}),details:{reason:'PROXY_CONNECTION_FAILED',transport_only:true}});
+  const result=await captureCloudAds(syntheticSource,async()=>{},fixture.options);
+  assert.equal(result.transport_only,false);assert.equal(fixture.calls.proxyOpens,1);
+});
+
+test('source Retry-After preserves48-hour delays and safely bounds unrepresentable dates',()=>{
+  const now=Date.parse('2026-09-20T00:00:00.000Z');
+  assert.equal(captureRetryDelay('172800',now),172800000);
+  assert.equal(captureRetryDelay('Tue, 22 Sep 2026 00:00:00 GMT',now),172800000);
+  assert.equal(captureRetryDelay('not-a-date',now),900000);
+  assert.equal(captureRetryDelay('1e300',now),8640000000000000-now);
 });

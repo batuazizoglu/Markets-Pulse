@@ -289,6 +289,16 @@ CREATE TABLE IF NOT EXISTS ad_cloud_jobs (
   UNIQUE(batch_key,brand)
 );
 CREATE INDEX IF NOT EXISTS idx_ad_cloud_jobs_queue ON ad_cloud_jobs(status,available_at);
+ALTER TABLE ad_cloud_jobs ADD COLUMN IF NOT EXISTS proxy_key TEXT;
+ALTER TABLE ad_cloud_jobs ADD COLUMN IF NOT EXISTS proxy_attempts INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE IF NOT EXISTS ad_cloud_proxy_health (
+  proxy_key TEXT PRIMARY KEY,
+  consecutive_failures INTEGER NOT NULL DEFAULT 0,
+  cooldown_until TIMESTAMPTZ,
+  last_success_at TIMESTAMPTZ,
+  last_failure_at TIMESTAMPTZ,
+  last_code TEXT
+);
 CREATE TABLE IF NOT EXISTS ad_cloud_candidates (
   ad_key TEXT PRIMARY KEY,
   job_id BIGINT NOT NULL REFERENCES ad_cloud_jobs(id),
