@@ -1,3 +1,4 @@
+import {PROVIDER_SCHEMA_SQL} from './ad-provider-schema.js';
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS sources (
   id BIGSERIAL PRIMARY KEY,
@@ -250,6 +251,8 @@ CREATE TABLE IF NOT EXISTS ad_visual_versions (
   event_type TEXT NOT NULL CHECK(event_type IN ('first_seen','changed')),
   analysis_json JSONB NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_ad_visual_items_page ON ad_visual_items(observed_at DESC,ad_key);
+CREATE INDEX IF NOT EXISTS idx_ad_visual_items_filter_page ON ad_visual_items(brand,category,observed_at DESC,ad_key);
 CREATE INDEX IF NOT EXISTS idx_ad_visual_versions_time ON ad_visual_versions(observed_at DESC);
 CREATE TABLE IF NOT EXISTS ad_visual_sync (
   id INTEGER PRIMARY KEY CHECK(id=1),
@@ -313,10 +316,18 @@ CREATE TABLE IF NOT EXISTS ad_cloud_candidates (
   analyzed_at TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_ad_cloud_candidates_queue ON ad_cloud_candidates(status,available_at);
+CREATE INDEX IF NOT EXISTS idx_ad_cloud_pending_archive ON ad_cloud_candidates(observed_at DESC,ad_key) WHERE status IN ('pending','retry','error');
+CREATE TABLE IF NOT EXISTS ad_cloud_capture_links (
+  job_id BIGINT NOT NULL REFERENCES ad_cloud_jobs(id),
+  ad_key TEXT NOT NULL,
+  PRIMARY KEY(job_id,ad_key)
+);
+INSERT INTO ad_cloud_capture_links(job_id,ad_key) SELECT job_id,ad_key FROM ad_cloud_candidates ON CONFLICT DO NOTHING;
 ALTER TABLE ad_cloud_candidates ADD COLUMN IF NOT EXISTS review_round INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE ad_cloud_control ADD COLUMN IF NOT EXISTS analysis_manual_after TIMESTAMPTZ;
 ALTER TABLE ad_cloud_control ADD COLUMN IF NOT EXISTS capture_after TIMESTAMPTZ;
 ALTER TABLE ad_visual_versions DROP CONSTRAINT IF EXISTS ad_visual_versions_event_type_check;
 ALTER TABLE ad_visual_versions ADD CONSTRAINT ad_visual_versions_event_type_check CHECK(event_type IN ('first_seen','changed','analysis_updated'));
 
+${PROVIDER_SCHEMA_SQL}
 `;

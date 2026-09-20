@@ -441,6 +441,10 @@ body.branded-app :is(.mp-score,.hi-score,.bm-pos,.status){filter:none!important}
 .av-links{display:flex;gap:12px;flex-wrap:wrap;align-items:center;font-size:12px}
 .av-history>div{border-top:1px solid var(--line);padding-top:12px;margin-top:12px}
 .av-coverage{border:1px solid var(--line);border-radius:12px;padding:18px;margin-top:18px;font-size:12px}
+.av-pending{border:1px solid var(--line);border-radius:12px;padding:18px;margin-top:18px;font-size:12px}
+.av-pending>summary{cursor:pointer;font-weight:700}
+.av-pending-item{min-width:0}.av-pending-item .av-image{display:block}
+.av-pagination{margin:16px 0}
 .av-source{padding:14px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}.av-source span{display:block;color:var(--muted);margin-top:6px}.av-source:last-child{border:0}
 .av-source-focus:not(:empty){border:1px solid var(--line);border-radius:12px;padding:0 18px;margin-bottom:18px;font-size:13px;line-height:1.7;background:var(--surface)}
 .av-source a{display:inline-block;margin-top:10px}.av-unverified{margin-top:14px}.av-unverified>summary{padding:10px 0;color:var(--muted)}
