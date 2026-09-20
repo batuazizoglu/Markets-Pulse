@@ -38,6 +38,35 @@ export async function queueNewCloudSources(pool,sources,owner){
     return added;
   });
 }
+export async function queueProviderHandoff(pool,sources,owner,{env=process.env}={}){
+  if(providerConfig(env).mode!=='apify')return {recovered:0,queued:0,brands:[]};
+  const verified=socialDirectory(sources).filter(source=>adLibrarySource(source));
+  return transaction(pool,async db=>{
+    await assertLease(db,owner);
+    // The acquired worker lease proves these unowned browser captures were interrupted.
+    // Provider creation fences, accepted runs, captured evidence and spend reservations stay intact.
+    const recovered=await db.query(`UPDATE ad_cloud_jobs SET status=CASE WHEN attempts>=3 THEN 'error' ELSE 'retry' END,
+      available_at=GREATEST(available_at,NOW()),note='Yarım kalan tarayıcı taraması sağlayıcıya geçiş için toparlandı; kaydedilmiş kanıtlar korundu.'
+      WHERE status='running' AND source_json->>'page_id'=ANY($1::text[])
+      AND NOT EXISTS(SELECT 1 FROM ad_provider_runs p WHERE p.job_id=ad_cloud_jobs.id) RETURNING id`,[verified.map(source=>source.page_id)]);
+    const brands=[];
+    for(const source of verified){
+      // Any provider history includes ambiguous starts and must prevent a second bootstrap run.
+      const history=await db.query(`SELECT p.job_id FROM ad_provider_runs p JOIN ad_cloud_jobs j ON j.id=p.job_id
+        WHERE j.source_json->>'page_id'=$1 LIMIT 1`,[source.page_id]);
+      if(history.rows.length)continue;
+      // A future retry remains the source's existing queue entry; never shorten its wait.
+      const queued=await db.query(`SELECT id FROM ad_cloud_jobs WHERE source_json->>'page_id'=$1
+        AND status IN ('queued','retry') AND attempts<3 LIMIT 1`,[source.page_id]);
+      if(queued.rows.length)continue;
+      const result=await db.query(`INSERT INTO ad_cloud_jobs(batch_key,brand,source_json,note)
+        VALUES($1,$2,$3::jsonb,'Doğrulanmış reklam sayfası ilk sağlayıcı aktarımı için kuyruğa alındı.')
+        ON CONFLICT(batch_key,brand) DO NOTHING RETURNING id`,['provider-source-'+source.page_id,source.brand,JSON.stringify(source)]);
+      if(result.rows.length)brands.push(source.brand);
+    }
+    return {recovered:recovered.rows.length,queued:brands.length,brands};
+  });
+}
 export async function queueCloudReview(pool,sources,{manual=false,now=new Date(),env=process.env}={}){
   const local=localCloudTime(now);
   if(!manual&&local.hour<6)return {queued:0};
@@ -195,12 +224,16 @@ export function createCloudWorker(pool,sources,{capture=captureCloudAds,analyze=
     try{
       const lock=await pool.query("UPDATE ad_cloud_control SET lease_owner=$1,lease_until=NOW()+INTERVAL '10 minutes',heartbeat_at=NOW() WHERE id=1 AND (lease_until IS NULL OR lease_until<NOW()) RETURNING id",[owner]);
       if(!lock.rows.length)return {status:'busy'};lease=true;
+      const provider=providerConfig(env);
+      if(provider.mode==='apify'){
+        const handoff=await queueProviderHandoff(pool,sources,owner,{env});
+        if(handoff.recovered||handoff.queued)log('[ad-provider-handoff]',JSON.stringify(handoff));
+      }
       const added=await queueNewCloudSources(pool,sources,owner);
       if(added.length)log('[ad-cloud-sources]',JSON.stringify({registered:added.length,brands:added}));
       await queueCloudReview(pool,sources,{env});
       const reviews=await queueStoredAdReviews(pool,sources);
       if(reviews.queued)log('[ad-cloud-review]',JSON.stringify(reviews));
-      const provider=providerConfig(env);
       await pool.query("UPDATE ad_cloud_candidates SET status='error',last_error=COALESCE(last_error,'VISION_RETRY_EXHAUSTED') WHERE status='retry' AND attempts>=3 AND available_at<=NOW()");
       const transport=provider.mode==='apify'||provider.code?providerStatus(env):captureTransportStatus(env);
       let scan=transport.configured?null:{status:'waiting_config',reason:transport.code};
