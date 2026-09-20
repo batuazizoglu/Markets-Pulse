@@ -58,7 +58,14 @@ function render(){
     const cloud=state.data.cloud;
     if(cloud){
       root.querySelector('.av-status').innerHTML+='<span><b>'+esc(cloud.vision_configured?'Görsel analiz bağlantısı tanımlı':'Görsel analiz bağlantısı bekleniyor')+'</b> • '+esc(cloud.worker_online?'Sunucu görevi çalışıyor':'Sunucu görevi kontrol edilmeli')+'</span><span>'+esc(cloud.message)+'</span>';
-      if(cloud.capture_transport)root.querySelector('.av-status').innerHTML+='<span><b>'+esc(cloud.capture_transport.mode==='proxy'?'Birincil tarama: Proxy':'Birincil tarama: Doğrudan bağlantı')+'</b> • '+esc(cloud.capture_transport.message)+'</span>';
+      if(cloud.capture_transport){
+        const transport=cloud.capture_transport;
+        root.querySelector('.av-status').innerHTML+='<span><b>'+esc(transport.mode==='proxy'?'Birincil tarama: Proxy':'Birincil tarama: Doğrudan bağlantı')+'</b> • '+esc(transport.message)+'</span>';
+        if(transport.mode==='proxy'&&transport.proxy_count){
+          const labels={unverified:'Henüz doğrulanmadı',ready:'Son bağlantı başarılı',cooldown:'Geçici olarak bekliyor'};
+          root.querySelector('.av-status').innerHTML+='<span>'+Number(transport.proxy_count)+' bağlantı • '+Number(transport.available_count||0)+' bağlantı denemeye uygun</span>'+(transport.proxies||[]).map(p=>'<span><b>'+esc(p.id)+'</b>: '+esc(labels[p.state]||'Kontrol bekleniyor')+(p.retry_at?' • Sonraki deneme: '+stamp(p.retry_at):'')+'</span>').join('');
+        }
+      }
       const cs={queued:'Kuyrukta',running:'Taranıyor',retry:'Yeniden denenecek',partial:'Görseller kaydedildi',unverified:'Sayfa kimliği doğrulanmadı',blocked:'Erişim engeli',error:'Tarama tamamlanamadı',no_ads:'Bu filtrede reklam yok'};
       const c=cloud.candidates||{};
       root.querySelector('.av-cloud div').innerHTML='<p>AI incelemesi bekleyen: '+Number((c.pending||0)+(c.retry||0))+' • Analizi tamamlanan: '+Number(c.analyzed||0)+' • Hatalı: '+Number(c.error||0)+'</p><p>Sunucu kontrolü: '+stamp(cloud.worker_heartbeat)+'</p>'+ (cloud.sources||[]).map(s=>'<div class="av-source"><b>'+esc(s.brand)+'</b><span>'+esc(cs[s.status]||s.status)+' • '+Number(s.captured||0)+' kayıt</span><p>'+esc(s.note||'Henüz tamamlanmadı.')+'</p>'+(s.status==='retry'?'<p>Yeniden deneme: '+stamp(s.available_at)+'</p>':'')+'</div>').join('');
