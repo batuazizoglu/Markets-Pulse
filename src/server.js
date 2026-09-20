@@ -27,7 +27,7 @@ app.use(express.json({limit:'1mb'}));
 
 registerAuth(app,pool,path.join(__dirname,'..','public'));
 registerSocialWatchRoutes(app,pool,HOME_INTERNET_SOURCES);
-registerAdVisualRoutes(app,pool,HOME_INTERNET_SOURCES,{cloudStatus:()=>getCloudStatus(pool)});
+registerAdVisualRoutes(app,pool,HOME_INTERNET_SOURCES,{cloudStatus:()=>getCloudStatus(pool,{sources:HOME_INTERNET_SOURCES})});
 registerCloudRoutes(app,pool,HOME_INTERNET_SOURCES);
 
 const localMidnightSql = `(date_trunc('day', NOW() AT TIME ZONE 'Asia/Famagusta') AT TIME ZONE 'Asia/Famagusta')`;

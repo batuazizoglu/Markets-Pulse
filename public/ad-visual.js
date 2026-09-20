@@ -39,7 +39,11 @@ function sourceCard(source){
     (pending?'<p>AI sonucu yayınlanmamış görsel: '+pending+'</p>':source.captured>0&&!(source.archive_count??source.rows.length)?'<p>Görseller kaydedildi; analiz sonucu henüz yayınlanmadı.</p>':'')+
     '<span>'+(source.provider?'Sağlayıcı son durumu: ':'Son tamamlanan tarama: ')+stamp(source.checked_at)+'</span>'+
     (source.status==='retry'?'<span>Sonraki deneme: '+stamp(source.available_at)+'</span>':'')+
-    (url!=='#'?'<a href="'+esc(url)+'" target="_blank" rel="noopener noreferrer">Ad Library kaynağını aç ↗</a>':'')+'</div>';
+    (source.research_note?'<p>'+esc(source.research_note)+'</p>':'')+
+    (source.research_checked_at?'<span>Hesap araştırması: '+esc(source.research_checked_at)+'</span>':'')+
+    '<div class="av-links">'+(url!=='#'?'<a href="'+esc(url)+'" target="_blank" rel="noopener noreferrer">Ad Library kaynağını aç ↗</a>':'')+
+    [['facebook','Facebook sayfası'],['instagram','Instagram hesabı']].filter(([key])=>safeLink(source[key])!=='#').map(([key,label])=>'<a href="'+esc(safeLink(source[key]))+'" target="_blank" rel="noopener noreferrer">'+label+' ↗</a>').join('')+
+    (source.additional_social_links||[]).filter(link=>safeLink(link.url)!=='#').map(link=>'<a href="'+esc(safeLink(link.url))+'" target="_blank" rel="noopener noreferrer">Diğer '+esc(link.platform==='instagram'?'Instagram':'Facebook')+' hesabı ↗</a>').join('')+'</div></div>';
 }
 function offerText(o={}){
   return [o.price_try==null?'Fiyat okunamadı':money(o.price_try)+(o.billing_period==='monthly'?' / ay':o.billing_period==='unknown'?' • Dönem doğrulanmadı':''),
@@ -96,10 +100,12 @@ function render(){
     root.querySelector('.av-review-info').innerHTML=category==='review'?'<p>Bu reklamlar da AI tarafından incelenir. Cihaz, marka ve hizmet duyuruları veya kategorisi kesinleşmeyen reklamlar burada gösterilir. Analiz durumu her kartta ayrıca belirtilir.</p><button class="btn" data-av-analyze>Tüm diğer / belirsiz kayıtları AI ile yeniden incele</button>':'';
     const brand=root.querySelector('[data-av-brand]');
     if(brand){brand.innerHTML='<option value="all">Tüm markalar</option>'+sources.map(x=>'<option value="'+esc(x.brand)+'">'+esc(x.brand)+'</option>').join('');brand.value=state.brand}
-    const schedule=m.schedule?.enabled?m.schedule.description:'Düzenli inceleme planı henüz etkin değil';
+    const liveSchedule=state.data.cloud?.schedule||m.schedule;
+    const schedule=liveSchedule?.enabled?liveSchedule.description:'Düzenli inceleme planı henüz etkin değil';
     root.querySelector('.av-status').innerHTML='<b>'+esc(statusText[m.status]||'İnceleme bekleniyor')+'</b><span>'+esc(schedule)+' • KKTC saati</span><span>Son inceleme: '+stamp(m.checked_at)+' • Uygulamaya aktarım: '+stamp(m.imported_at)+'</span>'+(m.last_error?'<span>'+esc(m.last_error)+'</span>':'');
     const cloud=state.data.cloud;
     if(cloud){
+      if(cloud.schedule?.enabled&&cloud.schedule.daily_at)root.querySelector('.av-status').innerHTML+='<span data-av-daily-schedule>Günlük otomatik tarama: '+esc(cloud.schedule.daily_at)+' • '+count(cloud.schedule.verified_pages_count)+' doğrulanmış reklam sayfası</span><span>Son günlük kuyruk: '+esc(cloud.schedule.last_scheduled_day||'İlk planlanan saat bekleniyor')+'</span>';
       root.querySelector('.av-status').innerHTML+='<span><b>'+esc(cloud.vision_configured?'Görsel analiz bağlantısı tanımlı':'Görsel analiz bağlantısı bekleniyor')+'</b> • '+esc(cloud.worker_online?'Sunucu görevi çalışıyor':'Sunucu görevi kontrol edilmeli')+'</span><span>'+esc(cloud.message)+'</span>';
       const provider=cloud.capture_provider;
       if(provider?.enabled){

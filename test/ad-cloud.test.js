@@ -6,7 +6,7 @@ import {JSDOM} from 'jsdom';
 import {SCHEMA_SQL} from '../src/schema.js';
 import {HOME_INTERNET_SOURCES} from '../src/home-internet.js';
 import {getAdVisuals,getAdReport} from '../src/ad-visual.js';
-import {createCloudWorker,queueCloudReview,queueNewCloudSources,queueStoredAdReviews,getCloudStatus,localCloudTime,analyzeNextCloudCandidate,registerCloudRoutes} from '../src/ad-cloud.js';
+import {createCloudWorker,queueCloudReview,queueNewCloudSources,queueStoredAdReviews,getCloudStatus,localCloudTime,analyzeNextCloudCandidate,registerCloudRoutes,verifiedCloudSources} from '../src/ad-cloud.js';
 import {adLibrarySource,pageState,markAdCards,captureRetryDelay} from '../src/ad-cloud-capture.js';
 import {normalizeVision,analyzeCloudImage} from '../src/ad-cloud-vision.js';
 const jpeg=Buffer.from([255,216,255,224,0,0,255,217]),hash=createHash('sha256').update(jpeg).digest('hex');
@@ -29,21 +29,21 @@ test('cloud scheduling persists daily deduplication, rotates competitors and thr
   }finally{await db.close()}
 });
 test('unverified brands never displace verified ISP pages from the next daily or manual batch',async()=>{
-  const db=await dbFixture();
+  const db=await dbFixture(),env={AD_CAPTURE_PROVIDER:'apify'},total=verifiedCloudSources(HOME_INTERNET_SOURCES).length;
   try{
-    await queueCloudReview(db,HOME_INTERNET_SOURCES,{now:new Date('2026-09-18T03:00:00Z')});
+    await queueCloudReview(db,HOME_INTERNET_SOURCES,{env,now:new Date('2026-09-18T03:00:00Z')});
     await db.query("UPDATE ad_cloud_jobs SET status='blocked',finished_at=NOW(),note='HTTP 403'");
     const before=(await db.query('SELECT id,status,attempts FROM ad_cloud_jobs ORDER BY id')).rows;
-    const daily=await queueCloudReview(db,HOME_INTERNET_SOURCES,{now:new Date('2026-09-19T03:00:00Z')});
-    assert.equal(daily.queued,7);
+    const daily=await queueCloudReview(db,HOME_INTERNET_SOURCES,{env,now:new Date('2026-09-19T03:00:00Z')});
+    assert.equal(daily.queued,total);
     const scheduled=(await db.query('SELECT brand,source_json FROM ad_cloud_jobs WHERE batch_key=$1',[daily.batch_key])).rows;
     assert.ok(scheduled.every(row=>adLibrarySource(row.source_json)));
     assert.ok(scheduled.some(row=>row.brand==='Nethouse'&&row.source_json.page_id==='159064954156749'));
     assert.ok(scheduled.some(row=>row.brand==='Kıbrıs Online'&&row.source_json.page_id==='107418628779416'));
     assert.deepEqual((await db.query('SELECT id,status,attempts FROM ad_cloud_jobs WHERE id=ANY($1::int[]) ORDER BY id',[before.map(row=>row.id)])).rows,before);
     await db.query("UPDATE ad_cloud_jobs SET status='blocked' WHERE status='queued'");
-    const manual=await queueCloudReview(db,HOME_INTERNET_SOURCES,{manual:true,now:new Date('2026-09-19T04:00:00Z')});
-    assert.equal(manual.queued,7);
+    const manual=await queueCloudReview(db,HOME_INTERNET_SOURCES,{env,manual:true,now:new Date('2026-09-19T04:00:00Z')});
+    assert.equal(manual.queued,total);
     assert.ok((await db.query('SELECT source_json FROM ad_cloud_jobs WHERE batch_key=$1',[manual.batch_key])).rows.every(row=>adLibrarySource(row.source_json)));
   }finally{await db.close()}
 });
@@ -150,10 +150,10 @@ test('newly verified pages enter the queue even after daily scheduling and do no
     await db.query("UPDATE ad_cloud_jobs SET status='unverified',source_json=source_json-'page_id' WHERE brand NOT IN ('Telsim','Cypking')");
     await db.query("UPDATE ad_cloud_control SET lease_owner='registration-test',lease_until=NOW()+INTERVAL '10 minutes'");
     const added=await queueNewCloudSources(db,HOME_INTERNET_SOURCES,'registration-test');
-    assert.equal(added.length,5);
+    assert.equal(added.length,verifiedCloudSources(HOME_INTERNET_SOURCES).length-2);
     assert.equal((await queueCloudReview(db,HOME_INTERNET_SOURCES,{now:new Date('2026-09-19T05:00:00Z')})).queued,0);
     const registered=(await db.query("SELECT source_json FROM ad_cloud_jobs WHERE batch_key LIKE 'source-%'")).rows;
-    assert.equal(registered.length,5);
+    assert.equal(registered.length,verifiedCloudSources(HOME_INTERNET_SOURCES).length-2);
     for(const {source_json:source} of registered){
       const url=new URL(adLibrarySource(source));
       assert.equal(url.searchParams.get('country'),'CY');assert.equal(url.searchParams.get('view_all_page_id'),source.page_id);

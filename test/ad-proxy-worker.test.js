@@ -19,7 +19,8 @@ const quiet=()=>{};
 
 async function fixture(){
   const db=new PGlite();await db.exec(SCHEMA_SQL);
-  await queueCloudReview(db,HOME_INTERNET_SOURCES,{manual:true});
+  // Seed every page so registry growth cannot introduce an unrelated capture into a proxy test.
+  await queueCloudReview(db,HOME_INTERNET_SOURCES,{manual:true,env:{AD_CAPTURE_PROVIDER:'apify'}});
   await db.query("UPDATE ad_cloud_jobs SET status='unverified' WHERE brand<>'Telsim'");
   await db.query('UPDATE ad_cloud_control SET scheduled_day=$1',[localCloudTime().day]);
   return db;

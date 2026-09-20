@@ -19,12 +19,12 @@ async function fixture(){
 }
 const handoff=db=>queueProviderHandoff(db,HOME_INTERNET_SOURCES,'handoff-test',{env});
 
-test('provider handoff recovers interrupted FixNet and queues all seven verified sources once',async()=>{
+test('provider handoff recovers interrupted FixNet and queues all verified sources once',async()=>{
   const db=await fixture();
   try{
     await db.query("UPDATE ad_cloud_jobs SET status='running',attempts=2,captured=3,proxy_key='old-proxy-key',proxy_attempts=4 WHERE brand='FixNet'");
     const prior=(await db.query("SELECT * FROM ad_cloud_jobs WHERE brand<>'FixNet' ORDER BY id")).rows;
-    const result=await handoff(db);assert.equal(result.recovered,1);assert.equal(result.queued,6);
+    const result=await handoff(db);assert.equal(result.recovered,1);assert.equal(result.queued,directory.length-1);
     const recovered=(await db.query("SELECT status,attempts,captured,proxy_key,proxy_attempts FROM ad_cloud_jobs WHERE brand='FixNet'")).rows[0];
     assert.deepEqual(recovered,{status:'retry',attempts:2,captured:3,proxy_key:'old-proxy-key',proxy_attempts:4});
     assert.deepEqual((await db.query("SELECT * FROM ad_cloud_jobs WHERE batch_key='old-browser' AND brand<>'FixNet' ORDER BY id")).rows,prior);
@@ -41,14 +41,14 @@ test('exhausted interrupted browser captures retain their history and get a sepa
   const db=await fixture();
   try{
     await db.query("UPDATE ad_cloud_jobs SET status='running',captured=2,proxy_key='pinned',proxy_attempts=5 WHERE brand='FixNet'");
-    const result=await handoff(db);assert.equal(result.recovered,1);assert.equal(result.queued,7);
+    const result=await handoff(db);assert.equal(result.recovered,1);assert.equal(result.queued,directory.length);
     const records=(await db.query("SELECT batch_key,status,attempts,captured,proxy_key,proxy_attempts FROM ad_cloud_jobs WHERE brand='FixNet' ORDER BY id")).rows;
     assert.deepEqual(records,[{batch_key:'old-browser',status:'error',attempts:3,captured:2,proxy_key:'pinned',proxy_attempts:5},
       {batch_key:'provider-source-1435421553398998',status:'queued',attempts:0,captured:0,proxy_key:null,proxy_attempts:0}]);
     // An already-seeded bootstrap batch is not recreated even after another process marks it terminal.
     await db.query("UPDATE ad_cloud_jobs SET status='error' WHERE batch_key LIKE 'provider-source-%'");
     assert.deepEqual(await handoff(db),{recovered:0,queued:0,brands:[]});
-    assert.equal((await db.query("SELECT count(*)::int n FROM ad_cloud_jobs WHERE batch_key LIKE 'provider-source-%'")).rows[0].n,7);
+    assert.equal((await db.query("SELECT count(*)::int n FROM ad_cloud_jobs WHERE batch_key LIKE 'provider-source-%'")).rows[0].n,directory.length);
   }finally{await db.close();}
 });
 
@@ -65,7 +65,7 @@ test('provider running and ambiguous creation history, AI candidates, and spend 
     await db.query("INSERT INTO ad_cloud_candidates(ad_key,job_id,fingerprint,payload,observed_at,status,attempts,last_error) VALUES('159064954156749:999999:1',$1,'old-fingerprint','{}'::jsonb,NOW(),'retry',2,'VISION_RATE_LIMIT')",[job.id]);
     const before={runs:(await db.query('SELECT * FROM ad_provider_runs ORDER BY job_id')).rows,budget:(await db.query('SELECT * FROM ad_provider_budget')).rows,candidates:(await db.query('SELECT * FROM ad_cloud_candidates')).rows,
       jobs:(await db.query("SELECT * FROM ad_cloud_jobs WHERE brand IN ('Kıbrıs Online','Nethouse','Telsim') ORDER BY id")).rows};
-    const result=await handoff(db);assert.equal(result.recovered,0);assert.equal(result.queued,4);
+    const result=await handoff(db);assert.equal(result.recovered,0);assert.equal(result.queued,directory.length-3);
     assert.deepEqual((await db.query('SELECT * FROM ad_provider_runs ORDER BY job_id')).rows,before.runs);
     assert.deepEqual((await db.query('SELECT * FROM ad_provider_budget')).rows,before.budget);
     assert.deepEqual((await db.query('SELECT * FROM ad_cloud_candidates')).rows,before.candidates);
@@ -79,7 +79,7 @@ test('a queued future retry is retained without shortening its wait or creating 
   try{
     await db.query("UPDATE ad_cloud_jobs SET status='retry',attempts=2,available_at=NOW()+INTERVAL '2 hours' WHERE brand='FixNet'");
     const before=(await db.query("SELECT * FROM ad_cloud_jobs WHERE brand='FixNet'")).rows;
-    assert.equal((await handoff(db)).queued,6);
+    assert.equal((await handoff(db)).queued,directory.length-1);
     assert.deepEqual((await db.query("SELECT * FROM ad_cloud_jobs WHERE brand='FixNet'")).rows,before);
     assert.equal((await db.query("SELECT count(*)::int n FROM ad_cloud_jobs WHERE brand='FixNet'")).rows[0].n,1);
   }finally{await db.close();}
@@ -104,7 +104,7 @@ test('worker handoff precedes daily scheduling and is restart-safe while provide
     const worker=createCloudWorker(db,HOME_INTERNET_SOURCES,{env:{AD_CAPTURE_PROVIDER:'apify'},log:()=>{},providerTick:async()=>{
       ticks++;
       assert.equal((await db.query("SELECT count(*)::int n FROM ad_cloud_jobs WHERE status='running' AND NOT EXISTS(SELECT 1 FROM ad_provider_runs p WHERE p.job_id=ad_cloud_jobs.id)")).rows[0].n,0);
-      assert.equal((await db.query("SELECT count(*)::int n FROM ad_cloud_jobs WHERE status IN ('queued','retry') AND attempts<3")).rows[0].n,7);
+      assert.equal((await db.query("SELECT count(*)::int n FROM ad_cloud_jobs WHERE status IN ('queued','retry') AND attempts<3")).rows[0].n,directory.length);
       return {status:'waiting_config',reason:'PROVIDER_TOKEN_MISSING'};
     }});
     assert.equal((await worker()).scan.status,'waiting_config');
