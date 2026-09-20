@@ -248,7 +248,10 @@ export const ISP_SOCIALS = {
   },
   "FreeNet": {
     "facebook": "https://www.facebook.com/FreenetCyprus",
-    "instagram": "https://www.instagram.com/freenetcyp/"
+    "instagram": "https://www.instagram.com/freenetcyp/",
+    "additional_social_links": [{"platform":"instagram","url":"https://www.instagram.com/freenetiletisimltd/"}],
+    "research_checked_at": "2026-09-21",
+    "research_note": "Resmî site iki Instagram hesabına bağlantı veriyor. Reklam sayfa kimliği henüz doğrulanmadı."
   },
   "Extend": {
     "facebook": "https://www.facebook.com/extendbroadbandarinet"
@@ -267,6 +270,64 @@ export const ISP_SOCIALS = {
     "facebook": "https://www.facebook.com/kktctelsim",
     "instagram": "https://www.instagram.com/kktctelsim/",
     "page_id": "164143610515"
+  },
+  "Alemnet": {
+    "facebook": "https://www.facebook.com/alemnettechnoshop",
+    "instagram": "https://www.instagram.com/alemdar_network/",
+    "research_checked_at": "2026-09-21",
+    "research_note": "Sosyal hesaplar resmî siteden doğrulandı. Reklam sayfa kimliği henüz doğrulanmadı."
+  },
+  "Gold Surf": {
+    "facebook": "https://www.facebook.com/goldsurf/",
+    "research_checked_at": "2026-09-21",
+    "research_note": "Facebook hesabı resmî siteden doğrulandı. Reklam sayfa kimliği henüz doğrulanmadı."
+  },
+  "Towernet": {
+    "facebook": "https://www.facebook.com/towernetinternet/",
+    "research_checked_at": "2026-09-21",
+    "research_note": "Facebook sayfasının site, telefon ve e-posta bilgileri resmî siteyle eşleşiyor. Reklam sayfa kimliği henüz doğrulanmadı."
+  },
+  "KKTCELL": {
+    "facebook": "https://www.facebook.com/TURKCELLKUZEYKIBRIS",
+    "instagram": "https://www.instagram.com/kuzeykibristurkcell/",
+    "research_checked_at": "2026-09-21",
+    "research_note": "Sosyal hesaplar resmî siteden doğrulandı. Reklam sayfa kimliği henüz doğrulanmadı."
+  },
+  "Turkcell Ev İnterneti": {
+    "facebook": "https://www.facebook.com/TURKCELLKUZEYKIBRIS",
+    "instagram": "https://www.instagram.com/kuzeykibristurkcell/",
+    "research_checked_at": "2026-09-21",
+    "research_note": "KKTCELL ile ortak sosyal hesap. Ev interneti ayrıca Lifecell Digital hesabında tanıtılıyor. Ayrı reklam sayfa kimliği doğrulanmadı."
+  },
+  "Lifecell Digital": {
+    "facebook": "https://www.facebook.com/lifecellkuzeykibris/",
+    "instagram": "https://www.instagram.com/lifecellkuzeykibris/",
+    "research_checked_at": "2026-09-21",
+    "research_note": "Hesap, resmî Lifecell Digital sitesiyle eşleştirildi; Turkcell Ev İnterneti de bu hesapta tanıtılıyor. Reklam sayfa kimliği henüz doğrulanmadı."
+  },
+  "Vodafone Evde": {
+    "facebook": "https://www.facebook.com/kktctelsim/",
+    "instagram": "https://www.instagram.com/kktctelsim/",
+    "research_checked_at": "2026-09-21",
+    "research_note": "Vodafone Evde reklamları Telsim hesabında yayınlanıyor ve Telsim taramasında izleniyor. Ayrı ücretli tarama oluşturulmaz."
+  },
+  "Royalnet": {
+    "facebook": "https://www.facebook.com/royalnetcyprus/",
+    "research_checked_at": "2026-09-21",
+    "research_note": "Facebook hesabı resmî siteden doğrulandı. Reklam sayfa kimliği henüz doğrulanmadı."
+  },
+  "Kıbrıs NET": {
+    "facebook": "https://www.facebook.com/mahirBilgisayarCyprus",
+    "instagram": "https://www.instagram.com/mahir.bilgisayar/",
+    "research_checked_at": "2026-09-21",
+    "research_note": "Mahir & Sons resmî sitesinin Kıbrıs NET için kullandığı sosyal hesaplar. Reklam sayfa kimliği henüz doğrulanmadı."
+  },
+  "Xrealnet": {
+    "facebook": "https://www.facebook.com/Xrealnet%C4%B0lmet-Elektronik-Ltd-391015854865659",
+    "instagram": "https://www.instagram.com/ilmet_elektronik.ltd/",
+    "page_id": "391015854865659",
+    "research_checked_at": "2026-09-21",
+    "research_note": "İlmet Elektronik ile ortak sayfa; kimlik resmî sitelerin bağlantı ve iletişim bilgileriyle doğrulandı. İnternet ve diğer ürün reklamları görsel içeriklerine göre sınıflandırılır."
   }
 };
 export const EXTRA_HOME_SOURCES = [

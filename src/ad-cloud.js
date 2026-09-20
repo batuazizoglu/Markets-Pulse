@@ -9,10 +9,20 @@ import {providerConfig,providerStatus} from './ad-provider-client.js';
 import {runProviderTick,getProviderStatus} from './ad-provider-worker.js';
 import {normalizeProviderJpeg} from './ad-provider-image.js';
 
-export const CLOUD_SCHEDULE={enabled:true,description:'Bulutta her gün 06:00; Telsim ve sayfası doğrulanmış rakipler',timezone:'Asia/Famagusta'};
+export const CLOUD_SCHEDULE={enabled:true,description:'Bulutta her gün 06:00; Telsim ve sayfası doğrulanmış rakipler',timezone:'Asia/Famagusta',daily_at:'06:00'};
 export function localCloudTime(now=new Date()){
   const p=Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Famagusta',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',hourCycle:'h23'}).formatToParts(now).map(x=>[x.type,x.value]));
   return {day:p.year+'-'+p.month+'-'+p.day,hour:Number(p.hour)};
+}
+export function verifiedCloudSources(sources){
+  const pages=new Set();
+  return socialDirectory(sources).filter(adLibrarySource)
+    .sort((a,b)=>Number(b.brand==='Telsim')-Number(a.brand==='Telsim')||a.brand.localeCompare(b.brand,'tr'))
+    .filter(source=>{
+      // One advertiser page is one capture, even when several product brands use it.
+      if(pages.has(source.page_id))return false;
+      pages.add(source.page_id);return true;
+    });
 }
 const hash=b=>createHash('sha256').update(b).digest('hex');
 async function transaction(pool,fn){
@@ -24,13 +34,13 @@ async function assertLease(db,owner){
   if(r.rows[0]?.lease_owner!==owner||+new Date(r.rows[0]?.lease_until)<=Date.now())throw new Error('CLOUD_LEASE_LOST');
 }
 export async function queueNewCloudSources(pool,sources,owner){
-  const verified=socialDirectory(sources).filter(source=>adLibrarySource(source));
+  const verified=verifiedCloudSources(sources);
   return transaction(pool,async db=>{
     await assertLease(db,owner);
     const added=[];
     for(const source of verified){
       // Historical unverified jobs do not mean this numeric page has been scanned.
-      const seen=await db.query("SELECT id FROM ad_cloud_jobs WHERE brand=$1 AND source_json->>'page_id'=$2 AND status<>'imported' LIMIT 1",[source.brand,source.page_id]);
+      const seen=await db.query("SELECT id FROM ad_cloud_jobs WHERE source_json->>'page_id'=$1 AND status<>'imported' LIMIT 1",[source.page_id]);
       if(seen.rows.length)continue;
       const result=await db.query("INSERT INTO ad_cloud_jobs(batch_key,brand,source_json) VALUES($1,$2,$3::jsonb) ON CONFLICT DO NOTHING RETURNING id",['source-'+source.page_id,source.brand,JSON.stringify(source)]);
       if(result.rows.length)added.push(source.brand);
@@ -40,7 +50,7 @@ export async function queueNewCloudSources(pool,sources,owner){
 }
 export async function queueProviderHandoff(pool,sources,owner,{env=process.env}={}){
   if(providerConfig(env).mode!=='apify')return {recovered:0,queued:0,brands:[]};
-  const verified=socialDirectory(sources).filter(source=>adLibrarySource(source));
+  const verified=verifiedCloudSources(sources);
   return transaction(pool,async db=>{
     await assertLease(db,owner);
     // The acquired worker lease proves these unowned browser captures were interrupted.
@@ -83,11 +93,11 @@ export async function queueCloudReview(pool,sources,{manual=false,now=new Date()
     const dates=new Map(prior.rows.map(r=>[r.brand,+new Date(r.last_at)]));
     // Unverified keyword searches cannot be captured and must not consume the
     // six daily competitor slots ahead of known advertiser pages.
-    const directory=socialDirectory(sources).filter(source=>adLibrarySource(source));
+    const directory=verifiedCloudSources(sources);
     const selected=[...directory.filter(x=>x.brand==='Telsim'),...directory.filter(x=>x.brand!=='Telsim').sort((a,b)=>(dates.get(a.brand)||0)-(dates.get(b.brand)||0)||Number(Boolean(b.page_id))-Number(Boolean(a.page_id))).slice(0,providerConfig(env).mode==='apify'?undefined:6)];
     const batch=manual?'manual-'+randomUUID():'daily-'+local.day;let queued=0;
     for(const source of selected){
-      const active=await db.query("SELECT id FROM ad_cloud_jobs WHERE brand=$1 AND status IN ('queued','running','retry') LIMIT 1",[source.brand]);
+      const active=await db.query("SELECT id FROM ad_cloud_jobs WHERE source_json->>'page_id'=$1 AND status IN ('queued','running','retry') LIMIT 1",[source.page_id]);
       if(active.rows.length)continue;
       const r=await db.query('INSERT INTO ad_cloud_jobs(batch_key,brand,source_json) VALUES($1,$2,$3::jsonb) ON CONFLICT DO NOTHING RETURNING id',[batch,source.brand,JSON.stringify(source)]);queued+=r.rows.length;
     }
@@ -200,16 +210,16 @@ export async function analyzeNextCloudCandidate(pool,sources,owner,{env=process.
     return {status:'error',code};
   }
 }
-export async function getCloudStatus(pool,{env=process.env}={}){
+export async function getCloudStatus(pool,{env=process.env,sources=[]}={}){
   const config=visionConfig(env);
   const [control,jobs,counts,errors,transport,provider]=await Promise.all([
-    pool.query('SELECT heartbeat_at,vision_day,vision_calls,capture_after FROM ad_cloud_control WHERE id=1'),
+    pool.query('SELECT heartbeat_at,vision_day,vision_calls,capture_after,scheduled_day FROM ad_cloud_control WHERE id=1'),
     pool.query("SELECT DISTINCT ON (brand) brand,status,captured,note,created_at,finished_at,available_at FROM ad_cloud_jobs WHERE status<>'imported' ORDER BY brand,created_at DESC,id DESC"),
     pool.query('SELECT status,count(*)::int count,MAX(analyzed_at) last_analyzed_at FROM ad_cloud_candidates GROUP BY status'),
     pool.query('SELECT last_error FROM ad_cloud_candidates WHERE last_error IS NOT NULL ORDER BY observed_at DESC LIMIT 1'),
     getProxyPoolStatus(pool,{env}),getProviderStatus(pool,{env})]);
   const row=control.rows[0]||{},heartbeat=row.heartbeat_at;
-  return {mode:'cloud',schedule:CLOUD_SCHEDULE,capture_transport:transport,capture_provider:provider,vision_configured:config.configured,
+  return {mode:'cloud',schedule:{...CLOUD_SCHEDULE,last_scheduled_day:row.scheduled_day||null,verified_pages_count:verifiedCloudSources(sources).length},capture_transport:transport,capture_provider:provider,vision_configured:config.configured,
     analysis_status:config.configured?'configured':'waiting_config',
     message:!config.configured?'Bulut taraması etkin. Görsel analiz için sunucu API bağlantısı eksik; kaydedilen görseller kuyrukta bekler.':errors.rows.length?'Son görsel analizi tamamlanamadı. Kayıtlar kuyrukta korunuyor; servis bağlantısı ve kota kontrol edilmeli.':'Görseller sunucuda analiz edilir.',
     worker_heartbeat:heartbeat||null,worker_online:Boolean(heartbeat&&Date.now()-+new Date(heartbeat)<180000),
@@ -318,9 +328,9 @@ export function createCloudWorker(pool,sources,{capture=captureCloudAds,analyze=
       }
       }
       const analysis=await analyzeNextCloudCandidate(pool,sources,owner,{env,analyze});
-      const status=await getCloudStatus(pool,{env});
+      const status=await getCloudStatus(pool,{env,sources});
       if(!reportedSources){log('[ad-cloud-source-status]',JSON.stringify(status.sources.map(s=>({brand:s.brand,status:s.status,http_status:Number(s.note?.match(/HTTP (\d{3})/)?.[1])||null}))));reportedSources=true}
-      log('[ad-cloud-worker]',JSON.stringify({mode:'cloud',capture_transport:transport.mode,capture_configured:transport.configured,capture_code:transport.code,proxy_count:status.capture_transport.proxy_count||0,proxy_available:status.capture_transport.available_count||0,scan_waiting:scan?.status?.startsWith('waiting')?scan.reason:null,analysis:analysis.status,code:analysis.code||null,brand:analysis.brand||null,category:analysis.category||null,category_evidence_missing:analysis.category_evidence_missing??null,pass:analysis.pass||null,vision_configured:status.vision_configured,candidates:status.candidates,calls_today:status.calls_today,scheduled_day:localCloudTime().day}));
+      log('[ad-cloud-worker]',JSON.stringify({mode:'cloud',capture_transport:transport.mode,capture_configured:transport.configured,capture_code:transport.code,proxy_count:status.capture_transport.proxy_count||0,proxy_available:status.capture_transport.available_count||0,scan_waiting:scan?.status?.startsWith('waiting')?scan.reason:null,analysis:analysis.status,code:analysis.code||null,brand:analysis.brand||null,category:analysis.category||null,category_evidence_missing:analysis.category_evidence_missing??null,pass:analysis.pass||null,vision_configured:status.vision_configured,candidates:status.candidates,calls_today:status.calls_today,scheduled_day:status.schedule.last_scheduled_day}));
       return {scan,analysis};
     }catch(e){log('[ad-cloud-worker]',JSON.stringify({status:'error',code:/^CLOUD_[A-Z_]+$/.test(e.message)?e.message:'WORKER_ERROR'}));return {status:'error'}}
     finally{try{if(lease)await pool.query('UPDATE ad_cloud_control SET lease_owner=NULL,lease_until=NULL,heartbeat_at=NOW() WHERE id=1 AND lease_owner=$1',[owner])}finally{running=false}}
