@@ -103,6 +103,21 @@ test('manual sync imports immediately, rejects cross-site requests and bounds re
     clock+=60000;assert.equal((await post({'Content-Type':'application/json'})).status,200);assert.equal(calls,2);
   }finally{await new Promise(r=>server.close(r));await db.close()}
 });
+test('empty dashboard retains the verified ISP directory independently of image imports',async()=>{
+  const {default:express}=await import('express');const db=await dbFixture(),app=express();
+  const blocked={brand:'Nethouse',status:'blocked',captured:0,note:'Ad Library erişimi HTTP 403 ile sonuçlandı.'};
+  registerAdVisualRoutes(app,db,HOME_INTERNET_SOURCES,{cloudStatus:async()=>({sources:[blocked]})});
+  const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
+  try{
+    const response=await fetch('http://127.0.0.1:'+server.address().port+'/api/ad-visuals');
+    assert.equal(response.status,200);const data=await response.json();assert.deepEqual(data.rows,[]);
+    for(const [brand,id] of [['Nethouse','159064954156749'],['Kıbrıs Online','107418628779416']]){
+      const source=data.source_directory.find(s=>s.brand===brand);assert.ok(source,brand+' missing');
+      assert.equal(source.page_id,id);assert.equal(new URL(source.ad_library_url).searchParams.get('view_all_page_id'),id);
+    }
+    assert.deepEqual(data.cloud.sources,[blocked]);
+  }finally{await new Promise(r=>server.close(r));await db.close()}
+});
 test('report includes separate categories, qualifies first observations and escapes stored analysis',()=>{
   const ad=valid(fixture('mnp')).ads[0];ad.title='<img src=x onerror=bad()>';
   const html=adVisualReportHtml({checked_at:iso(0),status:'partial',rows:[{event_type:'first_seen',analysis_json:ad}]});
@@ -130,5 +145,53 @@ test('UI category navigation isolates GSM/MNP and home embeds only fixed-home ad
     d.querySelector('#ad-visual-section [data-av-refresh]').click();await dom.window.AdVisualUI.load();
     assert.equal(requests.at(-1).url,'/api/ad-visuals');assert.equal(requests.at(-1).options.cache,'no-store');
     assert.equal(d.querySelector('#ad-visual-section [data-av-refresh]').disabled,false);
+  }finally{dom.window.close()}
+});
+test('registered ISPs remain selectable without images, live blocking supersedes old no-ads coverage, and home respects brands',async()=>{
+  const telsim={...valid(fixture('home')).ads[0],key:'home',brand:'Telsim'};
+  const directory=[['Nethouse','159064954156749'],['Kıbrıs Online','107418628779416'],['Yeni kaynak','123456789']].map(([brand,page_id])=>({brand,page_id,ad_library_type:'page',ad_library_url:'https://www.facebook.com/ads/library/?view_all_page_id='+page_id}));
+  const data={rows:[telsim],groups:{home:1},source_directory:directory,
+    monitoring:{status:'partial',coverage:[{brand:'Nethouse',status:'no_ads',checked_at:iso(0),source_url:directory[0].ad_library_url,note:'Eski taramada reklam yok.'},{brand:'Eski kapsam markası',status:'pending'}]},
+    cloud:{sources:[{brand:'Nethouse',status:'blocked',captured:0,finished_at:iso(1),note:'Ad Library erişimi HTTP 403 ile sonuçlandı. Reklam yok olarak yorumlanmadı.'},{brand:'Kıbrıs Online',status:'blocked',captured:0,finished_at:iso(1),note:'Ad Library erişimi HTTP 403 ile sonuçlandı.'},{brand:'Kuyruktaki kaynak',status:'queued',captured:0}]}};
+  const dom=new JSDOM('<main class="shell"><div id="hiAdVisualMount"></div></main>',{url:'https://www.marketspulse.cloud/#ads',runScripts:'outside-only'});
+  dom.window.fetch=async()=>({ok:true,json:async()=>data});
+  try{
+    dom.window.eval(await readFile(new URL('../public/ad-visual.js',import.meta.url),'utf8'));
+    await dom.window.AdVisualUI.load();await dom.window.AdVisualUI.mountHome();const d=dom.window.document;
+    const choices=[...d.querySelector('#ad-visual-section [data-av-brand]').options].map(x=>x.value);
+    for(const brand of ['Nethouse','Kıbrıs Online','Yeni kaynak','Eski kapsam markası','Kuyruktaki kaynak','Telsim'])assert.ok(choices.includes(brand),brand+' missing');
+    assert.match(d.querySelector('.av-coverage>summary').textContent,/3 sayfada görsel bekleniyor/);
+    assert.equal(d.querySelector('.av-coverage').open,false);
+    for(const source of directory.slice(0,2)){
+      const filter=d.querySelector('#hiAdVisualMount [data-av-brand]');filter.value=source.brand;filter.dispatchEvent(new dom.window.Event('change',{bubbles:true}));
+      for(const root of d.querySelectorAll('.av-root')){
+        assert.equal(root.querySelectorAll('.av-card').length,0);
+        assert.equal(root.querySelector('[data-av-brand]').value,source.brand);
+        const focus=root.querySelector('.av-source-focus');assert.match(focus.textContent,/HTTP 403/);assert.match(focus.textContent,/Kaynağa erişilemiyor/);
+        assert.equal(new URL(focus.querySelector('a').href).searchParams.get('view_all_page_id'),source.page_id);
+        assert.doesNotMatch(focus.textContent,/Eski taramada reklam yok|Son taramada bu filtrede reklam bulunamadı|0 kayıt/);
+        assert.match(root.querySelector('.av-empty').textContent,/reklam olmadığı anlamına gelmez/);
+      }
+    }
+    const home=d.querySelector('#hiAdVisualMount [data-av-brand]');home.value='Yeni kaynak';home.dispatchEvent(new dom.window.Event('change',{bubbles:true}));
+    assert.match(d.querySelector('#hiAdVisualMount .av-source-focus').textContent,/Henüz taranmadı/);
+    home.value='all';home.dispatchEvent(new dom.window.Event('change',{bubbles:true}));
+    assert.equal(d.querySelectorAll('#hiAdVisualMount .av-card').length,1);
+    assert.equal(d.querySelector('#hiAdVisualMount .av-source-focus').textContent,'');
+  }finally{dom.window.close()}
+});
+test('source states distinguish a successful empty scan, retry and unpublished analysis while escaping source text',async()=>{
+  const source_directory=['Boş sonuç','Yeniden denenecek','AI sonucu beklenen','<img src=x onerror=bad()>'].map((brand,i)=>({brand,page_id:'12345678'+i,ad_library_url:i===3?'javascript:bad()':'https://www.facebook.com/ads/library/?view_all_page_id=12345678'+i}));
+  const sources=[{brand:'Boş sonuç',status:'no_ads',captured:0,finished_at:iso(0)},{brand:'Yeniden denenecek',status:'retry',captured:0,available_at:iso(3),note:'Proxy bağlantısı kurulamadı.'},{brand:'AI sonucu beklenen',status:'partial',captured:2,finished_at:iso(0)},{brand:source_directory[3].brand,status:'blocked',captured:0,note:'<script>bad()</script>'}];
+  const dom=new JSDOM('<main class="shell"></main>',{url:'https://www.marketspulse.cloud/#ads',runScripts:'outside-only'});
+  dom.window.fetch=async()=>({ok:true,json:async()=>({rows:[],source_directory,cloud:{sources}})});
+  try{
+    dom.window.eval(await readFile(new URL('../public/ad-visual.js',import.meta.url),'utf8'));await dom.window.AdVisualUI.load();const d=dom.window.document;
+    for(const [brand,pattern] of [['Boş sonuç',/Son taramada bu filtrede reklam bulunamadı/],['Yeniden denenecek',/Sonraki deneme/],['AI sonucu beklenen',/Görseller kaydedildi; analiz sonucu henüz yayınlanmadı/],[source_directory[3].brand,/<script>bad\(\)<\/script>/]]){
+      const filter=d.querySelector('[data-av-brand]');filter.value=brand;filter.dispatchEvent(new dom.window.Event('change',{bubbles:true}));
+      assert.match(d.querySelector('.av-source-focus').textContent,pattern);assert.equal(d.querySelectorAll('.av-card').length,0);
+      if(brand==='Boş sonuç')assert.match(d.querySelector('.av-empty').textContent,/Yeni taramalarda sonuç değişebilir/);
+    }
+    assert.equal(d.querySelector('.av-source-focus a'),null);assert.equal(d.querySelectorAll('script,img').length,0);
   }finally{dom.window.close()}
 });

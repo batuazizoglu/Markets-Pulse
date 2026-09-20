@@ -6,7 +6,7 @@ import {getProxyPoolStatus,selectCaptureProxy,recordProxyResult,canFailoverProxy
 import {analyzeCloudImage,visionConfig} from './ad-cloud-vision.js';
 import {validateAdFeed,importAdFeed} from './ad-visual.js';
 
-export const CLOUD_SCHEDULE={enabled:true,description:'Bulutta her gün 06:00; Telsim ve dönüşümlü rakipler',timezone:'Asia/Famagusta'};
+export const CLOUD_SCHEDULE={enabled:true,description:'Bulutta her gün 06:00; Telsim ve sayfası doğrulanmış rakipler',timezone:'Asia/Famagusta'};
 export function localCloudTime(now=new Date()){
   const p=Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Famagusta',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',hourCycle:'h23'}).formatToParts(now).map(x=>[x.type,x.value]));
   return {day:p.year+'-'+p.month+'-'+p.day,hour:Number(p.hour)};
@@ -49,7 +49,9 @@ export async function queueCloudReview(pool,sources,{manual=false,now=new Date()
     }
     const prior=await db.query('SELECT brand,MAX(created_at) last_at FROM ad_cloud_jobs GROUP BY brand');
     const dates=new Map(prior.rows.map(r=>[r.brand,+new Date(r.last_at)]));
-    const directory=socialDirectory(sources);
+    // Unverified keyword searches cannot be captured and must not consume the
+    // six daily competitor slots ahead of known advertiser pages.
+    const directory=socialDirectory(sources).filter(source=>adLibrarySource(source));
     const selected=[...directory.filter(x=>x.brand==='Telsim'),...directory.filter(x=>x.brand!=='Telsim').sort((a,b)=>(dates.get(a.brand)||0)-(dates.get(b.brand)||0)||Number(Boolean(b.page_id))-Number(Boolean(a.page_id))).slice(0,6)];
     const batch=manual?'manual-'+randomUUID():'daily-'+local.day;let queued=0;
     for(const source of selected){
