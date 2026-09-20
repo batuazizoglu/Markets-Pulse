@@ -28,6 +28,25 @@ test('cloud scheduling persists daily deduplication, rotates competitors and thr
     assert.equal((await db.query('SELECT count(*)::int n FROM ad_cloud_jobs')).rows[0].n,7);
   }finally{await db.close()}
 });
+test('unverified brands never displace verified ISP pages from the next daily or manual batch',async()=>{
+  const db=await dbFixture();
+  try{
+    await queueCloudReview(db,HOME_INTERNET_SOURCES,{now:new Date('2026-09-18T03:00:00Z')});
+    await db.query("UPDATE ad_cloud_jobs SET status='blocked',finished_at=NOW(),note='HTTP 403'");
+    const before=(await db.query('SELECT id,status,attempts FROM ad_cloud_jobs ORDER BY id')).rows;
+    const daily=await queueCloudReview(db,HOME_INTERNET_SOURCES,{now:new Date('2026-09-19T03:00:00Z')});
+    assert.equal(daily.queued,7);
+    const scheduled=(await db.query('SELECT brand,source_json FROM ad_cloud_jobs WHERE batch_key=$1',[daily.batch_key])).rows;
+    assert.ok(scheduled.every(row=>adLibrarySource(row.source_json)));
+    assert.ok(scheduled.some(row=>row.brand==='Nethouse'&&row.source_json.page_id==='159064954156749'));
+    assert.ok(scheduled.some(row=>row.brand==='Kıbrıs Online'&&row.source_json.page_id==='107418628779416'));
+    assert.deepEqual((await db.query('SELECT id,status,attempts FROM ad_cloud_jobs WHERE id=ANY($1::int[]) ORDER BY id',[before.map(row=>row.id)])).rows,before);
+    await db.query("UPDATE ad_cloud_jobs SET status='blocked' WHERE status='queued'");
+    const manual=await queueCloudReview(db,HOME_INTERNET_SOURCES,{manual:true,now:new Date('2026-09-19T04:00:00Z')});
+    assert.equal(manual.queued,7);
+    assert.ok((await db.query('SELECT source_json FROM ad_cloud_jobs WHERE batch_key=$1',[manual.batch_key])).rows.every(row=>adLibrarySource(row.source_json)));
+  }finally{await db.close()}
+});
 test('server capture persists evidence without a model key; subsequent worker analyzes without recapturing',async()=>{
   const db=await dbFixture();
   try{

@@ -424,7 +424,7 @@ body.branded-app :is(.mp-score,.hi-score,.bm-pos,.status){filter:none!important}
 .av-tabs button.active{background:var(--mp-blue);border-color:var(--mp-blue);color:white}
 .av-tabs span{margin-left:8px;opacity:.8}
 .av-filter{display:flex;gap:12px;align-items:center;margin-bottom:16px;font-size:13px}
-.av-filter select{padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink)}
+.av-filter select{min-width:0;max-width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink)}
 .av-status{display:flex;flex-wrap:wrap;gap:8px 20px;padding:16px;border:1px solid var(--line);border-radius:12px;background:var(--surface);font-size:12px;line-height:1.6;margin-bottom:16px}
 .av-status b{color:var(--mp-blue)}.av-status span{color:var(--muted)}
 .av-review-info:not(:empty){margin-bottom:16px;padding:16px;border:1px solid var(--line);border-radius:12px;background:var(--surface);font-size:13px;line-height:1.7}
@@ -442,5 +442,7 @@ body.branded-app :is(.mp-score,.hi-score,.bm-pos,.status){filter:none!important}
 .av-history>div{border-top:1px solid var(--line);padding-top:12px;margin-top:12px}
 .av-coverage{border:1px solid var(--line);border-radius:12px;padding:18px;margin-top:18px;font-size:12px}
 .av-source{padding:14px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}.av-source span{display:block;color:var(--muted);margin-top:6px}.av-source:last-child{border:0}
+.av-source-focus:not(:empty){border:1px solid var(--line);border-radius:12px;padding:0 18px;margin-bottom:18px;font-size:13px;line-height:1.7;background:var(--surface)}
+.av-source a{display:inline-block;margin-top:10px}.av-unverified{margin-top:14px}.av-unverified>summary{padding:10px 0;color:var(--muted)}
 .av-empty{padding:32px;border:1px dashed var(--line);border-radius:12px;line-height:1.8;color:var(--muted);grid-column:1/-1}
 @media(max-width:760px){.av-cards{grid-template-columns:1fr}.av-heading{align-items:flex-start;flex-wrap:wrap}.av-tabs button{flex:1;min-width:120px}.av-card-body{padding:16px}.av-image img{height:220px}}

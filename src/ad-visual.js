@@ -176,7 +176,13 @@ export function registerAdVisualRoutes(app,pool,sources,{sync=syncAdVisuals,now=
     lastManualSync=now();
     try{const result=await sync(pool,sources);res.json({...await getAdVisuals(pool),sync:result})}catch(e){next(e)}
   });
-  app.get('/api/ad-visuals',async(req,res,next)=>{try{const data=await getAdVisuals(pool);if(cloudStatus){data.cloud=await cloudStatus();data.monitoring.schedule=data.cloud.schedule}res.json(data)}catch(e){next(e)}});
+  app.get('/api/ad-visuals',async(req,res,next)=>{try{
+    const data=await getAdVisuals(pool);
+    // Source identity is independent of successful capture or AI publication.
+    data.source_directory=socialDirectory(sources).map(({brand,page_id,ad_library_url,ad_library_type})=>({brand,page_id:page_id||null,ad_library_url,ad_library_type,country:'CY'}));
+    if(cloudStatus){data.cloud=await cloudStatus();data.monitoring.schedule=data.cloud.schedule}
+    res.json(data);
+  }catch(e){next(e)}});
   app.get('/api/ad-visuals/history',async(req,res,next)=>{
     try{const r=await pool.query('SELECT id,observed_at,event_type,analysis_json FROM ad_visual_versions WHERE ad_key=$1 ORDER BY observed_at DESC,id DESC LIMIT 30',[clean(req.query.key,100)]);res.json({rows:r.rows})}catch(e){next(e)}
   });
