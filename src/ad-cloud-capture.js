@@ -1,5 +1,6 @@
 import puppeteer from 'puppeteer';
 import {createHash} from 'node:crypto';
+import {allowedAdRequest,captureTransportConfig,openCaptureProxy} from './ad-capture-proxy.js';
 
 export function adLibrarySource(source){
   if(!/^\d{5,30}$/.test(source.page_id||''))return null;
@@ -45,29 +46,38 @@ export function markAdCards(){
   }
   return [...found.values()];
 }
-function allowedRequest(raw){
-  try{const u=new URL(raw);return u.protocol==='https:'&&['facebook.com','fbcdn.net','fbsbx.com','facebook.net'].some(h=>u.hostname===h||u.hostname.endsWith('.'+h))}catch{return false}
+function restrictedDestination(raw){
+  try{return /^\/(?:login(?:\.php)?|checkpoint|challenge)(?:\/|$)/i.test(new URL(raw).pathname)}catch{return true}
 }
-export async function captureCloudAds(source,onCapture,{maxAds=12,timeoutMs=110000}={}){
+export async function captureCloudAds(source,onCapture,{maxAds=12,timeoutMs=110000,env=process.env,launch=options=>puppeteer.launch(options),openProxy=openCaptureProxy}={}){
   const url=adLibrarySource(source);
   if(!url)return {status:'unverified',captured:0,note:'Resmî Facebook sayfa kimliği doğrulanmadı; isim aramasından otomatik marka eşleştirilmedi.'};
-  let browser,timedOut=false,captured=0;
-  const timeout=setTimeout(()=>{timedOut=true;browser?.close().catch(()=>{})},timeoutMs);
+  const transport=captureTransportConfig(env);
+  if(!transport.configured)return {status:'blocked',captured:0,reason:transport.code,note:'Proxy bağlantısı hazır değil; reklam taraması başlamadı.'};
+  let browser,proxy,timedOut=false,captured=0;
+  const checkProxy=()=>{const failure=proxy?.getFailure();if(failure)throw new Error(failure)};
+  const timeout=setTimeout(()=>{timedOut=true;browser?.close().catch(()=>{});proxy?.close().catch(()=>{})},timeoutMs);
   try{
-    browser=await puppeteer.launch({headless:true,timeout:30000,
-      ...(process.env.PUPPETEER_EXECUTABLE_PATH?{executablePath:process.env.PUPPETEER_EXECUTABLE_PATH}:{}),
-      args:['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage']});
+    if(transport.mode==='proxy')proxy=await openProxy(transport);
+    if(timedOut)throw new Error('Capture timeout');
+    browser=await launch({headless:true,timeout:30000,
+      ...(env.PUPPETEER_EXECUTABLE_PATH?{executablePath:env.PUPPETEER_EXECUTABLE_PATH}:{}),
+      args:['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage',
+        ...(proxy?['--proxy-server='+proxy.server,'--proxy-bypass-list=<-loopback>','--disable-quic']:[])]});
     if(timedOut)throw new Error('Capture timeout');
     const page=await browser.newPage();await page.setViewport({width:1440,height:1100,deviceScaleFactor:1.5});
     await page.setRequestInterception(true);
-    page.on('request',r=>{(allowedRequest(r.url())?r.continue():r.abort()).catch(()=>{})});
+    page.on('request',r=>{(allowedAdRequest(r.url())?r.continue():r.abort()).catch(()=>{})});
     const response=await page.goto(url,{waitUntil:'domcontentloaded',timeout:45000});
+    checkProxy();
     const httpStatus=response?.status()||0;
-    if(httpStatus>=400)return {status:httpStatus===429?'rate_limited':httpStatus===403?'blocked':'error',http_status:httpStatus,reason:'HTTP_'+httpStatus,retry_after_ms:httpStatus===429?captureRetryDelay(response.headers()['retry-after']):undefined,captured,note:'Ad Library erişimi HTTP '+httpStatus+' ile sonuçlandı. '+(httpStatus===429?'Kaynağın hız sınırı için beklenip sınırlı yeniden deneme yapılacak.':'Reklam yok olarak yorumlanmadı.')};
+    if(httpStatus>=400)return {status:httpStatus===429?'rate_limited':[401,403,407].includes(httpStatus)?'blocked':'error',http_status:httpStatus,reason:'HTTP_'+httpStatus,retry_after_ms:httpStatus===429?captureRetryDelay(response.headers()['retry-after']):undefined,captured,note:'Ad Library erişimi HTTP '+httpStatus+' ile sonuçlandı. '+(httpStatus===429?'Kaynağın hız sınırı için beklenip sınırlı yeniden deneme yapılacak.':'Reklam yok olarak yorumlanmadı.')};
+    if(restrictedDestination(page.url()))return {status:'blocked',http_status:httpStatus,reason:'ACCESS_RESTRICTED',captured,note:'Kaynak giriş veya doğrulama sayfasına yönlendirdi; tarama durduruldu.'};
     // Click an actual consent choice only; never remove login/challenge overlays.
     await page.evaluate(()=>{const buttons=[...document.querySelectorAll('button,[role="button"]')];const b=buttons.find(x=>/^(Decline optional cookies|Only allow essential cookies|İsteğe bağlı çerezleri reddet|Yalnızca gerekli çerezlere izin ver)$/i.test((x.innerText||'').trim()));b?.click()});
     await page.waitForFunction(()=>/(Library ID|Kütüphane Kodu)\s*:|0 results|0 sonuç|no ads found|sonuç bulunamadı|no ads match your search criteria|hiçbir reklam arama kriterinizle eşleşmiyor|captcha|log in to continue|temporarily blocked|currently unavailable/i.test(document.body.innerText),{timeout:25000}).catch(()=>{});
     let text=await page.evaluate(()=>document.body.innerText.slice(0,60000));
+    checkProxy();
     const state=pageState(text,httpStatus);
     if(state!=='cards')return {status:state==='no_ads'?'no_ads':state==='blocked'?'blocked':'error',http_status:httpStatus,reason:state==='blocked'?'ACCESS_RESTRICTED':state==='no_ads'?'NO_MATCHING_ADS':'CARDS_NOT_FOUND',captured,note:state==='no_ads'?'CY filtresinde açıkça sıfır sonuç gösterildi.':'Reklam kartları doğrulanamadı; erişim, oturum veya sayfa yapısı kontrolü gerekli.'};
     const seen=new Set();
@@ -91,6 +101,7 @@ export async function captureCloudAds(source,onCapture,{maxAds=12,timeoutMs=1100
         if(shots.some(b=>b.length>1500000))continue;
         const at=new Date().toISOString();
         const evidence=shots.map(bytes=>({sha256:createHash('sha256').update(bytes).digest('hex'),bytes,captured_at:at}));
+        checkProxy();
         await onCapture({brand:source.brand,page_id:source.page_id,ad_id:data.ad_id,variant_id:'1',source_url:url,
           observed_at:at,started_on:null,ad_status:/\bInactive\b|Aktif değil/i.test(data.ad_text)?'inactive':/\bActive\b|\bAktif\b/i.test(data.ad_text)?'active':'unknown',
           ad_text:data.ad_text,has_video:data.has_video,evidence});
@@ -100,10 +111,16 @@ export async function captureCloudAds(source,onCapture,{maxAds=12,timeoutMs=1100
       await page.evaluate(()=>window.scrollBy(0,1000));
       await new Promise(r=>setTimeout(r,900));
       text=await page.evaluate(()=>document.body.innerText.slice(0,60000));
-      if(pageState(text)==='blocked')break;
+      checkProxy();
+      if(pageState(text)==='blocked'||restrictedDestination(page.url()))return {status:'blocked',reason:'ACCESS_RESTRICTED',captured,note:'Tarama sırasında erişim kısıtı görüldü; kaydedilmiş görseller korundu.'};
     }
     return {status:captured?'partial':'error',captured,note:captured+' reklam görseli bulut sunucusunda kaydedildi. CY filtresi; en fazla '+maxAds+' kart. Video varsa yalnız görünen kare kaydedildi. Görsel analizi ayrı kuyrukta işlenir.'};
-  }catch{
+  }catch(error){
+    if(transport.mode==='proxy'&&!timedOut){
+      const message=String(error?.message||'');
+      const code=proxy?.getFailure()||(['PROXY_CONFIG_MISSING','PROXY_CONFIG_INVALID','PROXY_AUTH_FAILED','PROXY_ACCESS_DENIED','PROXY_CONNECTION_FAILED'].includes(message)?message:null);
+      if(code||/ERR_(?:PROXY|TUNNEL)_/.test(message))return {status:'blocked',reason:code||'PROXY_CONNECTION_FAILED',captured,note:'Proxy bağlantısı kurulamadı veya erişim reddedildi. Bağlantı ayarları kontrol edilmeli; kaydedilmiş görseller korundu.'};
+    }
     return {status:captured?'partial':'error',captured,note:timedOut?'Bulut taraması zaman aşımına uğradı; kaydedilmiş görseller korundu.':'Bulut tarayıcısı reklam kartlarını tamamlayamadı; kaydedilmiş görseller korundu.'};
-  }finally{clearTimeout(timeout);await browser?.close().catch(()=>{})}
+  }finally{clearTimeout(timeout);await browser?.close().catch(()=>{});await proxy?.close().catch(()=>{})}
 }

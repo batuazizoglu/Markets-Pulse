@@ -20,6 +20,20 @@ HTTP 429 is a temporary source rate limit. Respect `Retry-After` with a 15-minut
 
 Every screenshot is SHA-256 checked and saved directly to `ad_visual_evidence` before model inference. `ad_cloud_candidates` stores the evidence references, advertiser/ad identity, caption and actual capture time in the same transaction. Captured but unanalyzed cards do not appear as completed analyses. Old validated cards are never removed just because a scan fails or misses them.
 
+### Primary public-page proxy transport
+
+While official Ad Library API authorization is pending, production selects a fixed forward proxy for public-page capture. This does not grant API permissions. Configure these in **Railway → Market Pulse → Variables**; keep provider credentials out of the repository and chat:
+
+- `AD_CAPTURE_TRANSPORT=proxy`: require the proxy for all Ad Library browser requests. There is no automatic direct fallback.
+- `AD_CAPTURE_PROXY_URL`: one provider HTTP or HTTPS forward-proxy endpoint, including its port. Paths, query strings, SOCKS endpoints and provider scraping API URLs are not supported. The proxy must support HTTPS CONNECT.
+- `AD_CAPTURE_PROXY_USERNAME` and `AD_CAPTURE_PROXY_PASSWORD`: both required when the provider uses username/password authentication. Alternatively the URL may contain URL-encoded credentials; do not configure both forms.
+
+Chromium connects to a temporary loopback-only CONNECT adapter. The adapter sends credentials solely to the configured upstream proxy; credentials are never passed to Chromium, Meta origin authentication or model inference. Only TLS tunnels to the existing Meta host allowlist on port 443 are permitted, and certificate verification stays enabled. There is no proxy rotation, session impersonation, CAPTCHA handling or login/challenge bypass. HTTP 401/403/407 and login/checkpoint/challenge redirects stop that capture; already saved evidence is retained.
+
+Missing or invalid required proxy settings appear explicitly in the cloud status. Queued source jobs wait without consuming capture attempts; analysis of already stored images continues independently. After the configuration is completed and Railway redeploys, pending jobs can resume on the next worker tick. Historical blocked jobs are not automatically reset; a normal daily batch or **Bulutta tara** schedules subsequent collection. A configured endpoint is not proof of live Meta access: check actual source outcomes and evidence before reporting successful capture.
+
+The code defaults to direct transport only when neither a mode nor endpoint is supplied, for compatibility with existing development environments. An endpoint alone selects proxy mode. Explicit `AD_CAPTURE_TRANSPORT=direct` is a deliberate operational switch, not a fallback. Production uses explicit proxy mode even before provider details are available.
+
 ### Additional verified pages — 2026-09-19
 
 The user supplied these Ad Library page IDs. Their selected advertiser headings were checked on Meta's public Ad Library with **CY / active ads / all ad types**. They map to existing product-provider brands, not duplicate companies.
@@ -64,6 +78,6 @@ Existing `chatgpt-browser-visual` manifests remain readable for historical maint
 
 ## Verification and operation
 
-`node --test test/ad-cloud.test.js test/ad-visual.test.js` exercises real database transactions with synthetic isolated evidence. CI also checks desktop/mobile views. No production model key is needed for tests. Unit tests validate the API request contract but do not prove a particular live account has model access; a successful production inference must be verified after configuring the key.
+`node --test test/ad-capture-proxy.test.js test/ad-cloud.test.js test/ad-visual.test.js` exercises local synthetic CONNECT proxies and real database transactions with isolated evidence. CI also checks desktop/mobile views. No production proxy or model key is needed for tests. Unit tests validate the transport and API request contracts but do not prove a particular live provider can access Meta or a model; successful production capture and inference must be verified separately after configuration.
 
 Logs `[ad-cloud-capture]` report source outcome, safe HTTP/reason codes, captured count and retry time. `[ad-cloud-source-status]` reports existing source outcomes once per worker start without provider response bodies. `[ad-cloud-review]` reports queued second passes; `[ad-cloud-worker]` includes analyzed brand, category, pass, candidate counts and daily calls. It never labels a missing-key run successful. Confirm the deployment commit, worker logs, source outcomes and an actually analyzed candidate before claiming end-to-end operation. A server-side Meta block may still require a separately authorized data source; do not bypass it.
