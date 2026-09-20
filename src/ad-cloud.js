@@ -5,6 +5,9 @@ import {captureTransportStatus} from './ad-capture-proxy.js';
 import {getProxyPoolStatus,selectCaptureProxy,recordProxyResult,canFailoverProxy} from './ad-proxy-pool.js';
 import {analyzeCloudImage,visionConfig} from './ad-cloud-vision.js';
 import {validateAdFeed,importAdFeed} from './ad-visual.js';
+import {providerConfig,providerStatus} from './ad-provider-client.js';
+import {runProviderTick,getProviderStatus} from './ad-provider-worker.js';
+import {normalizeProviderJpeg} from './ad-provider-image.js';
 
 export const CLOUD_SCHEDULE={enabled:true,description:'Bulutta her gün 06:00; Telsim ve sayfası doğrulanmış rakipler',timezone:'Asia/Famagusta'};
 export function localCloudTime(now=new Date()){
@@ -35,7 +38,7 @@ export async function queueNewCloudSources(pool,sources,owner){
     return added;
   });
 }
-export async function queueCloudReview(pool,sources,{manual=false,now=new Date()}={}){
+export async function queueCloudReview(pool,sources,{manual=false,now=new Date(),env=process.env}={}){
   const local=localCloudTime(now);
   if(!manual&&local.hour<6)return {queued:0};
   return transaction(pool,async db=>{
@@ -52,7 +55,7 @@ export async function queueCloudReview(pool,sources,{manual=false,now=new Date()
     // Unverified keyword searches cannot be captured and must not consume the
     // six daily competitor slots ahead of known advertiser pages.
     const directory=socialDirectory(sources).filter(source=>adLibrarySource(source));
-    const selected=[...directory.filter(x=>x.brand==='Telsim'),...directory.filter(x=>x.brand!=='Telsim').sort((a,b)=>(dates.get(a.brand)||0)-(dates.get(b.brand)||0)||Number(Boolean(b.page_id))-Number(Boolean(a.page_id))).slice(0,6)];
+    const selected=[...directory.filter(x=>x.brand==='Telsim'),...directory.filter(x=>x.brand!=='Telsim').sort((a,b)=>(dates.get(a.brand)||0)-(dates.get(b.brand)||0)||Number(Boolean(b.page_id))-Number(Boolean(a.page_id))).slice(0,providerConfig(env).mode==='apify'?undefined:6)];
     const batch=manual?'manual-'+randomUUID():'daily-'+local.day;let queued=0;
     for(const source of selected){
       const active=await db.query("SELECT id FROM ad_cloud_jobs WHERE brand=$1 AND status IN ('queued','running','retry') LIMIT 1",[source.brand]);
@@ -93,24 +96,33 @@ export async function queueStoredAdReviews(pool,sources,{manual=false,key=null,n
     return {queued,missing_evidence};
   });
 }
-export async function saveCloudCapture(pool,candidate,job,owner){
-  if(!candidate.evidence?.length||candidate.evidence.length>3||candidate.evidence.some(x=>x.bytes.length>1500000||hash(x.bytes)!==x.sha256||x.bytes[0]!==255||x.bytes[1]!==216))throw new Error('CLOUD_INVALID_EVIDENCE');
-  if(candidate.brand!==job.brand||candidate.page_id!==job.source_json.page_id||!/^\d{5,30}$/.test(candidate.ad_id))throw new Error('CLOUD_IDENTITY_MISMATCH');
+// Shared transaction primitive: provider asset completion and capture commit together.
+export async function persistCloudCapture(db,candidate,job){
+  if(!candidate.evidence?.length||candidate.evidence.length>3||candidate.evidence.some(x=>!Buffer.isBuffer(x.bytes)||x.bytes.length>1500000||hash(x.bytes)!==x.sha256||x.bytes[0]!==255||x.bytes[1]!==216))throw new Error('CLOUD_INVALID_EVIDENCE');
+  if(candidate.brand!==job.brand||candidate.page_id!==job.source_json.page_id||!/^\d{5,30}$/.test(candidate.ad_id)||!/^[-a-zA-Z0-9_]{1,40}$/.test(candidate.variant_id))throw new Error('CLOUD_IDENTITY_MISMATCH');
   const adKey=[candidate.page_id,candidate.ad_id,candidate.variant_id].join(':');
   const {evidence,...payload}=candidate;
   payload.images=evidence.map(x=>({sha256:x.sha256,path:'evidence/'+x.sha256+'.jpg',captured_at:x.captured_at}));
   const fingerprint=hash(JSON.stringify({images:payload.images.map(x=>x.sha256),text:payload.ad_text}));
-  await transaction(pool,async db=>{
-    await assertLease(db,owner);
-    for(const image of evidence)await db.query('INSERT INTO ad_visual_evidence(sha256,jpeg) VALUES($1,$2) ON CONFLICT DO NOTHING',[image.sha256,image.bytes]);
-    await db.query(`INSERT INTO ad_cloud_candidates(ad_key,job_id,fingerprint,payload,observed_at) VALUES($1,$2,$3,$4::jsonb,$5)
-      ON CONFLICT(ad_key) DO UPDATE SET job_id=EXCLUDED.job_id,
-      analysis_json=CASE WHEN ad_cloud_candidates.fingerprint=EXCLUDED.fingerprint THEN ad_cloud_candidates.analysis_json ELSE NULL END,
-      review_round=CASE WHEN ad_cloud_candidates.fingerprint=EXCLUDED.fingerprint THEN ad_cloud_candidates.review_round ELSE 0 END,
-      fingerprint=EXCLUDED.fingerprint,payload=EXCLUDED.payload,observed_at=EXCLUDED.observed_at,status='pending',attempts=0,last_error=NULL,available_at=NOW()`,
-      [adKey,job.id,fingerprint,JSON.stringify(payload),candidate.observed_at]);
-    await db.query('UPDATE ad_cloud_jobs SET captured=captured+1 WHERE id=$1',[job.id]);
-  });
+  for(const image of evidence)await db.query('INSERT INTO ad_visual_evidence(sha256,jpeg) VALUES($1,$2) ON CONFLICT DO NOTHING',[image.sha256,image.bytes]);
+  await db.query(`INSERT INTO ad_cloud_candidates(ad_key,job_id,fingerprint,payload,observed_at) VALUES($1,$2,$3,$4::jsonb,$5)
+    ON CONFLICT(ad_key) DO UPDATE SET job_id=EXCLUDED.job_id,
+    analysis_json=CASE WHEN ad_cloud_candidates.fingerprint=EXCLUDED.fingerprint THEN ad_cloud_candidates.analysis_json ELSE NULL END,
+    analyzed_at=CASE WHEN ad_cloud_candidates.fingerprint=EXCLUDED.fingerprint THEN ad_cloud_candidates.analyzed_at ELSE NULL END,
+    review_round=CASE WHEN ad_cloud_candidates.fingerprint=EXCLUDED.fingerprint THEN ad_cloud_candidates.review_round ELSE 0 END,
+    status=CASE WHEN ad_cloud_candidates.fingerprint=EXCLUDED.fingerprint THEN ad_cloud_candidates.status ELSE 'pending' END,
+    attempts=CASE WHEN ad_cloud_candidates.fingerprint=EXCLUDED.fingerprint THEN ad_cloud_candidates.attempts ELSE 0 END,
+    last_error=CASE WHEN ad_cloud_candidates.fingerprint=EXCLUDED.fingerprint THEN ad_cloud_candidates.last_error ELSE NULL END,
+    available_at=CASE WHEN ad_cloud_candidates.fingerprint=EXCLUDED.fingerprint THEN ad_cloud_candidates.available_at ELSE NOW() END,
+    payload=CASE WHEN ad_cloud_candidates.fingerprint=EXCLUDED.fingerprint THEN ad_cloud_candidates.payload ELSE EXCLUDED.payload END,
+    observed_at=CASE WHEN ad_cloud_candidates.fingerprint=EXCLUDED.fingerprint THEN ad_cloud_candidates.observed_at ELSE EXCLUDED.observed_at END,
+    fingerprint=EXCLUDED.fingerprint`,[adKey,job.id,fingerprint,JSON.stringify(payload),candidate.observed_at]);
+  const link=await db.query('INSERT INTO ad_cloud_capture_links(job_id,ad_key) VALUES($1,$2) ON CONFLICT DO NOTHING RETURNING ad_key',[job.id,adKey]);
+  await db.query('UPDATE ad_cloud_jobs SET captured=(SELECT COUNT(*)::int FROM ad_cloud_capture_links WHERE job_id=$1) WHERE id=$1',[job.id]);
+  return {ad_key:adKey,added:link.rows.length===1};
+}
+export async function saveCloudCapture(pool,candidate,job,owner){
+  return transaction(pool,async db=>{await assertLease(db,owner);return persistCloudCapture(db,candidate,job)});
 }
 async function cloudCoverage(pool){
   const jobs=await pool.query("SELECT DISTINCT ON (brand) brand,source_json,status,created_at,finished_at,captured,note FROM ad_cloud_jobs WHERE status<>'imported' ORDER BY brand,created_at DESC,id DESC");
@@ -161,21 +173,21 @@ export async function analyzeNextCloudCandidate(pool,sources,owner,{env=process.
 }
 export async function getCloudStatus(pool,{env=process.env}={}){
   const config=visionConfig(env);
-  const [control,jobs,counts,errors,transport]=await Promise.all([
+  const [control,jobs,counts,errors,transport,provider]=await Promise.all([
     pool.query('SELECT heartbeat_at,vision_day,vision_calls,capture_after FROM ad_cloud_control WHERE id=1'),
     pool.query("SELECT DISTINCT ON (brand) brand,status,captured,note,created_at,finished_at,available_at FROM ad_cloud_jobs WHERE status<>'imported' ORDER BY brand,created_at DESC,id DESC"),
     pool.query('SELECT status,count(*)::int count,MAX(analyzed_at) last_analyzed_at FROM ad_cloud_candidates GROUP BY status'),
     pool.query('SELECT last_error FROM ad_cloud_candidates WHERE last_error IS NOT NULL ORDER BY observed_at DESC LIMIT 1'),
-    getProxyPoolStatus(pool,{env})]);
+    getProxyPoolStatus(pool,{env}),getProviderStatus(pool,{env})]);
   const row=control.rows[0]||{},heartbeat=row.heartbeat_at;
-  return {mode:'cloud',schedule:CLOUD_SCHEDULE,capture_transport:transport,vision_configured:config.configured,
+  return {mode:'cloud',schedule:CLOUD_SCHEDULE,capture_transport:transport,capture_provider:provider,vision_configured:config.configured,
     analysis_status:config.configured?'configured':'waiting_config',
     message:!config.configured?'Bulut taraması etkin. Görsel analiz için sunucu API bağlantısı eksik; kaydedilen görseller kuyrukta bekler.':errors.rows.length?'Son görsel analizi tamamlanamadı. Kayıtlar kuyrukta korunuyor; servis bağlantısı ve kota kontrol edilmeli.':'Görseller sunucuda analiz edilir.',
     worker_heartbeat:heartbeat||null,worker_online:Boolean(heartbeat&&Date.now()-+new Date(heartbeat)<180000),
     calls_today:row.vision_day===localCloudTime().day?row.vision_calls:0,daily_limit:config.dailyLimit,capture_after:row.capture_after||null,
     candidates:Object.fromEntries(counts.rows.map(x=>[x.status,x.count])),sources:jobs.rows};
 }
-export function createCloudWorker(pool,sources,{capture=captureCloudAds,analyze=analyzeCloudImage,env=process.env,log=console.log}={}){
+export function createCloudWorker(pool,sources,{capture=captureCloudAds,analyze=analyzeCloudImage,env=process.env,log=console.log,providerTick=runProviderTick}={}){
   let running=false,reportedSources=false;
   return async function tick(){
     if(running)return {status:'busy'};running=true;
@@ -185,9 +197,18 @@ export function createCloudWorker(pool,sources,{capture=captureCloudAds,analyze=
       if(!lock.rows.length)return {status:'busy'};lease=true;
       const added=await queueNewCloudSources(pool,sources,owner);
       if(added.length)log('[ad-cloud-sources]',JSON.stringify({registered:added.length,brands:added}));
-      await queueCloudReview(pool,sources);
+      await queueCloudReview(pool,sources,{env});
       const reviews=await queueStoredAdReviews(pool,sources);
       if(reviews.queued)log('[ad-cloud-review]',JSON.stringify(reviews));
+      const provider=providerConfig(env);
+      await pool.query("UPDATE ad_cloud_candidates SET status='error',last_error=COALESCE(last_error,'VISION_RETRY_EXHAUSTED') WHERE status='retry' AND attempts>=3 AND available_at<=NOW()");
+      const transport=provider.mode==='apify'||provider.code?providerStatus(env):captureTransportStatus(env);
+      let scan=transport.configured?null:{status:'waiting_config',reason:transport.code};
+      if(provider.mode==='apify'){
+        try{scan=await providerTick(pool,sources,{env,owner,assertLease,persistCapture:persistCloudCapture,normalizeImage:normalizeProviderJpeg})}
+        catch(e){scan={status:'error',reason:/^PROVIDER_[A-Z_]+$/.test(e.code||'')?e.code:'PROVIDER_WORKER_ERROR'}}
+        log('[ad-provider]',JSON.stringify(scan));
+      }else{
       // Upgrade old HTTP 429 outcomes to bounded retries; hard access/challenge blocks stay blocked.
       const recovered=await pool.query(`UPDATE ad_cloud_jobs SET status='retry',available_at=GREATEST(NOW(),finished_at+INTERVAL '15 minutes')
         WHERE status='blocked' AND note LIKE '%HTTP 429%' AND attempts<3 AND created_at>NOW()-INTERVAL '2 days'
@@ -196,16 +217,13 @@ export function createCloudWorker(pool,sources,{capture=captureCloudAds,analyze=
         const after=new Date(Math.max(...recovered.rows.map(x=>+new Date(x.available_at))));
         await pool.query('UPDATE ad_cloud_control SET capture_after=GREATEST(capture_after,$1) WHERE id=1',[after]);
       }
-      await pool.query("UPDATE ad_cloud_candidates SET status='error',last_error=COALESCE(last_error,'VISION_RETRY_EXHAUSTED') WHERE status='retry' AND attempts>=3 AND available_at<=NOW()");
       // An interrupted capture resumes from persisted candidates and remains bounded to three tries.
-      await pool.query("UPDATE ad_cloud_jobs SET status=CASE WHEN attempts>=3 THEN 'error' ELSE 'retry' END,available_at=NOW(),note='Sunucu yeniden başladı; tamamlanan görseller korundu.' WHERE status='running'");
-      await pool.query("UPDATE ad_cloud_jobs SET status='error' WHERE status='retry' AND attempts>=3");
-      const transport=captureTransportStatus(env);
-      let scan=transport.configured?null:{status:'waiting_config',reason:transport.code};
+      await pool.query("UPDATE ad_cloud_jobs SET status=CASE WHEN attempts>=3 THEN 'error' ELSE 'retry' END,available_at=NOW(),note='Sunucu yeniden başladı; tamamlanan görseller korundu.' WHERE status='running' AND NOT EXISTS (SELECT 1 FROM ad_provider_runs p WHERE p.job_id=ad_cloud_jobs.id)");
+      await pool.query("UPDATE ad_cloud_jobs SET status='error' WHERE status='retry' AND attempts>=3 AND NOT EXISTS (SELECT 1 FROM ad_provider_runs p WHERE p.job_id=ad_cloud_jobs.id)");
       for(let n=0;transport.configured&&n<7;n++){
         const cooling=await pool.query('SELECT id FROM ad_cloud_control WHERE id=1 AND capture_after>NOW()');
         if(cooling.rows.length)break;
-        const next=(await pool.query("SELECT * FROM ad_cloud_jobs WHERE status IN ('queued','retry') AND attempts<3 AND available_at<=NOW() ORDER BY id LIMIT 1")).rows[0];
+        const next=(await pool.query("SELECT * FROM ad_cloud_jobs WHERE status IN ('queued','retry') AND attempts<3 AND available_at<=NOW() AND NOT EXISTS (SELECT 1 FROM ad_provider_runs p WHERE p.job_id=ad_cloud_jobs.id) ORDER BY id LIMIT 1")).rows[0];
         if(!next)break;
         let selected=null;
         if(transport.mode==='proxy'&&adLibrarySource(next.source_json)){
@@ -265,6 +283,7 @@ export function createCloudWorker(pool,sources,{capture=captureCloudAds,analyze=
         log('[ad-cloud-capture]',JSON.stringify({brand:job.brand,transport:transport.mode,proxy_id:scan.proxy_id||null,proxy_attempts:tried.length,status,http_status:scan.http_status||null,reason:scan.reason||null,captured:scan.captured||0,retry_at:status==='retry'?availableAt.toISOString():null}));
         if(adLibrarySource(job.source_json))break;
       }
+      }
       const analysis=await analyzeNextCloudCandidate(pool,sources,owner,{env,analyze});
       const status=await getCloudStatus(pool,{env});
       if(!reportedSources){log('[ad-cloud-source-status]',JSON.stringify(status.sources.map(s=>({brand:s.brand,status:s.status,http_status:Number(s.note?.match(/HTTP (\d{3})/)?.[1])||null}))));reportedSources=true}
@@ -291,6 +310,6 @@ export function registerCloudRoutes(app,pool,sources){
     if(!req.is('application/json'))return res.status(415).json({error:'JSON gerekli'});
     if(req.get('sec-fetch-site')==='cross-site')return res.status(403).json({error:'Aynı siteden gönderim gerekli'});
     try{const origin=req.get('origin');if(origin&&new URL(origin).host!==req.get('host'))return res.status(403).json({error:'Geçersiz kaynak'})}catch{return res.status(403).json({error:'Geçersiz kaynak'})}
-    try{const result=await queueCloudReview(pool,sources,{manual:true});if(result.rate_limited)return res.status(429).json({error:'Yeni bulut taraması için 5 dakika bekleyin.'});const transport=captureTransportStatus();res.status(202).json({...result,capture_transport:transport,message:transport.configured?'Tarama sunucu kuyruğuna alındı; sayfayı kapatabilirsiniz.':'Tarama kuyruğa alındı; proxy bağlantısı tamamlanınca sunucuda başlayacak.'})}catch(e){next(e)}
+    try{const result=await queueCloudReview(pool,sources,{manual:true});if(result.rate_limited)return res.status(429).json({error:'Yeni bulut taraması için 5 dakika bekleyin.'});const provider=providerStatus(),transport=provider.mode==='apify'||provider.code?provider:captureTransportStatus();res.status(202).json({...result,capture_transport:transport,message:transport.configured?'Tarama sunucu kuyruğuna alındı; sayfayı kapatabilirsiniz.':provider.mode==='apify'?'Tarama kuyruğa alındı; veri sağlayıcısı anahtarı ve harcama sınırları bekleniyor.':'Tarama kuyruğa alındı; proxy bağlantısı tamamlanınca sunucuda başlayacak.'})}catch(e){next(e)}
   });
 }

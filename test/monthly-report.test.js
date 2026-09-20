@@ -20,7 +20,9 @@ before(async()=>{
   for(const time of [start,new Date(start.getTime()-1),end])await pool.query(`INSERT INTO changes(source_id,scan_id,detected_at,change_type,new_value,severity) VALUES(1,1,$1,'added','Sınır paketi','critical')`,[time.toISOString()]);
   for(const [slug,name] of [['fixed-test','Sabit paket'],['telsim-redbox','Red Box']])await pool.query(`INSERT INTO home_internet_changes(source_slug,provider,product_name,detected_at,change_type,new_value)
     SELECT $1,'Örnek',$2,$3,'added','699' FROM generate_series(1,151)`,[slug,name,new Date(end.getTime()-3600000).toISOString()]);
-  await pool.query(`INSERT INTO competitive_position_history(bucket_at,segment,score) VALUES($1,'Genel',60),($2,'Genel',70),($3,'Genel',NULL)`,[new Date(end.getTime()-7200000).toISOString(),new Date(end.getTime()-3600000).toISOString(),end.toISOString()]);
+  // Keep both score samples in one local week even when CI runs across Monday midnight.
+  const trendAnchor=new Date(end.getTime()-86400000);trendAnchor.setUTCHours(12,0,0,0);
+  await pool.query(`INSERT INTO competitive_position_history(bucket_at,segment,score) VALUES($1,'Genel',60),($2,'Genel',70),($3,'Genel',NULL)`,[new Date(trendAnchor.getTime()-7200000).toISOString(),new Date(trendAnchor.getTime()-3600000).toISOString(),end.toISOString()]);
   await pool.query("UPDATE competitive_position_history SET details_json=jsonb_build_object('engine_version',$1::text)",[ENGINE_VERSION]);
   const loaders={
     currentBenchmark:async()=>({overall_score:{segment:'Genel',score:70,level:'Örnek'},segment_scores:[]}),
