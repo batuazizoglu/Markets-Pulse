@@ -160,6 +160,25 @@ test('three failing proxies stay bounded to two physical connections per tick an
   }finally{await db.close()}
 });
 
+test('a scheduled retry tries an untouched connection after earlier network cooldowns expire',async()=>{
+  const db=await fixture(),env=poolEnv(3),calls=[];
+  try{
+    const worker=createCloudWorker(db,HOME_INTERNET_SOURCES,{env,log:quiet,capture:async(source,save,{proxyConfig})=>{
+      calls.push(proxyConfig.id);
+      if(proxyConfig.id!=='third')return outage();
+      await save(observation(source));return {status:'partial',captured:1};
+    }});
+    await worker();assert.deepEqual(calls,['primary','backup']);
+    // Normal source retries occur after 10 minutes, longer than the first 5-minute cooldown.
+    await db.query("UPDATE ad_cloud_proxy_health SET cooldown_until=NOW()-INTERVAL '1 second'");
+    await db.query("UPDATE ad_cloud_jobs SET available_at=NOW()-INTERVAL '1 second' WHERE brand='Telsim'");
+    await worker();assert.deepEqual(calls,['primary','backup','third']);
+    const job=await target(db);
+    assert.equal(job.status,'partial');assert.equal(job.attempts,2);assert.equal(job.proxy_attempts,3);assert.equal(job.captured,1);
+    assert.equal(job.proxy_key,captureTransportConfig(env).proxies[2].key);
+  }finally{await db.close()}
+});
+
 test('removing the pinned connection leaves its retry waiting without consuming attempts or redirecting',async()=>{
   const db=await fixture(),initial=poolEnv(),key=captureTransportConfig(initial).proxies[0].key;
   const env={AD_CAPTURE_TRANSPORT:'proxy',AD_CAPTURE_PROXIES:JSON.stringify([entries[1]])};

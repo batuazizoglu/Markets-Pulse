@@ -47,12 +47,18 @@ export async function selectCaptureProxy(db,{env=process.env,now=Date.now(),excl
   const candidates=pinnedKey==null?config.proxies:config.proxies.filter(proxy=>proxy.key===pinnedKey);
   if(pinnedKey!=null&&!candidates.length)return empty('PROXY_PIN_MISSING');
   const rows=await healthRows(db,candidates),excluded=new Set(excludeKeys),retries=[];
+  let selected=null,selectedFailures=Infinity;
   for(const proxy of candidates){
     if(excluded.has(proxy.key))continue;
-    const retry_at=futureRetry(rows.get(proxy.key),now);
+    const row=rows.get(proxy.key),retry_at=futureRetry(row,now);
     if(retry_at){retries.push(retry_at);continue}
-    return {proxy:{mode:'proxy',configured:true,code:null,...proxy},reason:null,retry_at:null};
+    // A short cooldown can expire before the job retries. Prefer fewer confirmed
+    // network failures so early failed entries cannot starve untried connections.
+    // Keeping the first equal score preserves configuration order and exact pins.
+    const failures=row?.consecutive_failures??0;
+    if(failures<selectedFailures){selected=proxy;selectedFailures=failures}
   }
+  if(selected)return {proxy:{mode:'proxy',configured:true,code:null,...selected},reason:null,retry_at:null};
   return empty('PROXY_POOL_COOLDOWN',retries.sort()[0]||null);
 }
 

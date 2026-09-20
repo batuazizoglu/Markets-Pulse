@@ -38,7 +38,7 @@ Example structure for the multi-proxy Railway variable (replace the placeholders
 ]
 ```
 
-Selection follows the configured order, skipping proxies whose transport cooldown has not expired. A confirmed failure to connect to the upstream proxy, or its HTTP 502/503/504 gateway failure before successful page navigation, can select one backup. A source run uses at most two proxies within its shared 110-second budget. Existing source jobs still have at most three attempts. Empty/unknown page structure, missing images, general browser timeouts and failures after successful page navigation do not trigger switching.
+Selection skips proxies whose transport cooldown has not expired, then prefers fewer consecutive transport failures; configured order breaks ties. This lets healthy or untouched connections run before previously failed ones even when a source's 10-minute retry occurs after their initial 5-minute cooldown. An exact job pin still takes precedence over this ranking. A confirmed failure to connect to the upstream proxy, or its HTTP 502/503/504 gateway failure before successful page navigation, can select one backup. A source run uses at most two proxies within its shared 110-second budget. Existing source jobs still have at most three attempts. Empty/unknown page structure, missing images, general browser timeouts and failures after successful page navigation do not trigger switching.
 
 Transport failures persist in `ad_cloud_proxy_health`: a failing proxy waits 5, 10, 20, 40 and then at most 60 minutes after consecutive failures. Successful ad capture or an explicit no-ads response resets its transport cooldown. This is passive health tracking from actual collection, not a separate probing job. Health records contain a fingerprint and safe result codes, never endpoints or credentials. Restarting Railway does not reset cooldowns. The UI distinguishes unverified, last-successful and temporarily waiting connections; availability alone is not evidence of successful Meta access.
 
@@ -49,6 +49,16 @@ Chromium connects to a temporary loopback-only CONNECT adapter. The adapter send
 Missing or invalid required proxy settings appear explicitly in the cloud status. Queued source jobs wait without consuming capture attempts; analysis of already stored images continues independently. After the configuration is completed and Railway redeploys, pending jobs can resume on the next worker tick. Historical blocked jobs are not automatically reset; a normal daily batch or **Bulutta tara** schedules subsequent collection. A configured endpoint is not proof of live Meta access: check actual source outcomes and evidence before reporting successful capture.
 
 The code defaults to direct transport only when neither a mode nor proxy configuration is supplied, for compatibility with existing development environments. A URL or nonempty pool variable alone selects proxy mode. Explicit `AD_CAPTURE_TRANSPORT=direct` is a deliberate operational switch, not a fallback. Production uses explicit proxy mode even before provider details are available.
+
+### Free provider assessment — 2026-09-20
+
+| Source | Free offer verified from the provider | Integration |
+| --- | --- | --- |
+| [ProxyScrape](https://proxyscrape.com/free-proxy-list) | Public list, no signup; unknown bandwidth and intermittent availability | Five recent HTTP CONNECT candidates imported into Railway's existing pool from the [official HTTPS-capable mirror](https://github.com/ProxyScrape/free-proxy-list/tree/main/proxies/protocols/https). Only public IPv4 addresses and valid ports were admitted. |
+| [Webshare](https://www.webshare.io/features/free-proxy) | 10 proxies and 1 GB per month, continuing free tier; account required, no card | Existing pool accepts its individual HTTP proxy endpoints and credentials. No account was created or paid plan purchased. |
+| [Oxylabs](https://oxylabs.io/products/free-proxies) | 5 US proxies and 5 GB, free for one month; account required, no card | Trial option only; no account or trial activated. |
+
+The imported public endpoints are a fixed experimental set, not a continuously rotating feed. Provider metadata indicates recent checks, not verified reachability from Railway or successful Meta access. The first production run recorded transport failures on two candidates and no new images; existing evidence remained intact. Public lists can become stale quickly and offer no uptime guarantee. Endpoint values stay in Railway Variables, not the repository. No account credentials, OpenAI requests or application/database traffic are routed through them; the existing browser bridge remains limited to Meta HTTPS destinations with certificate verification.
 
 ### Additional verified pages — 2026-09-19
 

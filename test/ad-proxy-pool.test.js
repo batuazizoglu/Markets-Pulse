@@ -89,6 +89,39 @@ test('proxy outage cooldown grows from five minutes to a sixty minute cap and su
   }finally{await db.close()}
 });
 
+test('expired network failures yield to untried connections without changing exclusions, pins or health',async()=>{
+  const db=await fixture();
+  try{
+    const first=(await selectCaptureProxy(db,{env,now:start})).proxy;
+    await recordProxyResult(db,first,outage,{now:start});
+    const before=(await db.query('SELECT * FROM ad_cloud_proxy_health')).rows;
+    const retryTime=start+600000;
+    const second=(await selectCaptureProxy(db,{env,now:retryTime})).proxy;
+    assert.equal(second.id,'backup');
+    assert.equal((await selectCaptureProxy(db,{env,now:retryTime,excludeKeys:[second.key]})).proxy.key,first.key);
+    assert.equal((await selectCaptureProxy(db,{env,now:retryTime,pinnedKey:first.key})).proxy.key,first.key);
+    assert.deepEqual((await db.query('SELECT * FROM ad_cloud_proxy_health')).rows,before);
+    await recordProxyResult(db,first,{status:'no_ads',captured:0},{now:retryTime});
+    assert.equal((await selectCaptureProxy(db,{env,now:retryTime})).proxy.key,first.key);
+  }finally{await db.close()}
+});
+
+test('eligible proxies rank by consecutive network failures with deterministic configuration-order ties',async()=>{
+  const db=await fixture();
+  try{
+    const configured=captureTransportConfig(env).proxies;
+    const first={mode:'proxy',configured:true,...configured[0]},second={mode:'proxy',configured:true,...configured[1]};
+    await recordProxyResult(db,first,outage,{now:start});
+    await recordProxyResult(db,second,outage,{now:start});
+    const retryTime=start+600000;
+    for(let i=0;i<3;i++)assert.equal((await selectCaptureProxy(db,{env,now:retryTime})).proxy.key,first.key);
+    const reversed={...env,AD_CAPTURE_PROXIES:JSON.stringify([...entries].reverse())};
+    assert.equal((await selectCaptureProxy(db,{env:reversed,now:retryTime})).proxy.key,second.key);
+    await recordProxyResult(db,first,outage,{now:retryTime});
+    assert.equal((await selectCaptureProxy(db,{env,now:retryTime+600000})).proxy.key,second.key);
+  }finally{await db.close()}
+});
+
 test('sticky proxy selection waits for its own connection and never silently replaces a removed pin',async()=>{
   const db=await fixture();
   try{
