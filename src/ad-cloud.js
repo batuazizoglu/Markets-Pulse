@@ -1,6 +1,7 @@
 import {randomUUID,createHash} from 'node:crypto';
 import {socialDirectory} from './isp-registry.js';
 import {captureCloudAds,adLibrarySource} from './ad-cloud-capture.js';
+import {captureTransportStatus} from './ad-capture-proxy.js';
 import {analyzeCloudImage,visionConfig} from './ad-cloud-vision.js';
 import {validateAdFeed,importAdFeed} from './ad-visual.js';
 
@@ -163,7 +164,7 @@ export async function getCloudStatus(pool,{env=process.env}={}){
     pool.query('SELECT status,count(*)::int count,MAX(analyzed_at) last_analyzed_at FROM ad_cloud_candidates GROUP BY status'),
     pool.query('SELECT last_error FROM ad_cloud_candidates WHERE last_error IS NOT NULL ORDER BY observed_at DESC LIMIT 1')]);
   const row=control.rows[0]||{},heartbeat=row.heartbeat_at;
-  return {mode:'cloud',schedule:CLOUD_SCHEDULE,vision_configured:config.configured,
+  return {mode:'cloud',schedule:CLOUD_SCHEDULE,capture_transport:captureTransportStatus(env),vision_configured:config.configured,
     analysis_status:config.configured?'configured':'waiting_config',
     message:!config.configured?'Bulut taraması etkin. Görsel analiz için sunucu API bağlantısı eksik; kaydedilen görseller kuyrukta bekler.':errors.rows.length?'Son görsel analizi tamamlanamadı. Kayıtlar kuyrukta korunuyor; servis bağlantısı ve kota kontrol edilmeli.':'Görseller sunucuda analiz edilir.',
     worker_heartbeat:heartbeat||null,worker_online:Boolean(heartbeat&&Date.now()-+new Date(heartbeat)<180000),
@@ -194,26 +195,27 @@ export function createCloudWorker(pool,sources,{capture=captureCloudAds,analyze=
       await pool.query("UPDATE ad_cloud_candidates SET status='error',last_error=COALESCE(last_error,'VISION_RETRY_EXHAUSTED') WHERE status='retry' AND attempts>=3 AND available_at<=NOW()");
       // An interrupted capture resumes from persisted candidates and remains bounded to three tries.
       await pool.query("UPDATE ad_cloud_jobs SET status=CASE WHEN attempts>=3 THEN 'error' ELSE 'retry' END,available_at=NOW(),note='Sunucu yeniden başladı; tamamlanan görseller korundu.' WHERE status='running'");
-      let scan=null;
-      for(let n=0;n<7;n++){
+      const transport=captureTransportStatus(env);
+      let scan=transport.configured?null:{status:'waiting_config',reason:transport.code};
+      for(let n=0;transport.configured&&n<7;n++){
         const cooling=await pool.query('SELECT id FROM ad_cloud_control WHERE id=1 AND capture_after>NOW()');
         if(cooling.rows.length)break;
         const result=await pool.query("UPDATE ad_cloud_jobs SET status='running',attempts=attempts+1,started_at=NOW() WHERE id=(SELECT id FROM ad_cloud_jobs WHERE status IN ('queued','retry') AND available_at<=NOW() ORDER BY id LIMIT 1) RETURNING *");
         const job=result.rows[0];if(!job)break;
-        try{scan=await capture(job.source_json,c=>saveCloudCapture(pool,c,job,owner))}catch{scan={status:'error',note:'Bulut tarayıcısı çalıştırılamadı; sonraki deneme kuyrukta.'}}
+        try{scan=await capture(job.source_json,c=>saveCloudCapture(pool,c,job,owner),{env})}catch{scan={status:'error',note:'Bulut tarayıcısı çalıştırılamadı; sonraki deneme kuyrukta.'}}
         const limited=scan.status==='rate_limited';
         const status=(scan.status==='error'||limited)&&job.attempts<3?'retry':limited?'blocked':scan.status;
         const delay=limited?Math.max(15*60000,Math.min(86400000,Number(scan.retry_after_ms)||15*60000)):10*60000;
         const availableAt=new Date(Date.now()+delay);
         await pool.query('UPDATE ad_cloud_jobs SET status=$1,note=$2,finished_at=NOW(),available_at=$4 WHERE id=$3',[status,String(scan.note||'').slice(0,2000),job.id,availableAt]);
         if(limited)await pool.query('UPDATE ad_cloud_control SET capture_after=$1 WHERE id=1',[availableAt]);
-        log('[ad-cloud-capture]',JSON.stringify({brand:job.brand,status,http_status:scan.http_status||null,reason:scan.reason||null,captured:scan.captured||0,retry_at:status==='retry'?availableAt.toISOString():null}));
+        log('[ad-cloud-capture]',JSON.stringify({brand:job.brand,transport:transport.mode,status,http_status:scan.http_status||null,reason:scan.reason||null,captured:scan.captured||0,retry_at:status==='retry'?availableAt.toISOString():null}));
         if(adLibrarySource(job.source_json))break;
       }
       const analysis=await analyzeNextCloudCandidate(pool,sources,owner,{env,analyze});
       const status=await getCloudStatus(pool,{env});
       if(!reportedSources){log('[ad-cloud-source-status]',JSON.stringify(status.sources.map(s=>({brand:s.brand,status:s.status,http_status:Number(s.note?.match(/HTTP (\d{3})/)?.[1])||null}))));reportedSources=true}
-      log('[ad-cloud-worker]',JSON.stringify({mode:'cloud',analysis:analysis.status,code:analysis.code||null,brand:analysis.brand||null,category:analysis.category||null,category_evidence_missing:analysis.category_evidence_missing??null,pass:analysis.pass||null,vision_configured:status.vision_configured,candidates:status.candidates,calls_today:status.calls_today,scheduled_day:localCloudTime().day}));
+      log('[ad-cloud-worker]',JSON.stringify({mode:'cloud',capture_transport:transport.mode,capture_configured:transport.configured,capture_code:transport.code,analysis:analysis.status,code:analysis.code||null,brand:analysis.brand||null,category:analysis.category||null,category_evidence_missing:analysis.category_evidence_missing??null,pass:analysis.pass||null,vision_configured:status.vision_configured,candidates:status.candidates,calls_today:status.calls_today,scheduled_day:localCloudTime().day}));
       return {scan,analysis};
     }catch(e){log('[ad-cloud-worker]',JSON.stringify({status:'error',code:/^CLOUD_[A-Z_]+$/.test(e.message)?e.message:'WORKER_ERROR'}));return {status:'error'}}
     finally{try{if(lease)await pool.query('UPDATE ad_cloud_control SET lease_owner=NULL,lease_until=NULL,heartbeat_at=NOW() WHERE id=1 AND lease_owner=$1',[owner])}finally{running=false}}
@@ -236,6 +238,6 @@ export function registerCloudRoutes(app,pool,sources){
     if(!req.is('application/json'))return res.status(415).json({error:'JSON gerekli'});
     if(req.get('sec-fetch-site')==='cross-site')return res.status(403).json({error:'Aynı siteden gönderim gerekli'});
     try{const origin=req.get('origin');if(origin&&new URL(origin).host!==req.get('host'))return res.status(403).json({error:'Geçersiz kaynak'})}catch{return res.status(403).json({error:'Geçersiz kaynak'})}
-    try{const result=await queueCloudReview(pool,sources,{manual:true});if(result.rate_limited)return res.status(429).json({error:'Yeni bulut taraması için 5 dakika bekleyin.'});res.status(202).json({...result,message:'Tarama sunucu kuyruğuna alındı; sayfayı kapatabilirsiniz.'})}catch(e){next(e)}
+    try{const result=await queueCloudReview(pool,sources,{manual:true});if(result.rate_limited)return res.status(429).json({error:'Yeni bulut taraması için 5 dakika bekleyin.'});const transport=captureTransportStatus();res.status(202).json({...result,capture_transport:transport,message:transport.configured?'Tarama sunucu kuyruğuna alındı; sayfayı kapatabilirsiniz.':'Tarama kuyruğa alındı; proxy bağlantısı tamamlanınca sunucuda başlayacak.'})}catch(e){next(e)}
   });
 }

@@ -46,6 +46,27 @@ test('server capture persists evidence without a model key; subsequent worker an
     assert.equal((await db.query('SELECT count(*)::int n FROM ad_visual_versions')).rows[0].n,1);
   }finally{await db.close()}
 });
+test('missing primary proxy preserves queued attempts while stored images are analyzed',async()=>{
+  const db=await dbFixture();const logs=[];
+  try{
+    await queueCloudReview(db,HOME_INTERNET_SOURCES,{manual:true});
+    await createCloudWorker(db,HOME_INTERNET_SOURCES,{capture,env:{},log:()=>{}})();
+    const before=(await db.query('SELECT id,status,attempts FROM ad_cloud_jobs ORDER BY id')).rows;
+    assert.ok(before.some(job=>job.status==='queued'&&job.attempts===0));
+    const proxyEnv={...env,AD_CAPTURE_TRANSPORT:'proxy'};
+    const result=await createCloudWorker(db,HOME_INTERNET_SOURCES,{env:proxyEnv,
+      capture:async()=>{throw Error('must not capture without primary proxy')},
+      analyze:async c=>normalizeVision(vision(),c),log:(...args)=>logs.push(args.join(' '))})();
+    assert.equal(result.scan.status,'waiting_config');assert.equal(result.scan.reason,'PROXY_CONFIG_MISSING');
+    assert.equal(result.analysis.status,'analyzed');
+    assert.deepEqual((await db.query('SELECT id,status,attempts FROM ad_cloud_jobs ORDER BY id')).rows,before);
+    assert.equal((await getAdVisuals(db)).groups.mnp,1);
+    assert.ok(logs.some(line=>line.includes('"capture_configured":false')));
+    const status=await getCloudStatus(db,{env:{...proxyEnv,AD_CAPTURE_PROXY_URL:'http://private-user:private-password@private-proxy.example:8080'}});
+    assert.equal(status.capture_transport.configured,true);
+    assert.doesNotMatch(JSON.stringify(status),/private-user|private-password|private-proxy/);
+  }finally{await db.close()}
+});
 test('ambiguous images receive a second AI pass without recapture or false market changes',async()=>{
   const db=await dbFixture();let calls=0;
   const analyze=async candidate=>{calls++;const result=vision();if(calls===1){result.category='review';result.category_evidence='İlk okuma belirsiz'}else{assert.equal(candidate.previous_analysis.category,'review');result.title='AI ile düzeltilen numara taşıma teklifi'}return normalizeVision(result,candidate)};
