@@ -307,7 +307,7 @@ Automated tests cover catalog scope, price separators, gift periods, failed-scan
 
 ### Advertising visual analysis
 
-- A dedicated **Reklam Analizi** route exposes **Ev İnterneti**, **GSM Paketleri**, and **MNP / Numara Taşıma** separately. Home internet also embeds only the home category in Reklam & Sayfalar.
+- A dedicated **Reklam Analizi** route exposes **Ev İnterneti**, **GSM Paketleri**, and **MNP / Numara Taşıma** separately. AI can create and reuse evidence-supported categories for other advertising; these appear automatically in filters and reports. Historical other/ambiguous records are reanalyzed from saved images within the existing daily limit. Home internet also embeds only the home category in Reklam & Sayfalar.
 - Captured screenshots, caption, prices, allowance/speed, observed conditions, uncertainties, advertiser/ad/variant identity, and capture/observation timestamps are preserved. Unknown values remain null. Read-only endpoints are protected by the existing application authentication.
 - SHA-256 evidence validation, bounded capture/model calls, persistent leases and retry limits, chronological upserts and transactional publication preserve previous observations. Missing ads are never automatically deactivated. The legacy GitHub importer remains available only for historical maintenance, not scheduled production work.
 - Business field changes create history versions; screenshot/timestamp/prose-only changes do not. Reports label first observations separately from changes and do not equate first observation with launch.

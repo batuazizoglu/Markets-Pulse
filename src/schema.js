@@ -244,6 +244,16 @@ CREATE TABLE IF NOT EXISTS ad_visual_items (
   meaning_hash TEXT NOT NULL,
   analysis_json JSONB NOT NULL
 );
+CREATE TABLE IF NOT EXISTS ad_visual_categories (
+  category_key TEXT PRIMARY KEY CHECK(length(category_key)<=80 AND category_key ~ '^auto-[a-z0-9]+(-[a-z0-9]+)*$'),
+  label TEXT NOT NULL CHECK(length(label) BETWEEN 2 AND 60),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  first_ad_key TEXT NOT NULL
+);
+ALTER TABLE ad_visual_items DROP CONSTRAINT IF EXISTS ad_visual_items_category_check;
+ALTER TABLE ad_visual_items ADD CONSTRAINT ad_visual_items_category_check CHECK(
+  category IN ('home','gsm','mnp','review') OR (length(category)<=80 AND category ~ '^auto-[a-z0-9]+(-[a-z0-9]+)*$')
+);
 CREATE TABLE IF NOT EXISTS ad_visual_versions (
   id BIGSERIAL PRIMARY KEY,
   ad_key TEXT NOT NULL REFERENCES ad_visual_items(ad_key),

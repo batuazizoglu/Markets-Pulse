@@ -4,7 +4,8 @@ import {captureCloudAds,adLibrarySource} from './ad-cloud-capture.js';
 import {captureTransportStatus} from './ad-capture-proxy.js';
 import {getProxyPoolStatus,selectCaptureProxy,recordProxyResult,canFailoverProxy} from './ad-proxy-pool.js';
 import {analyzeCloudImage,visionConfig} from './ad-cloud-vision.js';
-import {validateAdFeed,importAdFeed} from './ad-visual.js';
+import {validateAdFeed,importAdFeed,getAdCategories} from './ad-visual.js';
+import {AD_TAXONOMY_VERSION} from './ad-categories.js';
 import {providerConfig,providerStatus} from './ad-provider-client.js';
 import {runProviderTick,getProviderStatus} from './ad-provider-worker.js';
 import {normalizeProviderJpeg} from './ad-provider-image.js';
@@ -113,7 +114,7 @@ export async function queueStoredAdReviews(pool,sources,{manual=false,key=null,n
     const rows=(await db.query(`SELECT a.ad_key,a.analysis_json,c.ad_key candidate_key,c.review_round FROM ad_visual_items a
       LEFT JOIN ad_cloud_candidates c ON c.ad_key=a.ad_key
       WHERE ${key?'a.ad_key=$1':"a.category='review'"}
-      AND (c.ad_key IS NULL OR (c.status IN ('analyzed'${manual?",'error'":''}) AND ${manual?'c.review_round<99':"(c.review_round<1 OR (c.review_round<2 AND a.analysis_json->>'category_evidence'='Kategori için açık ve doğrulanabilir ifade bulunamadı.'))"}))
+      AND (c.ad_key IS NULL OR (c.status IN ('analyzed'${manual?",'error'":''}) AND ${manual?'c.review_round<99':`(c.review_round<99 AND COALESCE(a.analysis_json->>'taxonomy_version','')<>'${AD_TAXONOMY_VERSION}' OR c.review_round<1 OR (c.review_round<2 AND a.analysis_json->>'category_evidence'='Kategori için açık ve doğrulanabilir ifade bulunamadı.'))`}))
       ORDER BY a.observed_at,a.ad_key LIMIT 400`,key?[key]:[])).rows;
     const directory=socialDirectory(sources);let queued=0,missing_evidence=0;
     for(const row of rows){
@@ -197,7 +198,7 @@ export async function analyzeNextCloudCandidate(pool,sources,owner,{env=process.
       if(!reservation.rows.length)return {status:'daily_limit'};
       // Persist attempt before the external request; a restart cannot reset paid-call accounting.
       await pool.query("UPDATE ad_cloud_candidates SET status='retry',attempts=attempts+1,available_at=NOW()+INTERVAL '10 minutes' WHERE ad_key=$1",[candidate.ad_key]);
-      analysis=await analyze(candidate.payload,images,{env});
+      analysis=await analyze(candidate.payload,images,{env,categories:await getAdCategories(pool)});
       analysis={...analysis,ai_analysis:{status:'completed',analyzed_at:new Date().toISOString(),model:config.model,pass:(candidate.review_round||0)+1}};
       // Keep a successful response if publication fails; retrying must not buy the same inference again.
       await transaction(pool,async db=>{await assertLease(db,owner);await db.query('UPDATE ad_cloud_candidates SET analysis_json=$1::jsonb WHERE ad_key=$2 AND fingerprint=$3',[JSON.stringify(analysis),candidate.ad_key,candidate.fingerprint])});

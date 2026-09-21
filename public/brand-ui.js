@@ -3,7 +3,7 @@ const routes={
   dashboard:{label:'Dashboard',desc:'Pazarın nabzı, kritik gelişmeler, aksiyonlar ve yönetici özeti.',ids:['market-pulse-section','dashboard-insights-section','overview']},
   competitor:{label:'Rakip Takip',desc:'Değişiklik akışı, günlük değişim, Telsim paketleri ve kaynak sağlığı.',ids:['changes-section','daily-market-section','packages-section','historySection','source-health-section','sources-section']},
   home:{label:'Ev İnterneti',desc:'KKTC sabit internet pazarında fiyat, hız, teknoloji, TCO ve rakip hareketleri.',ids:['home-internet-section']},
-  ads:{label:'Reklam Analizi',desc:'Ev İnterneti, GSM ve numara taşıma reklamlarının görsel teklifleri ve değişimleri.',ids:['ad-visual-section']},
+  ads:{label:'Reklam Analizi',desc:'AI tarafından kategorilere ayrılan rakip reklamları, görsel teklifler ve değişimler.',ids:['ad-visual-section']},
   compare:{label:'Ürün Karşılaştırma',desc:'Telsim ve KKTCELL ürünlerini segment bazında karşılaştırın.',ids:['benchmark-section']},
   segment:{label:'Segment Analizi',desc:'Genel, Asker, Öğrenci/Genç, Turist ve Premium/Platinum pozisyonu.',ids:['benchmark-section']},
   trends:{label:'Trendler',desc:'Rekabet pozisyonu ve rakip hareketlerinin 7/30/90 günlük seyri.',ids:['benchmark-section','changes-section']},
