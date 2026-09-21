@@ -77,7 +77,7 @@ export async function prepareAdReportImages(pool,data,{maxImages=bounds.maxImage
     const candidates=imagesOf(row),explicit=candidates.find(image=>image.role==='creative'),pair=browserPairs.get(row.analysis_json?.key);
     const browserCreative=pair?.length===2&&candidates.length===2&&candidates.every((image,index)=>image.sha256===pair[index]);
     const chosen=explicit||(browserCreative?candidates[1]:candidates[0]);
-    return {row,candidates:chosen?[chosen,...candidates.filter(image=>image.sha256!==chosen.sha256)]:[],selection:explicit?'creative':browserCreative?'browser_creative':candidates.length===1&&['image','video_preview'].includes(row.analysis_json?.media_kind)?'creative':'evidence'};
+    return {row,candidates:chosen?[chosen,...candidates.filter(image=>image.sha256!==chosen.sha256)]:[],selection:explicit?'creative':browserCreative?'browser_creative':candidates.length===1&&candidates[0].role!=='ad_card'&&['image','video_preview'].includes(row.analysis_json?.media_kind)?'creative':'evidence'};
   });
   // Bounded, hash-addressed archive reads only. No CDN or authenticated HTTP URL
   // is fetched, and the original evidence in the archive is never changed.

@@ -53,6 +53,8 @@ test('archive selection prefers explicit creative roles, deduplicates derivative
   assert.equal(prepared.data.rows[0].report_image.source_sha256,hash(image));assert.equal(prepared.data.rows[0].report_image.selection,'creative');
   assert.equal(prepared.images[0].sha256,hash(prepared.images[0].content));assert.equal(prepared.images[0].cid,prepared.images[0].filename);
   assert.notEqual(prepared.images[0].sha256,hash(image));assert.deepEqual(assets.get(hash(image)),image);
+  const cardOnly=row(123458,[{sha256:hash(card),role:'ad_card'}]);cardOnly.analysis_json.media_kind='image';
+  const guarded=await prepareAdReportImages(pool,{rows:[cardOnly]});assert.equal(guarded.data.rows[0].report_image.selection,'evidence');
 });
 
 test('historical second image requires an exact ordered browser-capture proof',async()=>{
