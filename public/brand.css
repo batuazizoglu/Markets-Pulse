@@ -420,7 +420,7 @@ body.branded-app :is(.mp-score,.hi-score,.bm-pos,.status){filter:none!important}
 .av-heading{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:16px}
 .av-heading h2{margin:0 0 8px}.av-heading p,.av-help{color:var(--muted);font-size:12px;line-height:1.7}
 .av-tabs{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px}
-.av-tabs button{padding:12px 16px;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--ink);font:700 13px Inter,system-ui;cursor:pointer}
+.av-tabs button{padding:12px 16px;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--ink);font:700 13px Inter,system-ui;cursor:pointer;max-width:100%;overflow-wrap:anywhere;white-space:normal}
 .av-tabs button.active{background:var(--mp-blue);border-color:var(--mp-blue);color:white}
 .av-tabs span{margin-left:8px;opacity:.8}
 .av-filter{display:flex;gap:12px;align-items:center;margin-bottom:16px;font-size:13px}

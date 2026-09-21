@@ -1,8 +1,18 @@
 import {createHash} from 'node:crypto';
 import {socialDirectory} from './isp-registry.js';
+import {AD_CATEGORIES,AD_TAXONOMY_VERSION,AD_CAPTION_MAX_LENGTH,isDynamicCategory,resolveCategoryProposal} from './ad-categories.js';
 
 export const AD_FEED_ROOT='https://raw.githubusercontent.com/batuazizoglu/Markets-Pulse/ad-visual-data/';
-export const AD_CATEGORIES={home:'Ev İnterneti',gsm:'GSM Paketleri',mnp:'MNP / Numara Taşıma',review:'Diğer / Belirsiz'};
+export {AD_CATEGORIES};
+export async function getAdCategories(pool){
+  const rows=(await pool.query('SELECT category_key,label FROM ad_visual_categories ORDER BY label,category_key')).rows;
+  const categories={...AD_CATEGORIES};
+  for(const {category_key,label} of rows){
+    const resolved=resolveCategoryProposal(category_key,label);
+    if(isDynamicCategory(category_key)&&resolved?.category===category_key&&resolved.category_label===label)categories[category_key]=label;
+  }
+  return categories;
+}
 const sha=b=>createHash('sha256').update(b).digest('hex');
 const clean=(v,max=2000)=>String(v??'').trim().slice(0,max);
 const date=v=>{const d=new Date(v);if(!v||!Number.isFinite(+d))throw new Error('Geçersiz inceleme tarihi');return d.toISOString()};
@@ -27,12 +37,17 @@ export function validateAdFeed(input,sources,now=new Date()){
   });
   const keys=new Set();
   const ads=input.ads.map(a=>{
-    if(!brands.has(a.brand)||! /^\d{5,30}$/.test(a.ad_id)||! /^\d{5,30}$/.test(a.page_id)||!Object.hasOwn(AD_CATEGORIES,a.category)||!['active','inactive','unknown'].includes(a.ad_status))throw new Error('Geçersiz reklam kimliği');
+    const dynamic=isDynamicCategory(a.category);
+    if(!brands.has(a.brand)||! /^\d{5,30}$/.test(a.ad_id)||! /^\d{5,30}$/.test(a.page_id)||!Object.hasOwn(AD_CATEGORIES,a.category)&&!dynamic||!['active','inactive','unknown'].includes(a.ad_status))throw new Error('Geçersiz reklam kimliği');
     const known=directory.find(x=>x.brand===a.brand)?.page_id;
     if(known&&known!==a.page_id)throw new Error('Marka ve sayfa kimliği uyuşmuyor');
     const variant=clean(a.variant_id||'1',40);if(!/^[a-zA-Z0-9_-]+$/.test(variant))throw new Error('Geçersiz varyant');
     const key=[a.page_id,a.ad_id,variant].join(':');if(keys.has(key))throw new Error('Tekrarlanan reklam kimliği');keys.add(key);
     const evidence=clean(a.category_evidence),fold=evidence.toLocaleLowerCase('tr').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').replace(/ı/g,'i');
+    if(dynamic){
+      const resolved=resolveCategoryProposal(a.category,a.category_label);
+      if(input.producer!=='cloud-vision'||a.taxonomy_version!==AD_TAXONOMY_VERSION||!resolved||resolved.category!==a.category||resolved.category_label!==a.category_label||typeof a.category_confidence!=='number'||!Number.isFinite(a.category_confidence)||a.category_confidence<0.8||a.category_confidence>1||!evidence||![clean(a.visible_text,12000),clean(a.ad_text,AD_CAPTION_MAX_LENGTH)].some(text=>text.includes(evidence)))throw new Error('Yeni kategori için doğrulanmış AI görsel analizi gerekli');
+    }
     if(a.category==='mnp'&&!/numara.{0,40}(tasi|degis)|mnp|operator.{0,30}(gecis|degis)/.test(fold))throw new Error('MNP için numara taşıma koşulu gerekli');
     if(a.category==='home'&&!/ev(de)?\s*internet|fiber|vdsl|wdsl|adsl|superbox|red\s*box|sabit\s*internet|apartman/.test(fold))throw new Error('Ev interneti sınıfı için kanıt gerekli');
     if(a.category==='gsm'&&!/tarife|mobil|gsm|\bgb\b/.test(fold))throw new Error('GSM sınıfı için kanıt gerekli');
@@ -55,7 +70,9 @@ export function validateAdFeed(input,sources,now=new Date()){
     }
     return {key,ad_id:a.ad_id,page_id:a.page_id,variant_id:variant,brand:a.brand,category:a.category,category_evidence:evidence,title:clean(a.title,250),
       source_url:socialUrl(a.source_url),ad_status:a.ad_status,observed_at:seen,started_on:a.started_on&&/^\d{4}-\d{2}-\d{2}$/.test(a.started_on)?a.started_on:null,
-      ad_text:clean(a.ad_text,5000),offer,conditions:list(a.conditions),uncertainties:list(a.uncertainties),visual_summary:clean(a.visual_summary),
+      ad_text:clean(a.ad_text,AD_CAPTION_MAX_LENGTH),offer,conditions:list(a.conditions),uncertainties:list(a.uncertainties),visual_summary:clean(a.visual_summary),
+      ...(input.producer==='cloud-vision'&&a.taxonomy_version===AD_TAXONOMY_VERSION?{taxonomy_version:AD_TAXONOMY_VERSION,visible_text:clean(a.visible_text,12000)}:{}),
+      ...(dynamic?{category_label:a.category_label,category_confidence:a.category_confidence}:{}),
       review_required:a.review_required===true||a.category==='review',images,...(input.producer==='cloud-vision'&&['image','video_preview'].includes(a.media_kind)?{media_kind:a.media_kind}:{}),...(ai_analysis?{ai_analysis}:{})};
   });
   const schedule=input.schedule;
@@ -99,13 +116,20 @@ export async function importAdFeed(pool,feed,{fetcher=fetch,reanalysis=false}={}
     const lock=(await client.query('SELECT checked_at,run_id FROM ad_visual_sync WHERE id=1 FOR UPDATE')).rows[0];
     if(lock.run_id===feed.run.id||lock.checked_at&&+new Date(lock.checked_at)>+new Date(feed.run.checked_at)){await client.query('ROLLBACK');return {duplicate:true,imported:0}}
     for(const [hash,bytes] of assets)await client.query('INSERT INTO ad_visual_evidence(sha256,jpeg) VALUES($1,$2) ON CONFLICT DO NOTHING',[hash,bytes]);
-    for(const ad of feed.ads){
+    for(const supplied of feed.ads){
+      const ad={...supplied};
       const prior=(await client.query('SELECT meaning_hash,observed_at,analysis_json FROM ad_visual_items WHERE ad_key=$1',[ad.key])).rows[0];
       const sameObservation=prior&&+new Date(prior.observed_at)===+new Date(ad.observed_at);
       const revised=sameObservation&&reanalysis&&ad.ai_analysis&&
         +new Date(ad.ai_analysis.analyzed_at)>+new Date(prior.analysis_json.ai_analysis?.analyzed_at||0)&&
         JSON.stringify((ad.images||[]).map(x=>x.sha256).sort())===JSON.stringify((prior.analysis_json.images||[]).map(x=>x.sha256).sort());
       if(prior&&(+new Date(prior.observed_at)>+new Date(ad.observed_at)||sameObservation&&!revised))continue;
+      if(isDynamicCategory(ad.category)){
+        await client.query('INSERT INTO ad_visual_categories(category_key,label,first_ad_key) VALUES($1,$2,$3) ON CONFLICT(category_key) DO NOTHING',[ad.category,ad.category_label,ad.key]);
+        const registered=(await client.query('SELECT label FROM ad_visual_categories WHERE category_key=$1',[ad.category])).rows[0];
+        // Equivalent label spellings retain the first published display name.
+        ad.category_label=registered.label;
+      }
       const meaning=adMeaningHash(ad);
       await client.query('INSERT INTO ad_visual_items(ad_key,brand,category,first_seen_at,observed_at,meaning_hash,analysis_json) VALUES($1,$2,$3,$4,$4,$5,$6::jsonb) ON CONFLICT(ad_key) DO UPDATE SET brand=EXCLUDED.brand,category=EXCLUDED.category,observed_at=EXCLUDED.observed_at,meaning_hash=EXCLUDED.meaning_hash,analysis_json=EXCLUDED.analysis_json',[ad.key,ad.brand,ad.category,ad.observed_at,meaning,JSON.stringify(ad)]);
       if(revised){
@@ -142,10 +166,10 @@ export function syncAdVisuals(pool,sources,{fetcher=fetch}={}){
     }
   })().finally(()=>{inFlight=null});return inFlight;
 }
-function pageInput({limit=400,brand='',category='',cursor}={}){
+function pageInput({limit=400,brand='',category='',cursor}={},categories=AD_CATEGORIES){
   const invalid=()=>{const e=new Error('Geçersiz reklam sayfası veya filtresi');e.status=400;throw e};
   if(typeof limit!=='number'&&typeof limit!=='string'||!/^\d{1,3}$/.test(String(limit))||Number(limit)<1||Number(limit)>400)invalid();
-  if(typeof brand!=='string'||brand.length>120||brand!==brand.trim()||/[\u0000-\u001f\u007f]/.test(brand)||typeof category!=='string'||category&&!Object.hasOwn(AD_CATEGORIES,category))invalid();
+  if(typeof brand!=='string'||brand.length>120||brand!==brand.trim()||/[\u0000-\u001f\u007f]/.test(brand)||typeof category!=='string'||category&&!Object.hasOwn(categories,category))invalid();
   let after=null;
   if(cursor!==undefined&&cursor!==null){
     if(typeof cursor!=='string'||!/^[A-Za-z0-9_-]{1,1500}$/.test(cursor))invalid();
@@ -178,7 +202,8 @@ export async function getPendingAdVisuals(pool,{limit=50,...options}={}){
   }),pagination:{limit:pageLimit,total:brand?(counts.brand_totals[brand]||0):counts.total,has_more:hasMore,next_cursor:hasMore?Buffer.from(JSON.stringify({v:1,t:last.cursor_time,k:last.ad_key,brand,category:'review'})).toString('base64url'):null,brand:brand||null},...counts};
 }
 export async function getAdVisuals(pool,{now=new Date(),...options}={}){
-  const {limit,brand,category,after}=pageInput(options),params=[],where=[];
+  const categories=await getAdCategories(pool);
+  const {limit,brand,category,after}=pageInput(options,categories),params=[],where=[];
   if(brand){params.push(brand);where.push('a.brand=$'+params.length)}
   if(category){params.push(category);where.push('a.category=$'+params.length)}
   if(after){params.push(after.t,after.k);where.push('(a.observed_at<$'+(params.length-1)+'::timestamptz OR (a.observed_at=$'+(params.length-1)+'::timestamptz AND a.ad_key>$'+params.length+'))')}
@@ -191,15 +216,15 @@ export async function getAdVisuals(pool,{now=new Date(),...options}={}){
   const status=sync.rows[0]||{};
   const stale=t=>!t||+now-+new Date(t)>48*3600000;
   const hasMore=data.rows.length>limit,page=data.rows.slice(0,limit),last=page.at(-1);
-  const groups=Object.fromEntries(Object.keys(AD_CATEGORIES).map(k=>[k,0])),brandGroups=Object.create(null);let total=0;
+  const groups=Object.fromEntries(Object.keys(categories).map(k=>[k,0])),brandGroups=Object.create(null);let total=0;
   for(const row of counts.rows){
     groups[row.category]=(groups[row.category]||0)+row.count;
-    brandGroups[row.brand]||=Object.fromEntries(Object.keys(AD_CATEGORIES).map(k=>[k,0]));brandGroups[row.brand][row.category]=row.count;
+    brandGroups[row.brand]||=Object.fromEntries(Object.keys(categories).map(k=>[k,0]));brandGroups[row.brand][row.category]=row.count;
     if((!brand||row.brand===brand)&&(!category||row.category===category))total+=row.count;
   }
   const rows=page.map(x=>({...x.analysis_json,first_seen_at:x.first_seen_at,stale:stale(x.observed_at),ai_queue_status:x.ai_queue_status||null,
     ai_analysis:x.analysis_json.ai_analysis||(x.analyzed_at?{status:'completed',analyzed_at:x.analyzed_at,pass:x.ai_queue_status==='analyzed'?(x.review_round||0)+1:Math.max(1,x.review_round||0)}:null)}));
-  return {generated_at:now.toISOString(),categories:AD_CATEGORIES,rows,
+  return {generated_at:now.toISOString(),categories,rows,
     groups,brand_groups:brandGroups,total:Object.values(groups).reduce((sum,n)=>sum+n,0),pending_media:pendingMedia,
     pagination:{limit,total,has_more:hasMore,next_cursor:hasMore?Buffer.from(JSON.stringify({v:1,t:last.cursor_time,k:last.ad_key,brand,category})).toString('base64url'):null,brand:brand||null,category:category||null},
     monitoring:{...status,stale:stale(status.checked_at),status:status.last_error?'sync_error':!status.checked_at?'pending':stale(status.checked_at)?'stale':status.status,
@@ -209,7 +234,7 @@ export async function getAdReport(pool,start,end,{category}={}){
   const params=[date(start),date(end)];if(category)params.push(category);
   const r=await pool.query("SELECT event_type,analysis_json,observed_at FROM ad_visual_versions WHERE observed_at >= $1 AND observed_at < $2 AND event_type IN ('first_seen','changed') "+(category?"AND analysis_json->>'category'=$3 ":'')+"ORDER BY observed_at DESC,id DESC",params);
   const current=await pool.query('SELECT checked_at,status,last_error FROM ad_visual_sync WHERE id=1');
-  return {rows:r.rows,checked_at:current.rows[0]?.checked_at||null,status:current.rows[0]?.status||'pending',last_error:current.rows[0]?.last_error||null};
+  return {rows:r.rows,categories:await getAdCategories(pool),checked_at:current.rows[0]?.checked_at||null,status:current.rows[0]?.status||'pending',last_error:current.rows[0]?.last_error||null};
 }
 export function registerAdVisualRoutes(app,pool,sources,{sync=syncAdVisuals,now=Date.now,cloudStatus=null}={}){
   let lastManualSync=-Infinity;

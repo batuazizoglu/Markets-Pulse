@@ -1,5 +1,5 @@
 (()=>{
-const labels={home:'Ev İnterneti',gsm:'GSM Paketleri',mnp:'MNP / Numara Taşıma',review:'Diğer / Belirsiz'};
+const coreLabels={home:'Ev İnterneti',gsm:'GSM Paketleri',mnp:'MNP / Numara Taşıma',review:'Diğer / Belirsiz'};
 const state={data:null,category:'home',brand:'all',loading:null,loaded:0,views:new Map(),requests:new Map(),generation:0};
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const stamp=v=>v&&Number.isFinite(+new Date(v))?new Intl.DateTimeFormat('tr-TR',{timeZone:'Asia/Famagusta',dateStyle:'short',timeStyle:'short'}).format(new Date(v)):'Henüz yok';
@@ -7,6 +7,20 @@ const money=v=>v==null?'Fiyat okunamadı':Number(v).toLocaleString('tr-TR')+' TL
 const statusText={ok:'İnceleme güncel',partial:'Kısmi kapsam',blocked:'Kaynağa erişilemiyor',error:'İnceleme hatası',unverified:'Sayfa doğrulanmadı',no_ads:'Bu filtrede reklam yok',pending:'İlk inceleme bekleniyor',stale:'Yeni inceleme bekleniyor',sync_error:'Son aktarım başarısız'};
 const sourceStatus={queued:'Tarama kuyruğunda',running:'Taranıyor',retry:'Yeniden denenecek',partial:'Kısmi kapsam',unverified:'Sayfa kimliği doğrulanmadı',blocked:'Kaynağa erişilemiyor',error:'Tarama tamamlanamadı',no_ads:'Son taramada bu filtrede reklam bulunamadı',not_scanned:'Henüz taranmadı',waiting_config:'Sağlayıcı ayarları bekleniyor',creating:'Sağlayıcı taraması başlatılıyor',importing:'Bulunan reklamlar kaydediliyor',downloading:'Reklam görselleri indiriliyor',complete:'Sağlayıcı işlemi tamamlandı',start_unknown:'Sağlayıcı başlangıcı doğrulanamadı'};
 const count=v=>Number.isInteger(Number(v))&&Number(v)>=0?Number(v):0;
+const customCategory=key=>typeof key==='string'&&key.length<=80&&/^auto-[a-z0-9]+(?:-[a-z0-9]+)*$/.test(key);
+const categoryName=value=>typeof value==='string'&&value.trim()&&value.length<=60?value.trim():null;
+function categoryLabels(){
+  const labels=Object.assign(Object.create(null),coreLabels),catalog=state.data?.categories;
+  if(catalog&&typeof catalog==='object'&&!Array.isArray(catalog))for(const [key,value] of Object.entries(catalog))if(customCategory(key)&&categoryName(value))labels[key]=categoryName(value);
+  for(const row of [...(state.data?.rows||[]),...[...state.views.values()].flatMap(view=>view.rows||[])])if(customCategory(row.category)&&!Object.hasOwn(labels,row.category)&&categoryName(row.category_label))labels[row.category]=categoryName(row.category_label);
+  return labels;
+}
+function categoryEntries(labels=categoryLabels()){
+  const groups=state.data?.groups||{};
+  return Object.entries(labels).filter(([key])=>['home','gsm','mnp'].includes(key)||Object.hasOwn(groups,key)&&count(groups[key])>0);
+}
+function selectableCategory(category){return categoryEntries().some(([key])=>key===category)}
+function categoryLabel(row,labels){return labels[row.category]||categoryName(row.category_label)||coreLabels.review}
 function providerCounters(run){return '<p data-av-provider-counts>Bulunan reklam: '+count(run.ads)+' • Keşfedilen görsel / varyant: '+count(run.assets)+' • Kaydedilen: '+count(run.captured)+' • Bekleyen: '+count(run.pending)+' • Medyası eksik: '+count(run.missing)+' • İndirme hatası: '+count(run.errors)+'</p><p>'+esc(run.coverage_complete===true?'Sağlayıcı kapsamı tam olarak doğruladı.':run.limit_reached?'Sağlayıcı sınırına ulaşıldı; kapsam kısmi.':'Kapsamın tam olduğu doğrulanmadı; sıfır sonuç reklam olmadığı anlamına gelmez.')+'</p>'}
 function safeLink(url){try{const u=new URL(url);return u.protocol==='https:'&&!u.username&&!u.password&&['facebook.com','www.facebook.com','instagram.com','www.instagram.com'].includes(u.hostname)?u.href:'#'}catch{return '#'}}
 function imageUrl(hash){return /^[a-f0-9]{64}$/.test(hash||'')?'/api/ad-visuals/evidence/'+hash+'.jpg':''}
@@ -53,7 +67,7 @@ function offerText(o={}){
 function frame(root,home=false){
   root.classList.add('av-root');root.dataset.home=home?'1':'0';
   root.innerHTML='<div class="av-heading"><div><h2>'+(home?'Ev İnterneti Reklam Analizi':'Reklam Görsel Analizi')+'</h2><p>Görsellerden okunan teklifler, kampanya koşulları ve tarihli kanıtlar.</p></div><button class="btn" data-av-scan>Bulutta tara</button><button class="btn" data-av-refresh>Sonuçları yenile</button></div>'+
-    (home?'<p><a href="#ads">GSM ve MNP reklamlarını ayrı görüntüle →</a></p>':'<nav class="av-tabs" aria-label="Reklam kategorileri"></nav>')+
+    (home?'<p><a href="#ads">Tüm reklam kategorilerini görüntüle →</a></p>':'<nav class="av-tabs" aria-label="Reklam kategorileri"></nav><p class="av-help">AI, mevcut kategorilere uymayan reklamlar için yeni kategori oluşturabilir.</p>')+
     '<label class="av-filter">Marka <select data-av-brand aria-label="Reklam markası"><option value="all">Tüm markalar</option></select></label>'+
     '<div class="av-status" role="status">İnceleme bilgileri yükleniyor…</div><div class="av-review-info"></div><div class="av-job-message" role="status"></div><div class="av-source-focus" aria-live="polite"></div><div class="av-cards"></div><div class="av-pagination" aria-live="polite"></div>'+(home?'':'<details class="av-pending"><summary>AI sonucu beklenen görseller</summary><div class="av-pending-content"></div></details>')+'<details class="av-cloud"><summary>Bulut taraması ve analiz kuyruğu</summary><div></div></details><details class="av-coverage"><summary>İnceleme kapsamı ve kaynak durumu</summary><div></div></details>'+
     '<p class="av-help">Sayılar reklam kayıtlarını gösterir; aynı kampanya farklı reklam kimlikleriyle yayınlanabilir. Görseldeki teklif, paket kataloğuna ve karşılaştırma skoruna otomatik uygulanmaz.</p>';
@@ -74,13 +88,13 @@ function pendingCard(a){
   const source=safeLink(a.source_url);
   return '<article class="av-source av-pending-item"><b>'+esc(a.brand)+'</b><p>'+(a.status==='error'?'AI incelemesi tamamlanamadı.':'AI incelemesi bekliyor.')+' Kategori doğrulanmadı.</p>'+(a.media_kind==='video_preview'?'<p>Video önizlemesi; videonun tamamı incelenmedi.</p>':'')+(a.images||[]).filter(x=>imageUrl(x.sha256)).map(x=>'<a class="av-image" href="'+imageUrl(x.sha256)+'" target="_blank" rel="noopener"><img loading="lazy" src="'+imageUrl(x.sha256)+'" alt="'+esc(a.brand+' kaydedilmiş reklam görseli')+'"></a>').join('')+'<p>'+esc(a.ad_text)+'</p><p>Kaydedilme: '+stamp(a.observed_at)+'<br>Reklam: '+esc(a.ad_id)+' • Varyant: '+esc(a.variant_id)+'</p>'+(source!=='#'?'<a href="'+esc(source)+'" target="_blank" rel="noopener noreferrer">Ad Library kaynağı ↗</a>':'')+'</article>';
 }
-function card(a){
+function card(a,labels){
   const src=imageUrl((a.images?.[1]||a.images?.[0])?.sha256);
   const aiPending=['pending','retry'].includes(a.ai_queue_status);
   const aiLabel=aiPending?(a.ai_analysis?'AI yeniden inceliyor':'AI inceleme kuyruğunda'):a.ai_queue_status==='error'?'AI incelemesi tamamlanamadı':a.ai_analysis?.status==='completed'?'AI incelemesi tamamlandı':null;
   const flags=[a.media_kind==='video_preview'?'Video önizlemesi incelendi':null,aiLabel,a.stale?'Son doğrulanmış kayıt':a.ad_status==='active'?'Son gözlemde aktif':a.ad_status==='inactive'?'Son gözlemde pasif':'Durum belirsiz',(a.uncertainties||[]).length?'Belirsiz alanlar var':null].filter(Boolean);
   return '<article class="av-card">'+(src?'<a class="av-image" href="'+src+'" target="_blank" rel="noopener"><img loading="lazy" src="'+src+'" alt="'+esc(a.brand+' '+a.title+' reklam kanıtı')+'"></a>':'')+
-    '<div class="av-card-body"><div class="av-flags">'+flags.map(f=>'<span>'+esc(f)+'</span>').join('')+'</div><p class="av-brand">'+esc(a.brand)+' • '+esc(labels[a.category])+'</p><h3>'+esc(a.title)+'</h3>'+
+    '<div class="av-card-body"><div class="av-flags">'+flags.map(f=>'<span>'+esc(f)+'</span>').join('')+'</div><p class="av-brand">'+esc(a.brand)+' • '+esc(categoryLabel(a,labels))+'</p><h3>'+esc(a.title)+'</h3>'+
     '<p class="av-offer">'+esc(offerText(a.offer))+'</p>'+(a.offer?.previous_price_try==null?'':'<p class="av-help">Görselde üstü çizili fiyat: '+esc(money(a.offer.previous_price_try))+'</p>')+
     '<p>'+esc(a.visual_summary)+'</p><details><summary>Teklif koşulları ve okuma notları</summary><p><b>Sınıflandırma dayanağı:</b> '+esc(a.category_evidence)+'</p>'+
     '<ul>'+(a.conditions||[]).map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul>'+((a.uncertainties||[]).length?'<p><b>Doğrulanamayan / okunamayan:</b></p><ul>'+a.uncertainties.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul>':'')+
@@ -92,12 +106,14 @@ function card(a){
 function render(){
   if(!state.data)return;
   const {monitoring:m={},groups={}}=state.data;
+  const labels=categoryLabels(),categories=categoryEntries(labels);
+  if(!categories.some(([key])=>key===state.category))state.category='home';
   const sources=sourceDirectory(state.data);
   for(const root of document.querySelectorAll('.av-root')){
     const home=root.dataset.home==='1',category=home?'home':state.category,view=currentView(category,state.brand),loading=state.requests.has(viewKey(category,state.brand));
     const nav=root.querySelector('.av-tabs');
-    if(nav)nav.innerHTML=Object.entries(labels).filter(([k])=>k!=='review'||groups.review).map(([k,label])=>'<button data-av-category="'+k+'" class="'+(k===category?'active':'')+'" aria-pressed="'+(k===category)+'">'+label+' <span>'+Number(groups[k]||0)+'</span></button>').join('');
-    root.querySelector('.av-review-info').innerHTML=category==='review'?'<p>Bu reklamlar da AI tarafından incelenir. Cihaz, marka ve hizmet duyuruları veya kategorisi kesinleşmeyen reklamlar burada gösterilir. Analiz durumu her kartta ayrıca belirtilir.</p><button class="btn" data-av-analyze>Tüm diğer / belirsiz kayıtları AI ile yeniden incele</button>':'';
+    if(nav)nav.innerHTML=categories.map(([k,label])=>'<button data-av-category="'+esc(k)+'" class="'+(k===category?'active':'')+'" aria-pressed="'+(k===category)+'">'+esc(label)+' <span>'+count(Object.hasOwn(groups,k)?groups[k]:0)+'</span></button>').join('');
+    root.querySelector('.av-review-info').innerHTML=category==='review'?'<p>Kategorisi görselden kesinleştirilemeyen reklamlar burada gösterilir. AI incelemesi yeterli kanıt bulduğunda mevcut bir kategoriye atayabilir veya yeni kategori oluşturabilir. Analiz durumu her kartta ayrıca belirtilir.</p><button class="btn" data-av-analyze>Tüm diğer / belirsiz kayıtları AI ile yeniden incele</button>':'';
     const brand=root.querySelector('[data-av-brand]');
     if(brand){brand.innerHTML='<option value="all">Tüm markalar</option>'+sources.map(x=>'<option value="'+esc(x.brand)+'">'+esc(x.brand)+'</option>').join('');brand.value=state.brand}
     const liveSchedule=state.data.cloud?.schedule||m.schedule;
@@ -123,7 +139,7 @@ function render(){
     }else root.querySelector('.av-cloud div').textContent='Bulut görevi bilgileri bekleniyor.';
     const selected=view.rows.filter(a=>a.category===category&&(state.brand==='all'||a.brand===state.brand)),focus=sources.find(s=>s.brand===state.brand);
     root.querySelector('.av-source-focus').innerHTML=focus?sourceCard(focus):'';
-    root.querySelector('.av-cards').innerHTML=selected.map(card).join('')||'<div class="av-empty">'+(loading?'Reklam arşivi yükleniyor…':view.error?'Reklam arşivi alınamadı. Yeniden deneyin.':focus?.status==='no_ads'?'Son kaynak taramasında seçili reklam filtresinde reklam bulunamadı. Yeni taramalarda sonuç değişebilir.':'Bu kategoride henüz doğrulanmış görsel analizi yok. Bu durum reklam olmadığı anlamına gelmez; kaynağın tarama durumunu kontrol edin.')+'</div>';
+    root.querySelector('.av-cards').innerHTML=selected.map(a=>card(a,labels)).join('')||'<div class="av-empty">'+(loading?'Reklam arşivi yükleniyor…':view.error?'Reklam arşivi alınamadı. Yeniden deneyin.':focus?.status==='no_ads'?'Son kaynak taramasında seçili reklam filtresinde reklam bulunamadı. Yeni taramalarda sonuç değişebilir.':'Bu kategoride henüz doğrulanmış görsel analizi yok. Bu durum reklam olmadığı anlamına gelmez; kaynağın tarama durumunu kontrol edin.')+'</div>';
     root.querySelector('.av-pagination').innerHTML=state.data.pagination?'<p>'+selected.length+' / '+count(view.pagination.total)+' analiz gösteriliyor.</p>'+(view.error?'<p>'+esc(view.error)+'</p>':'')+(view.pagination.has_more||view.error?'<button class="btn" data-av-more'+(loading?' disabled':'')+'>'+(loading?'Yükleniyor…':view.error?'Yeniden dene':'Daha fazla analiz göster')+'</button>':''):'';
     const pendingBox=root.querySelector('.av-pending');
     if(pendingBox){
@@ -156,6 +172,7 @@ function currentView(category,brand){
 }
 function loadView(category,brand,more=false){
   const pending=category==='pending_media';
+  if(!pending&&!selectableCategory(category))return Promise.resolve();
   if(!pending&&!state.data?.pagination?.has_more||pending&&!currentView(category,brand).pagination.total)return Promise.resolve();
   const key=viewKey(category,brand),prior=state.views.get(key);
   if(state.requests.has(key))return state.requests.get(key);
@@ -209,7 +226,7 @@ async function analyze(key){
   }catch(e){for(const el of document.querySelectorAll('.av-job-message'))el.textContent=e.message}
   finally{for(const b of document.querySelectorAll('[data-av-analyze]'))b.disabled=false}
 }
-function setCategory(category){if(!Object.hasOwn(labels,category))return;state.category=category;render();return ensureViews()}
+function setCategory(category){if(!selectableCategory(category))return;state.category=category;render();return ensureViews()}
 function mountHome(){const root=document.getElementById('hiAdVisualMount');if(!root)return;if(!root.classList.contains('av-root'))frame(root,true);return load()}
 function init(){
   const shell=document.querySelector('.shell');if(!shell)return;
