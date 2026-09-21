@@ -188,7 +188,7 @@ export async function runProviderTick(pool,sources,{env=process.env,owner,assert
         const bytes=await normalizeImage(image);
         const at=stamp(),capturedAt=at.toISOString();
         if(!Buffer.isBuffer(bytes) || bytes.length>1500000 || bytes.length<3 || bytes[0]!==255 || bytes[1]!==216 || bytes[2]!==255)throw Object.assign(new Error('MEDIA_INVALID_JPEG'),{code:'MEDIA_INVALID_JPEG'});
-        const {media,...payload}=asset.payload,evidence=[{bytes,sha256:sha(bytes),captured_at:capturedAt}];
+        const {media,...payload}=asset.payload,evidence=[{bytes,sha256:sha(bytes),captured_at:capturedAt,role:'creative'}];
         await atomic(async db=>{
           await persistCapture(db,{...payload,observed_at:capturedAt,evidence},{id:run.job_id,brand:run.brand,source_json:run.source_json});
           await db.query("UPDATE ad_provider_assets SET status='captured',evidence_sha256=$3,last_error=NULL,updated_at=$4 WHERE job_id=$1 AND asset_key=$2",[run.job_id,asset.asset_key,evidence[0].sha256,at]);

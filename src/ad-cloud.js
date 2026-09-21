@@ -142,7 +142,7 @@ export async function persistCloudCapture(db,candidate,job){
   if(candidate.brand!==job.brand||candidate.page_id!==job.source_json.page_id||!/^\d{5,30}$/.test(candidate.ad_id)||!/^[-a-zA-Z0-9_]{1,40}$/.test(candidate.variant_id))throw new Error('CLOUD_IDENTITY_MISMATCH');
   const adKey=[candidate.page_id,candidate.ad_id,candidate.variant_id].join(':');
   const {evidence,...payload}=candidate;
-  payload.images=evidence.map(x=>({sha256:x.sha256,path:'evidence/'+x.sha256+'.jpg',captured_at:x.captured_at}));
+  payload.images=evidence.map(x=>({sha256:x.sha256,path:'evidence/'+x.sha256+'.jpg',captured_at:x.captured_at,...(['creative','ad_card'].includes(x.role)?{role:x.role}:{})}));
   const fingerprint=hash(JSON.stringify({images:payload.images.map(x=>x.sha256),text:payload.ad_text}));
   for(const image of evidence)await db.query('INSERT INTO ad_visual_evidence(sha256,jpeg) VALUES($1,$2) ON CONFLICT DO NOTHING',[image.sha256,image.bytes]);
   await db.query(`INSERT INTO ad_cloud_candidates(ad_key,job_id,fingerprint,payload,observed_at) VALUES($1,$2,$3,$4::jsonb,$5)

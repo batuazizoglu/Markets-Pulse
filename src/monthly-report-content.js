@@ -17,7 +17,7 @@ export function monthlyOverviewHtml(ctx,{compact=false}={}){
   if(opportunity)priorities.push(['Ev İnterneti',(opportunity.kktcell?.name||'Turkcell')+' / '+(opportunity.competitor?.name||'Rakip'),'Hız, kapsama ve toplam maliyeti birlikte doğrulayarak dijital teklif ve lead önceliğini değerlendirin.']);
   if((fwa.products||[]).length)priorities.push(['Superbox / Red Box','FWA teklifleri','Kota, teknoloji, kapsama ve kontrat koşullarını eşitleyerek fiyat farkını değerlendirin.']);
   const limited=(m.coverage||[]).filter(x=>!x.first_recorded||new Date(x.first_recorded)>new Date(ctx.period_start)).length;
-  let html='<section style="color:#001484;font-family:Arial,sans-serif;line-height:1.5"><h2>Birleşik Aylık Yönetici Özeti</h2>'+
+  let html='<section class="monthly-overview" style="color:#001484;font-family:Arial,sans-serif;line-height:1.5"><h2>Birleşik Aylık Yönetici Özeti</h2>'+
     '<p><b>Dönem: son 30 gün ('+esc(date(ctx.period_start))+' – '+esc(date(ctx.period_end))+').</b> Kapanmış takvim ayı raporu değildir. Günlük/haftalık raporların ortak kayıtları tekrar sayılmadan, kaynak olayları üzerinden derlenir.</p>'+
     table(['İzleme alanı','Dönem değişikliği','Güncel ürün'],[
       ['Mobil',ctx.stats?.total??0,'Karşılaştırma ve segment bölümünde'],
@@ -27,7 +27,7 @@ export function monthlyOverviewHtml(ctx,{compact=false}={}){
     ])+
     '<p><b>Okuma notu:</b> Paket fiyatları, ürün karşılaştırmaları ve kaynak durumları rapor üretim anını gösterir; aylık ortalama değildir. Skor farkı yalnızca dönem başı kaydı varsa hesaplanır. Geçmişi dönem başlangıcına ulaşmayan kaynak: '+esc(limited)+'. Veri olmayan günler “değişiklik yok” anlamına gelmez.</p>'+
     '<h2>Gelecek 30 Gün İçin Önerilen Aksiyonlar</h2>'+table(['Alan','Dayanak','Öneri'],priorities.length?priorities:[['Veri kalitesi','Yeterli rekabet sinyali yok','Kaynak erişimini ve geçmiş birikimini doğrulayın; doğrulanmamış veriden ticari karar üretmeyin.']])+
-    '<p style="font-size:10px;color:#667399">Aksiyonlar mevcut sinyallerden türetilmiş önerilerdir; satış sonucu veya gerçekleşmiş işlem değildir.</p>'+
+    '<p class="report-note" style="font-size:12px;color:#667399">Aksiyonlar mevcut sinyallerden türetilmiş önerilerdir; satış sonucu veya gerçekleşmiş işlem değildir.</p>'+
     '<h2>Kanıt Arşivi • 30 Günlük Kapsam</h2><p>'+esc(m.evidence_total??0)+' kayıt • '+esc(m.evidence_complete??0)+' eksiksiz • '+esc(m.evidence_missing??0)+' eksik dosyalı • '+esc(m.evidence_visual??0)+' görselli.</p>'+
     '<p>PDF seçilmiş kanıtları içerir. Ham HTML/JSON ve tüm görseller, platformda Kanıt Arşivi üzerinden kayıt bazında veya ZIP olarak indirilebilir.</p>';
   if(!compact){

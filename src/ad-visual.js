@@ -55,7 +55,7 @@ export function validateAdFeed(input,sources,now=new Date()){
     if(!Array.isArray(a.images)||!a.images.length||a.images.length>3)throw new Error('Görsel kanıt gerekli');
     const images=a.images.map(img=>{
       if(!/^[a-f0-9]{64}$/.test(img.sha256)||img.path!=='evidence/'+img.sha256+'.jpg')throw new Error('Geçersiz kanıt yolu');
-      return {sha256:img.sha256,path:img.path,captured_at:observed(img.captured_at,now)};
+      return {sha256:img.sha256,path:img.path,captured_at:observed(img.captured_at,now),...(['creative','ad_card'].includes(img.role)?{role:img.role}:{})};
     });
     const offer={};for(const f of ['price_try','previous_price_try','data_gb','bonus_data_gb','minutes','speed_mbps','commitment_months'])offer[f]=number(a.offer?.[f]);
     if(!['monthly','one_time','unknown'].includes(a.offer?.billing_period))throw new Error('Fiyat dönemi gerekli');

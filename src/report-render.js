@@ -16,12 +16,68 @@ function logoSvg(){
   return '<svg width="210" height="48" viewBox="0 0 420 82" xmlns="http://www.w3.org/2000/svg"><g transform="translate(4 13)"><circle cx="7" cy="45" r="6" fill="#0014F2"/><rect x="20" y="31" width="13" height="20" rx="6.5" fill="#1D5AFF"/><rect x="39" y="19" width="13" height="32" rx="6.5" fill="#1D5AFF"/><rect x="58" y="5" width="13" height="46" rx="6.5" fill="#00C2FF"/><circle cx="82" cy="45" r="7" fill="#FFCA00"/></g><text x="106" y="48" font-family="Arial,sans-serif" font-size="34" font-weight="800" letter-spacing="-1.5" fill="#001484">Markets</text><text x="217" y="48" font-family="Arial,sans-serif" font-size="34" font-weight="800" letter-spacing="-1.5" fill="#00C2FF">Pulse</text><text x="218" y="68" font-family="Arial,sans-serif" font-size="9.5" font-weight="700" letter-spacing="4.8" fill="#001484">BY TURKCELL</text></svg>';
 }
 function css(){
-  return '@page{size:A4;margin:14mm 13mm 15mm}*{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;margin:0;color:#001484;background:#fff;font-size:10px;line-height:1.42}.header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #00C2FF;padding-bottom:9px;margin-bottom:14px}.meta{text-align:right;color:#667399;font-size:8.5px}.meta b{display:block;color:#001484;font-size:10px}h1{font-size:22px;margin:0 0 4px;color:#001484}h2{font-size:13px;margin:17px 0 8px;color:#001484}h3{font-size:10px;margin:0 0 4px}.sub{color:#667399;margin-bottom:8px}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}.kpi{border:1px solid #dce5f2;border-radius:8px;padding:8px;background:#f7f9fc;min-height:58px}.kpi span{display:block;font-size:7.5px;text-transform:uppercase;color:#667399;font-weight:700}.kpi strong{display:block;font-size:17px;margin-top:3px;color:#001484}.kpi small{color:#667399;font-size:7px}.callout{border-left:4px solid #1D5AFF;background:#f4f8ff;padding:9px 10px;border-radius:6px;margin:9px 0}.callout.yellow{border-left-color:#FFCA00;background:#fff9df}table{width:100%;border-collapse:collapse;margin:5px 0 11px;font-size:8px}th{background:#001484;color:#fff;text-align:left;padding:5px 6px}td{border-bottom:1px solid #e3e9f2;padding:5px 6px;vertical-align:top}.good{color:#00835f;font-weight:700}.bad{color:#c7342d;font-weight:700}.muted{color:#667399}.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}.pill{display:inline-block;padding:2px 5px;border-radius:999px;background:#eef4ff;color:#0014F2;font-size:7px;font-weight:700;margin-right:3px}.item{border-bottom:1px solid #e5eaf1;padding:6px 0}.item:last-child{border-bottom:0}.score{font-size:16px;font-weight:800;color:#0014F2}.pagebreak{break-before:page}.evidence{display:grid;grid-template-columns:1fr 1fr;gap:8px}.evidence-card{border:1px solid #dce5f2;border-radius:7px;overflow:hidden}.evidence-card img{width:100%;height:150px;object-fit:cover;object-position:top;display:block}.evidence-card div{padding:5px 7px;color:#667399;font-size:7.5px}.footer{position:fixed;bottom:5mm;left:13mm;right:13mm;font-size:7px;color:#8190ad;display:flex;justify-content:space-between;border-top:1px solid #e5eaf1;padding-top:3px}';
+  return `
+    @page{size:A4;margin:14mm 14mm 19mm}
+    *{box-sizing:border-box}
+    html{print-color-adjust:exact;-webkit-print-color-adjust:exact}
+    body{font-family:Arial,Helvetica,sans-serif;margin:0;color:#172b4d;background:#fff;font-size:14px;line-height:1.5;overflow-wrap:anywhere}
+    .header{display:flex;justify-content:space-between;align-items:flex-start;gap:20px;border-bottom:2px solid #00b7e9;padding-bottom:12px;margin-bottom:20px;break-inside:avoid}
+    .header svg{width:210px;height:48px;flex-shrink:0}
+    .meta{text-align:right;color:#53627b;font-size:12px;line-height:1.45;max-width:55%}
+    .meta b{display:block;color:#001484;font-size:13px;margin-bottom:3px}
+    h1{font-size:28px;line-height:1.18;margin:0 0 7px;color:#001484;break-after:avoid}
+    h2{font-size:19px;line-height:1.3;margin:24px 0 10px;color:#001484;break-after:avoid}
+    h3{font-size:15px;line-height:1.4;margin:0 0 6px;color:#001484;break-after:avoid}
+    p{margin:8px 0 12px;orphans:3;widows:3}
+    .sub{color:#53627b;font-size:12px;margin-bottom:19px}
+    .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:12px 0;break-inside:avoid}
+    .kpi{border:1px solid #dce5f2;border-radius:7px;padding:11px 13px;background:#f6f9fe;min-height:86px;break-inside:avoid}
+    .kpi span{display:block;font-size:12px;color:#53627b;font-weight:700}
+    .kpi strong{display:block;font-size:23px;line-height:1.25;margin:5px 0;color:#001484}
+    .kpi small{display:block;color:#53627b;font-size:12px;line-height:1.4}
+    .callout{border-left:4px solid #1d5aff;background:#f3f7ff;padding:12px 14px;border-radius:5px;margin:12px 0;orphans:3;widows:3;break-inside:avoid}
+    .callout.yellow{border-left-color:#e3b900;background:#fff9e2}
+    table{width:100%;border-collapse:collapse;table-layout:fixed;margin:8px 0 18px;font-size:12px;line-height:1.45}
+    thead{display:table-header-group;break-inside:avoid;break-after:avoid}tfoot{display:table-footer-group}
+    tr{break-inside:avoid;page-break-inside:avoid}
+    th{background:#001484;color:#fff;text-align:left;font-weight:700;padding:8px;vertical-align:top}
+    td{border-bottom:1px solid #dce5f2;padding:8px;vertical-align:top;overflow-wrap:anywhere;word-break:normal}
+    tbody tr:nth-child(even){background:#f7f9fc}
+    td small,.detail-line{display:block;font-size:12px;color:#53627b;margin-top:4px}
+    .home-products .product-name{width:32%}.home-products .product-specs{width:19%}.home-products .product-price{width:18%}.home-products .product-year{width:17%}.home-products .product-value{width:14%}
+    .good{color:#007653;font-weight:700}.bad{color:#b32d29;font-weight:700}.muted{color:#53627b}
+    .two{display:block}.two>div{margin-bottom:18px}
+    .pill{display:inline-block;padding:2px 7px;border-radius:9px;background:#eaf1ff;color:#173a9e;font-size:11px;font-weight:700;margin:2px 3px 2px 0}
+    .item{border-bottom:1px solid #dce5f2;padding:11px 0;break-inside:avoid}.item:last-child{border-bottom:0}
+    .score{font-size:21px;font-weight:800;color:#174de0}
+    .pagebreak,.section-start{break-before:page;page-break-before:always}.section-start{margin-top:0}
+    .evidence{display:block}.evidence-card{margin:0 0 16px;border:1px solid #dce5f2;border-radius:6px;overflow:hidden;break-inside:avoid}
+    .evidence-card img{width:100%;height:220px;object-fit:contain;object-position:top;background:#f7f9fc;display:block}
+    .evidence-card div{padding:8px 10px;color:#53627b;font-size:12px}
+    .monthly-overview table{font-size:12px!important}.monthly-overview .report-note{font-size:12px!important;color:#53627b}
+    .ad-report{font-family:Arial,Helvetica,sans-serif!important;font-size:14px!important;line-height:1.5!important;break-inside:auto!important}
+    .ad-report:has(.ad-report-card){break-before:page;page-break-before:always}
+    .ad-report h2:first-child{margin-top:0}
+    .ad-report h2,.ad-report h3,.ad-report h4{break-after:avoid}
+    .ad-report-card{break-inside:avoid;page-break-inside:avoid;margin:0 0 18px!important}
+    .ad-report-image{display:block;max-width:100%!important;max-height:80mm!important;width:auto!important;height:auto!important;object-fit:contain!important;margin:0 auto 10px!important}
+    .ad-report-layout,.ad-report-layout tbody,.ad-report-layout tr,.ad-report-image-cell,.ad-report-details{display:block!important;width:100%!important}
+    .ad-report-layout{margin:0!important}.ad-report-layout td{border:0!important;background:#fff!important}
+    .ad-report-image-cell{padding:10px 12px 0!important}
+    .ad-report-card-title{font-size:16px!important;line-height:1.4!important;margin:0!important}
+    .ad-report-details{font-size:12px!important;line-height:1.5!important;overflow-wrap:anywhere;padding:10px 12px!important}
+    .ad-report-details p{margin:0 0 7px!important}
+    .ad-report-source{font-size:11px!important;line-height:1.4!important}
+    .ad-report-continuation{font-size:12px;line-height:1.5;break-inside:auto;orphans:3;widows:3;margin:8px 0 20px}
+    .ad-report-continuation p{break-inside:auto}
+    .ad-report table{font-size:12px!important}.ad-report td,.ad-report th{font-size:12px!important}
+    a{color:#1748a3;text-decoration:none}small{font-size:12px}
+  `;
 }
 function evidenceHtml(ctx,limit=4){
   const rows=(ctx.evidence||[]).filter(x=>x.focused_screenshot_png||x.screenshot_png).slice(0,limit);
   if(!rows.length)return '';
-  return '<h2>Seçilmiş Görsel Kanıtlar</h2><div class="evidence">'+rows.map(x=>{const b=x.focused_screenshot_png||x.screenshot_png;const uri='data:image/png;base64,'+Buffer.from(b).toString('base64');return '<div class="evidence-card"><img src="'+uri+'"><div><b>'+esc(x.source_name)+'</b> • '+esc(localStamp(x.captured_at))+' • '+esc(x.kind)+'</div></div>';}).join('')+'</div>';
+  return '<h2>Seçilmiş Görsel Kanıtlar</h2><div class="evidence">'+rows.map(x=>{const b=x.focused_screenshot_png||x.screenshot_png;const uri='data:image/png;base64,'+Buffer.from(b).toString('base64');return '<div class="evidence-card"><img alt="'+esc(x.source_name)+' görsel kanıtı" src="'+uri+'"><div><b>'+esc(x.source_name)+'</b> • '+esc(localStamp(x.captured_at))+' • '+esc(x.kind)+'</div></div>';}).join('')+'</div>';
 }
 function homeBodyHtml(ctx){
   const h=ctx.home||{},products=h.products||[],sources=h.sources||[],changes=h.changes||[],isFwa=ctx.type==='fwa';
@@ -53,7 +109,7 @@ function homeBodyHtml(ctx){
   }).slice(0,isFwa?30:55).map(x=>{
     const speed=x.speed_down_mbps?nfmt(x.speed_down_mbps)+' Mbps':(x.data_limit_gb?nfmt(x.data_limit_gb)+' GB':'—');
     const duration=(x.duration_months||1)+(x.bonus_months?(' + '+x.bonus_months+' hediye'):'')+' ay';
-    return '<tr><td><b>'+esc(x.brand||x.provider)+'</b></td><td>'+esc(x.name)+'</td><td>'+esc(x.technology||'—')+'</td><td>'+esc(speed)+'</td><td>'+esc(duration)+'</td><td>'+esc(money(x.effective_monthly_try))+'</td><td>'+esc(money(x.first_year_equiv_try))+'</td><td>'+esc(x.mbps_per_100tl==null?'—':nfmt(x.mbps_per_100tl,2))+'</td><td>'+esc(x.market_score==null?'—':x.market_score+'/100')+'</td></tr>';
+    return '<tr><td><b>'+esc(x.brand||x.provider)+'</b><span class="detail-line">'+esc(x.name)+'</span></td><td>'+esc(speed)+'<span class="detail-line">'+esc(x.technology||'—')+'<br>'+esc(duration)+'</span></td><td><b>'+esc(money(x.effective_monthly_try))+'</b><span class="detail-line">aylık eşdeğer</span></td><td>'+esc(money(x.first_year_equiv_try))+'</td><td>'+esc(x.mbps_per_100tl==null?'—':nfmt(x.mbps_per_100tl,2))+'<span class="detail-line">Skor: '+esc(x.market_score==null?'—':x.market_score+'/100')+'</span></td></tr>';
   }).join('');
 
   let insight='';
@@ -71,7 +127,7 @@ function homeBodyHtml(ctx){
 
   return '<div class="grid">'+kpiHtml+'</div>'+insight+
     '<h2>'+(isFwa?'Superbox / Red Box Ürünleri':'Turkcell Ev İnterneti ve Pazar Benchmark')+'</h2>'+
-    '<table><thead><tr><th>Marka</th><th>Ürün</th><th>Teknoloji</th><th>Hız/Kota</th><th>Süre</th><th>Efektif Aylık</th><th>12 Ay Eşdeğer</th><th>Mbps/100 TL</th><th>Skor</th></tr></thead><tbody>'+rows+'</tbody></table>'+
+    '<table class="home-products"><colgroup><col class="product-name"><col class="product-specs"><col class="product-price"><col class="product-year"><col class="product-value"></colgroup><thead><tr><th>Marka / Ürün</th><th>Hız, Kota ve Süre</th><th>Efektif Aylık</th><th>12 Ay Eşdeğer</th><th>Mbps / 100 TL</th></tr></thead><tbody>'+(rows||'<tr><td colspan="5">Güncel ürün kaydı bulunmuyor.</td></tr>')+'</tbody></table>'+
     '<div class="pagebreak"></div><h2>Son '+esc(ctx.days)+' Günlük Değişiklikler</h2>'+
     '<table><thead><tr><th>Tarih</th><th>Sağlayıcı</th><th>Ürün</th><th>Hareket</th><th>Önce</th><th>Sonra</th></tr></thead><tbody>'+(changeRows||'<tr><td colspan="6">Anlamlı değişiklik yok.</td></tr>')+'</tbody></table>'+
     '<h2>Kaynak Sağlığı</h2><table><thead><tr><th>Kaynak</th><th>Sağlayıcı</th><th>Durum</th><th>HTTP</th><th>Okunan</th><th>Yanıt</th></tr></thead><tbody>'+sourceRows+'</tbody></table>';
@@ -119,7 +175,7 @@ function dailyHomeSummaryHtml(ctx){
 }
 
 function bodyHtml(ctx){
-  const m=ctx.market,b=ctx.benchmark,s=ctx.stats;
+  const m=ctx.market||{},b=ctx.benchmark||{},s=ctx.stats||{};
   const scoreTable=(ctx.score_deltas||[]).map(x=>{const d=x.delta==null?'—':(x.delta>0?'+':'')+x.delta;const cls=x.delta==null?'':x.delta>=0?'good':'bad';return '<tr><td><b>'+esc(x.segment)+'</b></td><td>'+esc(x.current==null?'—':x.current+'/100')+'</td><td>'+esc(x.baseline==null?'—':x.baseline+'/100')+'</td><td class="'+cls+'">'+esc(d)+'</td><td>'+esc(x.level||'—')+(x.current==null&&x.rationale?'<br><small>'+esc(x.rationale)+'</small>':'')+'</td><td>'+esc(x.confidence||'—')+'</td></tr>';}).join('');
   const top=(m.top_threats||[]).slice(0,8);
   const threats=top.length?top.map(x=>'<div class="item"><h3>'+esc(x.product_name)+' <span class="pill">'+esc(x.segment)+'</span><span class="pill">'+esc(x.intent)+'</span></h3><div><span class="score">'+esc(x.threat)+'/100</span> • '+esc((x.reasons||[]).join(' • '))+'</div><div class="muted"><b>Öneri:</b> '+esc(x.action)+'</div></div>').join(''):'<div class="muted">Anlamlı rakip hareketi yok.</div>';
@@ -140,39 +196,62 @@ export function renderReportHtml(ctx){
   let content=isHome?homeBodyHtml(ctx):bodyHtml(ctx);
   if(ctx.type==='monthly'){
     content=monthlyOverviewHtml(ctx)+'<div class="pagebreak"></div><h2>Mobil Rekabet ve Paket Hareketleri</h2>'+content+
-      '<p>Mobil değişiklik tablosu son '+Math.min(40,ctx.changes.length)+' / '+ctx.changes.length+' kaydı gösterir. Yönetici özetindeki sayılar dönemdeki tüm kayıtları kapsar.</p>';
+      '<p>Mobil değişiklik tablosu son '+Math.min(40,(ctx.changes||[]).length)+' / '+(ctx.changes||[]).length+' kaydı gösterir. Yönetici özetindeki sayılar dönemdeki tüm kayıtları kapsar.</p>';
     for(const [family,title] of [['fixed','Turkcell Ev İnterneti • Aylık Detay'],['fwa','Superbox / Red Box • Aylık Detay']]){
-      const section=ctx.daily_home[family];
+      const section=ctx.daily_home?.[family]||{products:[],changes:[],sources:[]};
       content+='<div class="pagebreak"></div><h2>'+title+'</h2>'+homeBodyHtml({...ctx,type:family==='fixed'?'home':'fwa',home:section})+
         '<p>Seçilmiş ürünler ve son '+Math.min(35,section.changes.length)+' / '+section.changes.length+' değişiklik gösterilir. Ürün tablosu güncel katalogdan ilk '+Math.min(family==='fixed'?55:30,section.products.length)+' / '+section.products.length+' teklifi içerir.</p>';
     }
   }
-  content+=ctx.ad_analysis_html||'';
-  const monthlyCss=ctx.type==='monthly'?'thead{display:table-header-group}tr,.kpi,.evidence-card{break-inside:avoid}h2,h3{break-after:avoid}td{overflow-wrap:anywhere}.two{display:block}.two>div{margin-bottom:12px}':'';
-  return '<!doctype html><html lang="tr"><head><meta charset="utf-8"><style>'+css()+monthlyCss+'</style></head><body><div class="header"><div>'+logoSvg()+'</div><div class="meta"><b>'+esc(ctx.title)+'</b>'+esc(range)+'<br>Üretim: '+esc(localStamp(ctx.generated_at))+'</div></div><h1>'+esc(ctx.title)+'</h1><div class="sub">'+esc(subtitle)+'</div>'+content+'<div class="footer"><span>Markets Pulse by Turkcell</span><span>Daha fazla veri • Daha güçlü kararlar</span></div></body></html>';
+  content+=ctx.ad_analysis_html_pdf??ctx.ad_analysis_html??'';
+  // Put the break on the heading itself, so an empty spacer cannot create a blank page.
+  content=content.replace(/<div class="pagebreak"><\/div><h2>/g,'<h2 class="section-start">');
+  return '<!doctype html><html lang="tr"><head><meta charset="utf-8"><title>'+esc(ctx.title)+'</title><style>'+css()+'</style></head><body><div class="header"><div>'+logoSvg()+'</div><div class="meta"><b>'+esc(ctx.title)+'</b>'+esc(range)+'<br>Üretim: '+esc(localStamp(ctx.generated_at))+'</div></div><h1>'+esc(ctx.title)+'</h1><div class="sub">'+esc(subtitle)+'</div>'+content+'</body></html>';
+}
+function launchBrowser(executablePath){
+  return puppeteer.launch({headless:true,...(executablePath?{executablePath}:{}),args:['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage','--disable-gpu','--no-zygote']});
 }
 async function getBrowser(){
-  if(!reportBrowserPromise)reportBrowserPromise=puppeteer.launch({headless:true,args:['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage','--disable-gpu','--no-zygote']}).catch(e=>{reportBrowserPromise=null;throw e;});
+  if(!reportBrowserPromise)reportBrowserPromise=launchBrowser().catch(e=>{reportBrowserPromise=null;throw e;});
   return reportBrowserPromise;
 }
-export async function generateReportPdf(pool,type,options={}){
-  const ctx=await buildReportContext(pool,type,options),html=renderReportHtml(ctx),browser=await getBrowser(),page=await browser.newPage();
+
+/** Render a prepared report without database access or email side effects. */
+export async function renderReportPdf(ctx,{executablePath}={}){
+  const html=renderReportHtml(ctx),browser=executablePath?await launchBrowser(executablePath):await getBrowser(),page=await browser.newPage();
   try{
+    await page.setViewport({width:794,height:1123,deviceScaleFactor:1});
+    await page.emulateMediaType('print');
     await page.setContent(html,{waitUntil:'networkidle0',timeout:60000});
-    await page.emulateMediaType('screen');
-    await page.evaluate(async()=>{if(document.fonts&&document.fonts.ready)await document.fonts.ready});
-    const metrics=await page.evaluate(()=>({
-      textLength:(document.body?.innerText||'').trim().length,
-      htmlLength:(document.body?.innerHTML||'').length,
-      height:document.documentElement?.scrollHeight||0
-    }));
-    if(metrics.textLength<80 || metrics.htmlLength<200){
-      throw new Error('PDF render content is unexpectedly empty: '+JSON.stringify(metrics));
-    }
-    const pdfBytes=await page.pdf({format:'A4',printBackground:true,preferCSSPageSize:true,margin:{top:'0',right:'0',bottom:'0',left:'0'}});
+    const metrics=await page.evaluate(async()=>{
+      if(document.fonts?.ready)await document.fonts.ready;
+      await Promise.all(Array.from(document.images,image=>image.decode().catch(()=>{})));
+      return {
+        textLength:(document.body?.innerText||'').trim().length,
+        htmlLength:(document.body?.innerHTML||'').length,
+        height:document.documentElement?.scrollHeight||0,
+        images:document.images.length,
+        missingImages:Array.from(document.images).filter(image=>!image.complete||!image.naturalWidth).length
+      };
+    });
+    if(metrics.textLength<80||metrics.htmlLength<200)throw new Error('PDF render content is unexpectedly empty: '+JSON.stringify(metrics));
+    if(metrics.missingImages)throw new Error('PDF contains unloaded evidence images: '+metrics.missingImages);
+    const pdfBytes=await page.pdf({
+      format:'A4',printBackground:true,preferCSSPageSize:true,displayHeaderFooter:true,
+      headerTemplate:'<span></span>',
+      footerTemplate:'<div style="width:100%;margin:0 14mm;color:#53627b;font-family:Arial,sans-serif;font-size:8pt;line-height:1.3;border-top:1px solid #dce5f2;padding-top:5px;display:flex;justify-content:space-between"><span>Markets Pulse by Turkcell</span><span>Sayfa <span class="pageNumber"></span> / <span class="totalPages"></span></span></div>',
+      margin:{top:'14mm',right:'14mm',bottom:'19mm',left:'14mm'}
+    });
     const buffer=Buffer.isBuffer(pdfBytes)?pdfBytes:Buffer.from(pdfBytes);
-    if(buffer.length<5000) throw new Error('Generated PDF is unexpectedly small: '+buffer.length+' bytes');
-    console.log('[report-pdf]',JSON.stringify({type,file_size_bytes:buffer.length,...metrics}));
-    return {buffer,ctx,fileName:'markets-pulse-'+type+'-'+slugStamp(ctx.period_end)+'.pdf',contentType:'application/pdf'};
-  }finally{await page.close().catch(()=>{});}
+    if(buffer.length<5000)throw new Error('Generated PDF is unexpectedly small: '+buffer.length+' bytes');
+    console.log('[report-pdf]',JSON.stringify({type:ctx.type,file_size_bytes:buffer.length,...metrics}));
+    return {buffer,ctx,fileName:'markets-pulse-'+ctx.type+'-'+slugStamp(ctx.period_end)+'.pdf',contentType:'application/pdf'};
+  }finally{
+    await page.close().catch(()=>{});
+    // An explicit binary is an isolated render (CI / local preview), not the server's shared browser.
+    if(executablePath)await browser.close().catch(()=>{});
+  }
+}
+export async function generateReportPdf(pool,type,options={}){
+  return renderReportPdf(await buildReportContext(pool,type,options));
 }
