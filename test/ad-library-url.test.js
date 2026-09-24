@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {PGlite} from '@electric-sql/pglite';
 import {SCHEMA_SQL} from '../src/schema.js';
 import {HOME_INTERNET_SOURCES} from '../src/home-internet.js';
-import {socialDirectory} from '../src/isp-registry.js';
+import {ISP_SOCIALS,socialDirectory} from '../src/isp-registry.js';
 import {adLibraryUrl} from '../src/ad-library-url.js';
 import {adLibrarySource,captureCloudAds} from '../src/ad-cloud-capture.js';
 import {startProviderRun} from '../src/ad-provider-client.js';
@@ -12,18 +12,23 @@ import {queueNewCloudSources} from '../src/ad-cloud.js';
 const advertiser='Kuzey Kıbrıs Turkcell';
 const providerEnv={AD_CAPTURE_PROVIDER:'apify',APIFY_TOKEN:'synthetic-test-token',APIFY_MAX_RUN_USD:'0.10',APIFY_DAILY_BUDGET_USD:'1.00'};
 
-test('Turkcell Meta shortcuts use the public advertiser name and preserve internal brand keys',()=>{
+test('Turkcell Meta shortcuts use verified advertiser pages and preserve internal brand keys',()=>{
   const directory=socialDirectory(HOME_INTERNET_SOURCES);
-  for(const brand of ['KKTCELL','Turkcell Ev İnterneti']){
+  for(const [brand,pageId,name] of [['KKTCELL','127496543986832',advertiser],['Turkcell Ev İnterneti','127496543986832',advertiser],['GNÇ Kıbrıs','321385064564918','GNÇ Kıbrıs']]){
     const source=directory.find(row=>row.brand===brand),url=new URL(source.ad_library_url);
     assert.equal(source.brand,brand);
-    assert.equal(source.ad_library_search_name,advertiser);
-    assert.equal(source.ad_library_type,'brand_search');
-    assert.equal(url.searchParams.get('q'),advertiser);
-    assert.equal(url.searchParams.get('search_type'),'keyword_unordered');
+    assert.equal(source.ad_library_search_name,name);
+    assert.equal(source.ad_library_type,'verified_page');
+    assert.equal(url.searchParams.has('q'),false);
+    assert.equal(url.searchParams.get('search_type'),'page');
     assert.equal(url.searchParams.get('country'),'CY');
-    assert.equal(url.searchParams.has('view_all_page_id'),false);
+    assert.equal(url.searchParams.get('view_all_page_id'),pageId);
   }
+  const unverified={brand:'Synthetic Internal Key',ad_library_search_name:'Synthetic Public Advertiser'};
+  const shortcut=new URL(adLibraryUrl(unverified));
+  assert.equal(shortcut.searchParams.get('q'),unverified.ad_library_search_name);
+  assert.equal(shortcut.searchParams.get('search_type'),'keyword_unordered');
+  assert.equal(shortcut.searchParams.has('view_all_page_id'),false);
   for(const source of directory.filter(row=>!row.page_id&&!row.ad_library_search_name)){
     assert.equal(new URL(source.ad_library_url).searchParams.get('q'),source.brand);
   }
@@ -42,7 +47,7 @@ test('verified page IDs take precedence over advertiser names in every URL build
 });
 
 test('corrected keyword links do not authorize unverified cloud or paid provider capture',async()=>{
-  const source=socialDirectory(HOME_INTERNET_SOURCES).find(row=>row.brand==='KKTCELL');
+  const source={brand:'Synthetic Internal Key',ad_library_search_name:'Synthetic Public Advertiser'};
   assert.equal(adLibrarySource(source),null);
   const result=await captureCloudAds(source,()=>assert.fail('unverified images must not be attributed'),{
     launch:()=>assert.fail('keyword shortcuts must not start cloud capture')
@@ -52,7 +57,7 @@ test('corrected keyword links do not authorize unverified cloud or paid provider
 });
 
 test('Apify uses the same verified-page URL and never replaces a page ID with a keyword',async()=>{
-  const source={brand:'KKTCELL',page_id:'123456789012345',ad_library_search_name:advertiser};
+  const source=socialDirectory(HOME_INTERNET_SOURCES).find(row=>row.brand==='GNÇ Kıbrıs');
   let calls=0;
   await startProviderRun(source,{env:providerEnv,fetcher:async(_,options)=>{
     calls++;
@@ -67,19 +72,22 @@ test('Apify uses the same verified-page URL and never replaces a page ID with a 
 
 test('source registration refreshes historical keyword shortcuts idempotently without touching verified jobs or capture state',async()=>{
   const db=new PGlite();
+  const brands=['Synthetic Search Brand','Synthetic Search Alias'],searchName='Synthetic Public Advertiser';
+  const sources=[...HOME_INTERNET_SOURCES,...brands.map(provider=>({provider,url:'https://synthetic.example/',company_ids:[]}))];
   try{
+    for(const brand of brands)ISP_SOCIALS[brand]={ad_library_search_name:searchName};
     await db.exec(SCHEMA_SQL);
     await db.query("UPDATE ad_cloud_control SET lease_owner='search-name-test',lease_until=NOW()+INTERVAL '10 minutes' WHERE id=1");
-    await queueNewCloudSources(db,HOME_INTERNET_SOURCES,'search-name-test');
-    for(const [index,brand] of ['KKTCELL','Turkcell Ev İnterneti'].entries()){
+    await queueNewCloudSources(db,sources,'search-name-test');
+    for(const [index,brand] of brands.entries()){
       const source={brand,ad_library_url:adLibraryUrl({brand}),ad_library_type:'brand_search',legacy_note:'preserve this'};
       await db.query('INSERT INTO ad_cloud_jobs(batch_key,brand,source_json,status,note,attempts,captured) VALUES($1,$2,$3::jsonb,$4,$5,2,3)',
         ['old-search-'+index,brand,JSON.stringify(source),index?'imported':'unverified','Historical capture result']);
     }
-    const verified={brand:'KKTCELL',page_id:'123456789012345',ad_library_url:adLibraryUrl({page_id:'123456789012345'})};
-    await db.query("INSERT INTO ad_cloud_jobs(batch_key,brand,source_json,status) VALUES('verified-turkcell','KKTCELL',$1::jsonb,'blocked')",[JSON.stringify(verified)]);
+    const verified={brand:brands[0],page_id:'123456789012345',ad_library_url:adLibraryUrl({page_id:'123456789012345'})};
+    await db.query("INSERT INTO ad_cloud_jobs(batch_key,brand,source_json,status) VALUES('verified-synthetic',$1,$2::jsonb,'blocked')",[brands[0],JSON.stringify(verified)]);
     const before=(await db.query('SELECT * FROM ad_cloud_jobs ORDER BY id')).rows;
-    assert.deepEqual(await queueNewCloudSources(db,HOME_INTERNET_SOURCES,'search-name-test'),[]);
+    assert.deepEqual(await queueNewCloudSources(db,sources,'search-name-test'),[]);
     const after=(await db.query('SELECT * FROM ad_cloud_jobs ORDER BY id')).rows;
     assert.equal(after.length,before.length);
     for(const [index,row] of after.entries()){
@@ -88,14 +96,14 @@ test('source registration refreshes historical keyword shortcuts idempotently wi
         assert.deepEqual({...row,source_json:old.source_json},old);
         assert.equal(row.source_json.brand,old.brand);
         assert.equal(row.source_json.legacy_note,'preserve this');
-        assert.equal(row.source_json.ad_library_search_name,advertiser);
-        assert.equal(new URL(row.source_json.ad_library_url).searchParams.get('q'),advertiser);
+        assert.equal(row.source_json.ad_library_search_name,searchName);
+        assert.equal(new URL(row.source_json.ad_library_url).searchParams.get('q'),searchName);
         assert.equal(row.source_json.page_id,undefined);
       }else assert.deepEqual(row,old);
     }
-    assert.deepEqual(await queueNewCloudSources(db,HOME_INTERNET_SOURCES,'search-name-test'),[]);
+    assert.deepEqual(await queueNewCloudSources(db,sources,'search-name-test'),[]);
     assert.deepEqual((await db.query('SELECT * FROM ad_cloud_jobs ORDER BY id')).rows,after);
     assert.equal((await db.query('SELECT count(*)::int n FROM ad_provider_runs')).rows[0].n,0);
     assert.equal((await db.query('SELECT count(*)::int n FROM ad_provider_budget')).rows[0].n,0);
-  }finally{await db.close()}
+  }finally{for(const brand of brands)delete ISP_SOCIALS[brand];await db.close()}
 });

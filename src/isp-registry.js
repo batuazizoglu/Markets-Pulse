@@ -291,17 +291,26 @@ export const ISP_SOCIALS = {
   },
   "KKTCELL": {
     "ad_library_search_name": "Kuzey Kıbrıs Turkcell",
+    "page_id": "127496543986832",
     "facebook": "https://www.facebook.com/TURKCELLKUZEYKIBRIS",
     "instagram": "https://www.instagram.com/kuzeykibristurkcell/",
-    "research_checked_at": "2026-09-21",
-    "research_note": "Sosyal hesaplar resmî siteden doğrulandı. Reklam sayfa kimliği henüz doğrulanmadı."
+    "research_checked_at": "2026-09-24",
+    "research_note": "Kuzey Kıbrıs Turkcell reklam sayfa kimliği, kullanıcı tarafından paylaşılan Reklam Kütüphanesi bağlantısıyla eşleştirildi."
+  },
+  "GNÇ Kıbrıs": {
+    "ad_library_search_name": "GNÇ Kıbrıs",
+    "page_id": "321385064564918",
+    "research_checked_at": "2026-09-24",
+    "research_note": "GNÇ Kıbrıs reklam sayfa kimliği, kullanıcı tarafından paylaşılan Reklam Kütüphanesi bağlantısıyla eşleştirildi. Kuzey Kıbrıs Turkcell ana hesabından ayrı izlenir."
   },
   "Turkcell Ev İnterneti": {
     "ad_library_search_name": "Kuzey Kıbrıs Turkcell",
+    "page_id": "127496543986832",
+    "capture_brand": "KKTCELL",
     "facebook": "https://www.facebook.com/TURKCELLKUZEYKIBRIS",
     "instagram": "https://www.instagram.com/kuzeykibristurkcell/",
-    "research_checked_at": "2026-09-21",
-    "research_note": "KKTCELL ile ortak sosyal hesap. Ev interneti ayrıca Lifecell Digital hesabında tanıtılıyor. Ayrı reklam sayfa kimliği doğrulanmadı."
+    "research_checked_at": "2026-09-24",
+    "research_note": "Kuzey Kıbrıs Turkcell ile ortak reklam sayfası. Reklamlar KKTCELL taramasında bir kez alınır; Ev İnterneti kategorisindeki analizler burada da gösterilir. Lifecell Digital ayrı sosyal hesaptır."
   },
   "Lifecell Digital": {
     "facebook": "https://www.facebook.com/lifecellkuzeykibris/",
@@ -795,6 +804,8 @@ export function socialDirectory(sources) {
     const old=brands.get(s.provider);
     brands.set(s.provider,{brand:s.provider,website:old?.website||s.url,company_ids:[...new Set([...(old?.company_ids||[]),...(s.company_ids||[])])]});
   }
+  // Advertising-only brands (for example GNÇ) do not create ISP companies or products.
+  for(const brand of Object.keys(ISP_SOCIALS))if(!brands.has(brand))brands.set(brand,{brand,website:null,company_ids:[]});
   return [...brands.values()].map(b=>{
     const social={...(ISP_SOCIALS[b.brand]||{})};
     for(const s of sources.filter(s=>s.provider===b.brand))for(const link of s.meta?.social_links||[]){

@@ -24,6 +24,12 @@ function categoryLabel(row,labels){return labels[row.category]||categoryName(row
 function providerCounters(run){return '<p data-av-provider-counts>Bulunan reklam: '+count(run.ads)+' • Keşfedilen görsel / varyant: '+count(run.assets)+' • Kaydedilen: '+count(run.captured)+' • Bekleyen: '+count(run.pending)+' • Medyası eksik: '+count(run.missing)+' • İndirme hatası: '+count(run.errors)+'</p><p>'+esc(run.coverage_complete===true?'Sağlayıcı kapsamı tam olarak doğruladı.':run.limit_reached?'Sağlayıcı sınırına ulaşıldı; kapsam kısmi.':'Kapsamın tam olduğu doğrulanmadı; sıfır sonuç reklam olmadığı anlamına gelmez.')+'</p>'}
 function safeLink(url){try{const u=new URL(url);return u.protocol==='https:'&&!u.username&&!u.password&&['facebook.com','www.facebook.com','instagram.com','www.instagram.com'].includes(u.hostname)?u.href:'#'}catch{return '#'}}
 function imageUrl(hash){return /^[a-f0-9]{64}$/.test(hash||'')?'/api/ad-visuals/evidence/'+hash+'.jpg':''}
+function captureBrand(brand,data=state.data){
+  const directory=data?.source_directory||[],source=directory.find(s=>s.brand===brand);
+  if(!source?.capture_brand||source.capture_brand===brand)return brand;
+  const primary=directory.find(s=>s.brand===source.capture_brand);
+  return /^\d{5,30}$/.test(source.page_id||'')&&String(primary?.page_id)===String(source.page_id)?primary.brand:brand;
+}
 function sourceDirectory(data){
   const sources=new Map(),ensure=brand=>{if(!sources.has(brand))sources.set(brand,{brand});return sources.get(brand)};
   for(const source of data.source_directory||[])Object.assign(ensure(source.brand),source);
@@ -33,12 +39,14 @@ function sourceDirectory(data){
   for(const brand of Object.keys(data.brand_groups||{}))ensure(brand);
   for(const row of data.rows||[]){const source=ensure(row.brand);source.page_id||=row.page_id;source.ad_library_url||=row.source_url}
   return [...sources.values()].filter(s=>typeof s.brand==='string'&&s.brand).map(s=>{
+    const capture_brand=captureBrand(s.brand,data),shared=capture_brand!==s.brand;
+    if(shared){const primary=sources.get(capture_brand);s={...s,live:primary?.live,provider:primary?.provider,legacy:primary?.legacy}}
     const latest=s.live||s.legacy,verified=/^\d{5,30}$/.test(s.page_id||''),provider=data.cloud?.capture_provider;
     const waiting=provider?.enabled&&provider.configured===false;
-    return {...s,verified,status:waiting?'waiting_config':s.provider?(s.provider.coverage_complete===true&&s.provider.ads===0?'no_ads':s.provider.state):latest?.status||(verified?'not_scanned':'unverified'),note:waiting?provider.message:s.provider?(s.provider.last_error||''):latest?.note||'',
+    return {...s,capture_brand,shared,verified,status:waiting?'waiting_config':s.provider?(s.provider.coverage_complete===true&&s.provider.ads===0?'no_ads':s.provider.state):latest?.status||(verified?'not_scanned':'unverified'),note:waiting?provider.message:s.provider?(s.provider.last_error||''):latest?.note||'',
       checked_at:s.provider?.updated_at||(s.live?(s.live.finished_at||null):s.legacy?.checked_at),available_at:s.live?.available_at,
-      captured:s.provider?.captured??s.live?.captured??0,archive_count:data.brand_groups?Object.values(data.brand_groups[s.brand]||{}).reduce((n,v)=>n+count(v),0):null,pending_count:data.pending_media?count(data.pending_media.brand_totals?.[s.brand]):null,url:s.ad_library_url||s.legacy?.source_url,country:s.country||s.legacy?.country,
-      rows:(data.rows||[]).filter(row=>row.brand===s.brand)};
+      captured:s.provider?.captured??s.live?.captured??0,archive_count:data.brand_groups?Object.values(data.brand_groups[capture_brand]||{}).reduce((n,v)=>n+count(v),0):null,pending_count:data.pending_media?count(data.pending_media.brand_totals?.[capture_brand]):null,url:s.ad_library_url||s.legacy?.source_url,country:s.country||s.legacy?.country,
+      rows:(data.rows||[]).filter(row=>row.brand===capture_brand)};
   }).sort((a,b)=>a.brand.localeCompare(b.brand,'tr'));
 }
 function sourceCard(source){
@@ -46,6 +54,7 @@ function sourceCard(source){
   const status=source.provider||source.status==='waiting_config'?sourceStatus[source.status]:source.live?(source.status==='partial'&&source.captured>0?'Görseller kaydedildi':sourceStatus[source.status]||statusText[source.status]):source.legacy?.stale?'Yeni inceleme bekleniyor':sourceStatus[source.status]||statusText[source.status];
   const url=safeLink(source.url);
   return '<div class="av-source" data-av-source="'+esc(source.brand)+'"><b>'+esc(source.brand)+'</b><span>'+esc(status||'İnceleme bekleniyor')+'</span>'+
+    (source.shared?'<p>Ortak reklam hesabı: '+esc(source.capture_brand)+'. Tarama ve arşiv sayıları bu hesaba aittir; reklamlar bir kez kaydedilir.</p>':'')+
     (source.country?'<span>Ülke filtresi: '+esc(source.country==='CY'?'Kıbrıs (CY)':source.country)+'</span>':'')+
     (source.note?'<p>'+esc(source.note)+'</p>':'')+
     (source.provider?providerCounters(source.provider):'')+
@@ -135,9 +144,9 @@ function render(){
         }
       }
       const c=cloud.candidates||{};
-      root.querySelector('.av-cloud div').innerHTML='<p>AI incelemesi bekleyen: '+Number((c.pending||0)+(c.retry||0))+' • Analizi tamamlanan: '+Number(c.analyzed||0)+' • Hatalı: '+Number(c.error||0)+'</p><p>Sunucu kontrolü: '+stamp(cloud.worker_heartbeat)+'</p>'+(provider?.enabled?sources.filter(s=>s.provider).map(s=>'<div class="av-source"><b>'+esc(s.brand)+'</b>'+providerCounters(s.provider)+'</div>').join(''):'');
+      root.querySelector('.av-cloud div').innerHTML='<p>AI incelemesi bekleyen: '+Number((c.pending||0)+(c.retry||0))+' • Analizi tamamlanan: '+Number(c.analyzed||0)+' • Hatalı: '+Number(c.error||0)+'</p><p>Sunucu kontrolü: '+stamp(cloud.worker_heartbeat)+'</p>'+(provider?.enabled?sources.filter(s=>s.provider&&!s.shared).map(s=>'<div class="av-source"><b>'+esc(s.brand)+'</b>'+providerCounters(s.provider)+'</div>').join(''):'');
     }else root.querySelector('.av-cloud div').textContent='Bulut görevi bilgileri bekleniyor.';
-    const selected=view.rows.filter(a=>a.category===category&&(state.brand==='all'||a.brand===state.brand)),focus=sources.find(s=>s.brand===state.brand);
+    const selected=view.rows.filter(a=>a.category===category&&(state.brand==='all'||a.brand===captureBrand(state.brand))),focus=sources.find(s=>s.brand===state.brand);
     root.querySelector('.av-source-focus').innerHTML=focus?sourceCard(focus):'';
     root.querySelector('.av-cards').innerHTML=selected.map(a=>card(a,labels)).join('')||'<div class="av-empty">'+(loading?'Reklam arşivi yükleniyor…':view.error?'Reklam arşivi alınamadı. Yeniden deneyin.':focus?.status==='no_ads'?'Son kaynak taramasında seçili reklam filtresinde reklam bulunamadı. Yeni taramalarda sonuç değişebilir.':'Bu kategoride henüz doğrulanmış görsel analizi yok. Bu durum reklam olmadığı anlamına gelmez; kaynağın tarama durumunu kontrol edin.')+'</div>';
     root.querySelector('.av-pagination').innerHTML=state.data.pagination?'<p>'+selected.length+' / '+count(view.pagination.total)+' analiz gösteriliyor.</p>'+(view.error?'<p>'+esc(view.error)+'</p>':'')+(view.pagination.has_more||view.error?'<button class="btn" data-av-more'+(loading?' disabled':'')+'>'+(loading?'Yükleniyor…':view.error?'Yeniden dene':'Daha fazla analiz göster')+'</button>':''):'';
@@ -147,7 +156,7 @@ function render(){
       pendingBox.querySelector('summary').textContent='AI sonucu beklenen görseller • '+count(pending.pagination.total);
       pendingBox.querySelector('.av-pending-content').innerHTML='<p>Kaydedilmiş görseller burada AI sonucu yayınlanmadan görüntülenebilir. Kategori ve teklifler henüz doğrulanmadı; marka filtresi uygulanır.</p><div class="av-cards">'+pending.rows.map(pendingCard).join('')+'</div><p>'+pending.rows.length+' / '+count(pending.pagination.total)+' medya kaydı gösteriliyor.</p>'+(pending.error?'<p>'+esc(pending.error)+'</p>':'')+(pending.pagination.has_more||pending.error?'<button class="btn" data-av-pending-more'+(waiting?' disabled':'')+'>'+(waiting?'Yükleniyor…':pending.error?'Yeniden dene':'Daha fazla görsel göster')+'</button>':'');
     }
-    const verified=sources.filter(s=>s.verified),unverified=sources.filter(s=>!s.verified),missing=verified.filter(s=>!(s.archive_count??s.rows.length)&&!s.captured&&s.status!=='no_ads');
+    const verified=sources.filter(s=>s.verified),unverified=sources.filter(s=>!s.verified),missing=verified.filter(s=>!s.shared&&!(s.archive_count??s.rows.length)&&!s.captured&&s.status!=='no_ads');
     root.querySelector('.av-coverage>summary').textContent='İnceleme kapsamı ve kaynak durumu'+(missing.length?' • '+missing.length+' sayfada görsel bekleniyor':'');
     root.querySelector('.av-coverage>div').innerHTML=verified.map(sourceCard).join('')+(unverified.length?'<details class="av-unverified"><summary>Sayfa kimliği doğrulanacak '+unverified.length+' kaynak</summary>'+unverified.map(sourceCard).join('')+'</details>':'')||(sources.length?'':'<p>Henüz kaynak inceleme kaydı yok.</p>');
   }
@@ -161,8 +170,9 @@ async function history(button){
     box.innerHTML=(data.rows||[]).map(x=>'<div><b>'+stamp(x.observed_at)+' • '+(x.event_type==='first_seen'?'İlk gözlem':x.event_type==='analysis_updated'?'AI yeniden inceledi':'Değişiklik')+'</b><p>'+esc(offerText(x.analysis_json?.offer))+'</p><p>'+esc((x.analysis_json?.conditions||[]).join(' · '))+'</p></div>').join('')||'<p>Geçmiş kayıt yok.</p>';
   }catch(e){box.textContent=e.message}finally{button.disabled=false}
 }
-const viewKey=(category,brand)=>JSON.stringify([category,brand]);
+const viewKey=(category,brand)=>JSON.stringify([category,captureBrand(brand)]);
 function currentView(category,brand){
+  brand=captureBrand(brand);
   const cached=state.views.get(viewKey(category,brand));if(cached)return cached;
   if(category==='pending_media'){const total=brand==='all'?state.data?.pending_media?.total:state.data?.pending_media?.brand_totals?.[brand];return {rows:[],pagination:{total:count(total),has_more:count(total)>0,next_cursor:null}}}
   const rows=(state.data?.rows||[]).filter(a=>a.category===category&&(brand==='all'||a.brand===brand));
@@ -171,6 +181,7 @@ function currentView(category,brand){
   return {rows:complete?rows:[],pagination:{total:total??rows.length,has_more:!complete,next_cursor:null}};
 }
 function loadView(category,brand,more=false){
+  brand=captureBrand(brand);
   const pending=category==='pending_media';
   if(!pending&&!selectableCategory(category))return Promise.resolve();
   if(!pending&&!state.data?.pagination?.has_more||pending&&!currentView(category,brand).pagination.total)return Promise.resolve();
