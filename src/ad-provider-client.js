@@ -1,3 +1,5 @@
+import {adLibraryUrl} from './ad-library-url.js';
+
 const API = 'https://api.apify.com/v2';
 const RUN_ID = /^[A-Za-z0-9]{5,64}$/;
 const PAGE_ID = /^\d{5,30}$/;
@@ -99,8 +101,7 @@ function safeRun(value, ambiguous = false) {
 export async function startProviderRun(source, {env=process.env,fetcher=fetch} = {}) {
   const config = configured(env);
   if (!PAGE_ID.test(String(source?.page_id || ''))) throw failure('PROVIDER_SOURCE_INVALID');
-  const query = new URLSearchParams({active_status:'active',ad_type:'all',country:'CY',media_type:'all',search_type:'page',view_all_page_id:String(source.page_id)});
-  const body = {startUrls:[{url:'https://www.facebook.com/ads/library/?'+query}],onlyTotal:false,includeAboutPage:false,isDetailsPerAd:false,enrichWithEcommerceData:false};
+  const body = {startUrls:[{url:adLibraryUrl(source,{allowKeyword:false})}],onlyTotal:false,includeAboutPage:false,isDetailsPerAd:false,enrichWithEcommerceData:false};
   const params = new URLSearchParams({waitForFinish:'0',timeout:'900',maxTotalChargeUsd:String(config.maxRunUsd),restartOnError:'false'});
   // A create request is deliberately issued once. The caller persists a creation fence before invoking it.
   const {value} = await apiRequest('/actors/apify~facebook-ads-scraper/runs?'+params,{env,fetcher,method:'POST',body,maxBytes:1024*1024});

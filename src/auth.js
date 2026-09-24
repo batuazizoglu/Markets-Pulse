@@ -1,14 +1,15 @@
 import crypto from 'crypto';
 import { promisify } from 'util';
+import {USER_COLUMNS,normalizeEmail,validateUserFields,userId,userTransaction,lockUsers,withAdminUserTransaction,auditUserChange,listAdminUsers,mutateAdminUser,requireUserMutationOrigin,sendUserError} from './admin-users.js';
 
 const scryptAsync=promisify(crypto.scrypt);
 const COOKIE='mp_session';
 const SESSION_DAYS=7;
 
 function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
-function norm(v){return String(v||'').trim().toLocaleLowerCase('tr-TR')}
+function norm(v){return String(v||'').trim().toLowerCase()}
 function slug(v){
-  return norm(v).replaceAll('ı','i').replaceAll('ğ','g').replaceAll('ü','u').replaceAll('ş','s').replaceAll('ö','o').replaceAll('ç','c')
+  return String(v||'').trim().toLocaleLowerCase('tr-TR').replaceAll('ı','i').replaceAll('ğ','g').replaceAll('ü','u').replaceAll('ş','s').replaceAll('ö','o').replaceAll('ç','c')
     .normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9._-]+/g,'.').replace(/\.+/g,'.').replace(/^\.|\.$/g,'').slice(0,48);
 }
 function cookies(req){
@@ -57,9 +58,9 @@ async function audit(pool,userId,identity,event,req,meta={}){
   }catch(e){console.error('[auth-audit]',e.message)}
 }
 async function uniqueUsername(pool,first,last,email){
-  const base=slug(String(email||'').split('@')[0])||slug(String(first||'')+'.'+String(last||''))||'user';
-  for(let i=0;i<100;i++){const u=i===0?base:base+(i+1);const r=await pool.query('SELECT 1 FROM app_users WHERE lower(username)=lower($1) LIMIT 1',[u]);if(!r.rows.length)return u}
-  return base+'-'+crypto.randomBytes(2).toString('hex');
+  const raw=(slug(String(email||'').split('@')[0])||slug(String(first||'')+'.'+String(last||''))).replace(/^[^a-z0-9]+/,'')||'user',base=raw.length<3?raw+'.user':raw;
+  for(let i=0;i<100;i++){const suffix=i===0?'':String(i+1),u=base.slice(0,48-suffix.length)+suffix;const r=await pool.query('SELECT 1 FROM app_users WHERE lower(username)=lower($1) LIMIT 1',[u]);if(!r.rows.length)return u}
+  return base.slice(0,43)+'-'+crypto.randomBytes(2).toString('hex');
 }
 function inviteHtml(user,password){
   const full=esc([user.first_name,user.last_name].filter(Boolean).join(' '));
@@ -85,50 +86,63 @@ async function sendInvite(user,password){
     'Markets Pulse erişiminiz oluşturuldu. Kullanıcı adı: '+user.username+' Geçici parola: '+password+' Giriş: https://www.marketspulse.cloud/login İlk girişte parolanızı değiştirmeniz gerekir.');
 }
 
-export async function createAndInviteUser(pool,input){
-  const first=String(input.first_name||'').trim(),last=String(input.last_name||'').trim(),email=norm(input.email),role=input.role==='admin'?'admin':'standard';
-  if(!first||!last||!/@/.test(email))throw Object.assign(new Error('İsim, soyisim ve geçerli e-posta gerekli'),{code:'BAD_INPUT'});
-  if((await pool.query('SELECT 1 FROM app_users WHERE lower(email)=lower($1)',[email])).rows.length)throw Object.assign(new Error('Bu e-posta ile kullanıcı zaten var'),{code:'USER_EXISTS'});
-  const username=await uniqueUsername(pool,first,last,email),password=tempPassword(),hash=await hashPassword(password);
-  const ins=await pool.query("INSERT INTO app_users(first_name,last_name,email,username,password_hash,role,active,must_change_password,created_by) VALUES($1,$2,$3,$4,$5,$6,TRUE,TRUE,$7) RETURNING id,first_name,last_name,email,username,role,active,must_change_password,created_at",[first,last,email,username,hash,role,input.created_by||null]);
-  const user=ins.rows[0];
-  const messageId=await sendInvite(user,password);
-  await pool.query('UPDATE app_users SET invite_sent_at=NOW() WHERE id=$1',[user.id]);
-  await audit(pool,user.id,email,'invite_sent',null,{message_id:messageId});
-  return {...user,message_id:messageId};
+export async function createAndInviteUser(pool,input,{req}={}){
+  const {created_by,...editable}=input;
+  const fields=validateUserFields(editable,{creating:true}),password=tempPassword(),hash=await hashPassword(password);
+  const insert=async(client,actor)=>{
+    const username=fields.username||await uniqueUsername(client,fields.first_name,fields.last_name,fields.email);
+    const user=(await client.query(`INSERT INTO app_users(first_name,last_name,email,username,password_hash,role,active,must_change_password,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,TRUE,$8) RETURNING ${USER_COLUMNS}`,[fields.first_name,fields.last_name,fields.email,username,hash,fields.role||'standard',fields.active!==false,actor?.id||created_by||null])).rows[0];
+    if(actor)await auditUserChange(client,actor,'user_created',req,{target:user.id,email:user.email,role:user.role});return user;
+  };
+  const user=req?await withAdminUserTransaction(pool,req,insert):await userTransaction(pool,async client=>{await lockUsers(client);return insert(client)});
+  if(!user.active)return {...user,active_sessions:0,invite_sent:false};
+  try{
+    const messageId=await sendInvite(user,password);
+    const updated=(await pool.query(`UPDATE app_users SET invite_sent_at=NOW(),updated_at=NOW() WHERE id=$1 RETURNING ${USER_COLUMNS}`,[user.id])).rows[0];
+    await audit(pool,user.id,user.email,'invite_sent',req,{message_id:messageId});
+    return {...updated,active_sessions:0,message_id:messageId,invite_sent:true};
+  }catch(error){console.error('[auth-invite]',error.code||'SEND_FAILED');return {...user,active_sessions:0,invite_sent:false,invite_error:'Kullanıcı oluşturuldu ancak davet e-postası gönderilemedi. Daveti yeniden gönderebilirsiniz.'}}
 }
-async function resetInvite(pool,id){
-  const r=await pool.query('SELECT id,first_name,last_name,email,username,role,active FROM app_users WHERE id=$1',[id]);if(!r.rows.length)throw new Error('Kullanıcı bulunamadı');
-  const user=r.rows[0];if(!user.active)throw new Error('Pasif kullanıcıya davet gönderilemez');
+async function resetInvite(pool,id,req){
   const password=tempPassword(),hash=await hashPassword(password);
-  await pool.query('UPDATE app_users SET password_hash=$1,must_change_password=TRUE,invite_sent_at=NULL,updated_at=NOW() WHERE id=$2',[hash,user.id]);
-  await pool.query('DELETE FROM app_sessions WHERE user_id=$1',[user.id]);
-  const messageId=await sendInvite(user,password);
-  await pool.query('UPDATE app_users SET invite_sent_at=NOW(),updated_at=NOW() WHERE id=$1',[user.id]);
-  return {user,message_id:messageId};
+  const user=await withAdminUserTransaction(pool,req,async(client,actor)=>{
+    const before=(await client.query(`SELECT ${USER_COLUMNS} FROM app_users WHERE id=$1`,[id])).rows[0];
+    if(!before)throw Object.assign(new Error('Kullanıcı bulunamadı'),{status:404,code:'USER_NOT_FOUND'});
+    if(!before.active||before.deleted_at)throw Object.assign(new Error('Pasif veya silinen kullanıcıya davet gönderilemez'),{status:409,code:'USER_INACTIVE'});
+    const row=(await client.query(`UPDATE app_users SET password_hash=$1,must_change_password=TRUE,invite_sent_at=NULL,updated_at=NOW() WHERE id=$2 RETURNING ${USER_COLUMNS}`,[hash,id])).rows[0];
+    const revoked=await client.query('DELETE FROM app_sessions WHERE user_id=$1 RETURNING token_hash',[id]);
+    await auditUserChange(client,actor,'user_invite_reset',req,{target:id,revoked_sessions:revoked.rows.length});return row;
+  });
+  try{
+    const messageId=await sendInvite(user,password);
+    const updated=(await pool.query(`UPDATE app_users SET invite_sent_at=NOW(),updated_at=NOW() WHERE id=$1 RETURNING ${USER_COLUMNS}`,[user.id])).rows[0];
+    await audit(pool,req.appUser.id,req.appUser.email,'invite_resent',req,{target:id,message_id:messageId});
+    return {user:{...updated,active_sessions:0},message_id:messageId,reauth_required:Number(req.appUser.id)===id};
+  }catch(error){console.error('[auth-invite]',error.code||'SEND_FAILED');throw Object.assign(new Error('Davet gönderilemedi. Kullanıcı oturumları kapatıldı; daveti yeniden deneyin.'),{status:400,code:'INVITE_FAILED',reauth_required:Number(req.appUser.id)===id})}
 }
 export async function bootstrapInitialUsers(pool){
   let list=[];try{list=JSON.parse(process.env.INITIAL_USERS_JSON||'[]')}catch(e){console.error('[auth-bootstrap] bad INITIAL_USERS_JSON',e.message)}
   if(!Array.isArray(list)||!list.length)return {total:0,created:0,invited:0};
   let created=0,invited=0;
   for(const item of list){
-    const email=norm(item.email);if(!email)continue;
-    let q=await pool.query('SELECT id,invite_sent_at,active FROM app_users WHERE lower(email)=lower($1)',[email]);
-    let password=null;
-    if(!q.rows.length){
-      const username=await uniqueUsername(pool,item.first_name,item.last_name,email);password=tempPassword();
-      const hash=await hashPassword(password);
-      q=await pool.query("INSERT INTO app_users(first_name,last_name,email,username,password_hash,role,active,must_change_password) VALUES($1,$2,$3,$4,$5,$6,TRUE,TRUE) RETURNING id,invite_sent_at,active",[String(item.first_name||'').trim(),String(item.last_name||'').trim(),email,username,hash,item.role==='admin'?'admin':'standard']);
-      created++;
-    }
-    const row=q.rows[0];if(!row.active||row.invite_sent_at)continue;
-    if(!password){password=tempPassword();await pool.query('UPDATE app_users SET password_hash=$1,must_change_password=TRUE WHERE id=$2',[await hashPassword(password),row.id])}
-    const user=(await pool.query('SELECT id,first_name,last_name,email,username,role,active FROM app_users WHERE id=$1',[row.id])).rows[0];
+    const email=normalizeEmail(item?.email);if(!email)continue;
+    const password=tempPassword();let user=null;
+    await userTransaction(pool,async client=>{
+      await lockUsers(client);
+      // Original seed ownership survives email edits, deletion and recycled addresses.
+      const existing=(await client.query('SELECT id FROM app_users WHERE lower(bootstrap_email)=lower($1) OR (bootstrap_email IS NULL AND lower(email)=lower($1)) ORDER BY (bootstrap_email IS NOT NULL) DESC LIMIT 1',[email])).rows[0];
+      if(existing){await client.query('UPDATE app_users SET bootstrap_email=COALESCE(bootstrap_email,$1) WHERE id=$2',[email,existing.id]);return}
+      const fields=validateUserFields({first_name:item.first_name,last_name:item.last_name,email,role:item.role||'standard'},{creating:true});
+      const username=await uniqueUsername(client,fields.first_name,fields.last_name,email),hash=await hashPassword(password);
+      user=(await client.query(`INSERT INTO app_users(first_name,last_name,email,username,password_hash,role,active,must_change_password,bootstrap_email) VALUES($1,$2,$3,$4,$5,$6,TRUE,TRUE,$3) RETURNING ${USER_COLUMNS}`,[fields.first_name,fields.last_name,email,username,hash,fields.role])).rows[0];created++;
+    });
+    // Existing users are never reset or re-invited by deployment bootstrap.
+    if(!user)continue;
     try{
       const messageId=await sendInvite(user,password);
-      await pool.query('UPDATE app_users SET invite_sent_at=NOW(),updated_at=NOW() WHERE id=$1',[row.id]);
-      await audit(pool,row.id,email,'bootstrap_invite_sent',null,{message_id:messageId});invited++;
-    }catch(e){console.error('[auth-bootstrap] invite failed',email,e.message)}
+      await pool.query('UPDATE app_users SET invite_sent_at=NOW(),updated_at=NOW() WHERE id=$1',[user.id]);
+      await audit(pool,user.id,email,'bootstrap_invite_sent',null,{message_id:messageId});invited++;
+    }catch(error){console.error('[auth-bootstrap] invite failed',error.code||'SEND_FAILED')}
   }
   console.log('[auth-bootstrap]',JSON.stringify({total:list.length,created,invited}));
   return {total:list.length,created,invited};
@@ -136,7 +150,7 @@ export async function bootstrapInitialUsers(pool){
 
 async function getUser(pool,req){
   const token=cookies(req)[COOKIE];if(!token)return null;
-  const r=await pool.query("SELECT u.id,u.first_name,u.last_name,u.email,u.username,u.role,u.active,u.must_change_password,u.last_login_at FROM app_sessions s JOIN app_users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>NOW() AND u.active=TRUE LIMIT 1",[tokenHash(token)]);
+  const r=await pool.query("SELECT u.id,u.first_name,u.last_name,u.email,u.username,u.role,u.active,u.must_change_password,u.last_login_at FROM app_sessions s JOIN app_users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>NOW() AND u.active=TRUE AND u.deleted_at IS NULL LIMIT 1",[tokenHash(token)]);
   if(!r.rows.length)return null;
   pool.query('UPDATE app_sessions SET last_used_at=NOW() WHERE token_hash=$1',[tokenHash(token)]).catch(()=>{});
   return r.rows[0];
@@ -164,7 +178,7 @@ export function registerAuth(app,pool,publicDir){
 
   app.post('/api/auth/login',async(req,res)=>{
     const identity=norm(req.body?.identity),password=String(req.body?.password||'');if(!identity||!password)return res.status(400).json({error:'Kullanıcı adı/e-posta ve parola gerekli'});
-    const user=(await pool.query('SELECT * FROM app_users WHERE lower(username)=lower($1) OR lower(email)=lower($1) LIMIT 1',[identity])).rows[0];
+    const user=(await pool.query('SELECT * FROM app_users WHERE (lower(username)=lower($1) OR lower(email)=lower($1)) AND deleted_at IS NULL LIMIT 1',[identity])).rows[0];
     if(!user||!user.active){await audit(pool,null,identity,'login_failed',req,{reason:'not_found'});return res.status(401).json({error:'Kullanıcı adı veya parola hatalı'})}
     if(user.locked_until&&new Date(user.locked_until)>new Date())return res.status(423).json({error:'Çok sayıda hatalı deneme. 15 dakika sonra tekrar deneyin.'});
     if(!await verifyPassword(password,user.password_hash)){
@@ -194,18 +208,13 @@ export function registerAuth(app,pool,publicDir){
     next();
   });
 
-  app.get('/api/admin/users',adminOnly,async(req,res)=>{const r=await pool.query('SELECT id,first_name,last_name,email,username,role,active,must_change_password,invite_sent_at,last_login_at,created_at,updated_at FROM app_users ORDER BY active DESC,first_name,last_name');res.json({users:r.rows})});
-  app.post('/api/admin/users',adminOnly,async(req,res)=>{try{const user=await createAndInviteUser(pool,{...req.body,created_by:req.appUser.id});await audit(pool,req.appUser.id,req.appUser.email,'user_created',req,{target:user.id,email:user.email,role:user.role});res.status(201).json({ok:true,user})}catch(e){res.status(e.code==='USER_EXISTS'?409:400).json({error:e.message})}});
-  app.post('/api/admin/users/:id/resend',adminOnly,async(req,res)=>{try{const r=await resetInvite(pool,Number(req.params.id));await audit(pool,req.appUser.id,req.appUser.email,'invite_resent',req,{target:Number(req.params.id)});res.json({ok:true,user:{id:r.user.id,email:r.user.email,username:r.user.username},message_id:r.message_id})}catch(e){res.status(400).json({error:e.message})}});
-  app.patch('/api/admin/users/:id',adminOnly,async(req,res)=>{
-    const id=Number(req.params.id),sets=[],vals=[];let n=1;
-    if(id===req.appUser.id&&req.body?.active===false)return res.status(400).json({error:'Kendi hesabınızı pasifleştiremezsiniz'});
-    if(typeof req.body?.active==='boolean'){sets.push('active=$'+n++);vals.push(req.body.active)}
-    if(req.body?.role==='admin'||req.body?.role==='standard'){if(id===req.appUser.id&&req.body.role!=='admin')return res.status(400).json({error:'Kendi admin rolünüzü kaldıramazsınız'});sets.push('role=$'+n++);vals.push(req.body.role)}
-    if(!sets.length)return res.status(400).json({error:'Değişiklik yok'});vals.push(id);
-    const r=await pool.query('UPDATE app_users SET '+sets.join(',')+',updated_at=NOW() WHERE id=$'+n+' RETURNING id,first_name,last_name,email,username,role,active,must_change_password,invite_sent_at,last_login_at',vals);
-    if(!r.rows.length)return res.status(404).json({error:'Kullanıcı bulunamadı'});if(req.body?.active===false)await pool.query('DELETE FROM app_sessions WHERE user_id=$1',[id]);res.json({ok:true,user:r.rows[0]});
-  });
+  app.use('/api/admin/users',adminOnly,requireUserMutationOrigin);
+  app.get('/api/admin/users',async(req,res)=>{try{res.json({users:await listAdminUsers(pool,{deleted:req.query.deleted==='1'})})}catch(error){sendUserError(res,error)}});
+  app.post('/api/admin/users',async(req,res)=>{try{const user=await createAndInviteUser(pool,{...req.body,created_by:req.appUser.id},{req});res.status(201).json({ok:true,user})}catch(error){sendUserError(res,error)}});
+  app.post('/api/admin/users/:id/resend',async(req,res)=>{try{res.json({ok:true,...await resetInvite(pool,userId(req.params.id),req)})}catch(error){sendUserError(res,error)}});
+  for(const [method,path,action] of [['patch','/:id','update'],['delete','/:id','delete'],['post','/:id/restore','restore'],['post','/:id/revoke-sessions','revoke-sessions']]){
+    app[method]('/api/admin/users'+path,async(req,res)=>{try{res.json(await mutateAdminUser(pool,req,action))}catch(error){sendUserError(res,error)}});
+  }
 
   app.get('/match-review',adminOnly,(req,res)=>res.sendFile(publicDir+'/match-review.html'));
   app.get('/api/admin/match-review',adminOnly,async(req,res)=>{try{const m=await import('./match-review.js');res.json(await m.buildMatchReviewSnapshot(pool,{refresh:req.query.refresh==='1'}))}catch(e){console.error('[match-review]',e);res.status(500).json({error:e.message||'Eşleşme inceleme verisi alınamadı'})}});

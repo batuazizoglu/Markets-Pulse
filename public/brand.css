@@ -450,3 +450,70 @@ body.branded-app :is(.mp-score,.hi-score,.bm-pos,.status){filter:none!important}
 .av-source a{display:inline-block;margin-top:10px}.av-unverified{margin-top:14px}.av-unverified>summary{padding:10px 0;color:var(--muted)}
 .av-empty{padding:32px;border:1px dashed var(--line);border-radius:12px;line-height:1.8;color:var(--muted);grid-column:1/-1}
 @media(max-width:760px){.av-cards{grid-template-columns:1fr}.av-heading{align-items:flex-start;flex-wrap:wrap}.av-tabs button{flex:1;min-width:120px}.av-card-body{padding:16px}.av-image img{height:220px}}
+
+/* User management: scoped controls, readable records and native modal focus. */
+#userManagement{padding:20px;min-width:0}
+#userManagement h3{font-size:18px;margin:0 0 6px}
+#userManagement .user-list-head p{font-size:12px;line-height:1.5;margin:0}
+#userManagement .btn,.um-dialog .btn{font-size:12px;min-height:38px;white-space:normal;padding:9px 12px}
+.um-head-actions{display:flex;gap:8px;flex-shrink:0;flex-wrap:wrap}
+.um-counts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:18px 0}
+.um-counts>div{padding:14px;background:var(--surface2);border:1px solid var(--line);border-radius:10px}
+.um-counts strong{display:block;font-size:24px;line-height:1.2;color:var(--ink)}
+.um-counts span{display:block;margin-top:5px;color:var(--muted);font-size:12px}
+.um-view-tabs{display:flex;gap:8px;margin:14px 0;flex-wrap:wrap}
+#userManagement .um-view-tabs .active{background:var(--mp-electric)!important;border-color:var(--mp-electric)!important;color:#fff!important}
+.um-filters{display:grid;grid-template-columns:minmax(180px,2fr) minmax(120px,1fr) minmax(120px,1fr);gap:12px}
+.um-filters>div,.um-fields>div{min-width:0}
+.um-filters label,.um-form label{display:block;color:var(--ink);font-size:12px;font-weight:700;margin-bottom:7px}
+.um-filters input,.um-filters select,.um-form input,.um-form select{box-sizing:border-box;display:block;max-width:100%;width:100%;min-height:42px;padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);font:inherit;font-size:14px}
+.um-filters input:focus,.um-filters select:focus,.um-form input:focus,.um-form select:focus{border-color:var(--mp-electric);outline:2px solid var(--mp-electric);outline-offset:2px}
+#userManagement button:focus-visible,.um-dialog button:focus-visible{outline:3px solid var(--mp-cyan);outline-offset:3px}
+.um-filters select:disabled,.um-form select:disabled{opacity:.65;cursor:not-allowed}
+.um-list-meta{font-size:12px!important;color:var(--muted);margin:12px 0!important}
+#userManagement .user-admin-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:0;border:0}
+.um-user{min-width:0;padding:16px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+.um-identity{display:flex;gap:10px;align-items:flex-start}
+.um-identity .user-avatar{width:38px;height:38px;flex:0 0 38px;font-size:13px}
+.um-person{min-width:0;flex:1}
+.um-person h4{font-size:14px;line-height:1.5;margin:0;color:var(--ink);overflow-wrap:anywhere}
+.um-email,.um-username{font-size:12px;line-height:1.5;color:var(--muted);overflow-wrap:anywhere;margin-top:2px}
+.um-self{font-size:10px;font-weight:600;color:var(--muted);white-space:nowrap}
+.um-badges{display:flex;align-items:flex-end;flex-direction:column;gap:6px;flex-shrink:0}
+.um-badges .role-badge,.um-badges .status{font-size:10px;padding:4px 7px;white-space:nowrap}
+.um-history{display:flex;gap:6px 15px;flex-wrap:wrap;font-size:11px;line-height:1.6;color:var(--muted);margin:12px 0;padding-top:10px;border-top:1px solid var(--line)}
+.um-history b{font-weight:500;color:var(--ink)}
+.um-row-actions{display:flex;gap:7px;flex-wrap:wrap;align-items:center}
+#userManagement .um-row-actions .btn{min-height:36px;font-size:11px;padding:8px 10px}
+#userManagement .um-danger,.um-dialog .um-danger{color:#bf243a!important;border-color:rgba(191,36,58,.35)!important;background:rgba(191,36,58,.06)!important}
+html[data-theme="dark"] #userManagement .um-danger,html[data-theme="dark"] .um-dialog .um-danger{color:#ff96a4!important;border-color:rgba(255,150,164,.4)!important}
+.um-working{font-size:12px;color:var(--muted);width:100%}
+.um-notice,.um-dialog-error{font-size:13px;line-height:1.5;overflow-wrap:anywhere;padding:12px 14px;background:rgba(0,194,255,.09);border:1px solid rgba(0,194,255,.35);border-radius:9px;color:var(--ink);margin:14px 0}
+.um-notice.error,.um-dialog-error{background:rgba(191,36,58,.06);border-color:rgba(191,36,58,.35)}
+.um-notice[hidden],.um-dialog-error[hidden]{display:none}
+.um-dialog{box-sizing:border-box;width:min(600px,calc(100vw - 32px));max-width:600px;max-height:calc(100dvh - 32px);margin:auto;padding:24px;overflow-y:auto;overscroll-behavior:contain;border:1px solid var(--line);border-radius:16px;background:var(--surface);color:var(--ink);box-shadow:0 24px 90px rgba(0,15,100,.25)}
+.um-dialog::backdrop{background:rgba(0,8,44,.65)}
+.um-dialog-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.um-dialog-head h3{font-size:20px;line-height:1.3;margin:4px 0}
+.um-dialog-head>.btn{min-width:38px;flex-shrink:0}
+.um-dialog-description{font-size:14px;line-height:1.6;color:var(--muted);overflow-wrap:anywhere;margin:12px 0 20px}
+.um-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.um-wide{grid-column:1/-1}
+.um-fields small{display:block;color:var(--muted);font-size:11px;margin-top:7px}
+.um-help{font-size:12px;line-height:1.6;color:var(--muted);padding:12px;background:var(--surface2);border-radius:8px;margin:18px 0}
+.um-dialog-actions{display:flex;justify-content:flex-end;gap:9px;flex-wrap:wrap;margin-top:20px}
+.um-dialog .um-dialog-actions .btn{min-height:42px}
+@media(max-width:1100px){#userManagement .user-admin-list{grid-template-columns:1fr}}
+@media(max-width:620px){
+  #userManagement{padding:14px}
+  #userManagement .user-list-head{flex-direction:column;gap:14px}
+  .um-head-actions{width:100%}.um-head-actions .btn{flex:1}
+  .um-counts{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.um-counts>div{padding:12px}
+  .um-filters{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.um-filters>div:first-child{grid-column:1/-1}
+  .um-user{padding:12px}.um-identity{gap:8px}.um-identity .user-avatar{display:none}
+  .um-person h4{font-size:14px}.um-badges{gap:5px}.um-history{font-size:11px}
+  #userManagement .um-row-actions .btn{min-height:40px}
+  .um-dialog{padding:18px}.um-dialog-head h3{font-size:18px}.um-fields{grid-template-columns:1fr;gap:14px}
+  .um-form input,.um-form select,.um-filters input,.um-filters select{font-size:16px}
+  .um-dialog-actions .btn{flex:1}
+}

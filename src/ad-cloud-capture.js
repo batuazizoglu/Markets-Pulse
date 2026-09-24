@@ -1,11 +1,10 @@
 import puppeteer from 'puppeteer';
 import {createHash} from 'node:crypto';
 import {allowedAdRequest,captureTransportConfig,openCaptureProxy} from './ad-capture-proxy.js';
+import {adLibraryUrl} from './ad-library-url.js';
 
 export function adLibrarySource(source){
-  if(!/^\d{5,30}$/.test(source.page_id||''))return null;
-  const q=new URLSearchParams({active_status:'active',ad_type:'all',country:'CY',media_type:'all',search_type:'page',view_all_page_id:source.page_id});
-  return 'https://www.facebook.com/ads/library/?'+q;
+  return adLibraryUrl(source,{allowKeyword:false});
 }
 export function pageState(text,httpStatus=200){
   if(httpStatus===429)return 'rate_limited';
