@@ -1,6 +1,6 @@
 // Full production UI, synthetic local API data, no external services or mutations.
 import {existsSync} from 'node:fs';
-import {mkdir,readFile,readdir,stat} from 'node:fs/promises';
+import {mkdir,readFile,readdir,rm,stat} from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import express from 'express';
 import puppeteer from 'puppeteer';
@@ -16,7 +16,7 @@ const packages=['Super Databol Medium','Super Databol Large','Super Databol Extr
 const changes=packages.map((p,i)=>({id:i+1,scan_id:1,product_id:p.id,detected_at:new Date(+now-60000).toISOString(),source_name:source.name,source_slug:source.slug,source_url:source.url,product_name:p.name,identity_base:p.name,severity:'high',change_type:'field_changed',field_name:'Fiyat',old_value:String(p.price_try+100),new_value:String(p.price_try),extras_json:{}}));
 const kSource={name:'KKTCELL Faturasız',slug:'kktcell-faturasiz',type:'prepaid',url:'https://www.kktcell.com/faturasiz',ok:true,parsed_count:3,core_count:3,response_ms:97};
 const benchmark={...buildBenchmark(packages,packages.map((p,i)=>({name:['Yeni GO M','Yeni GO L','Yeni GO XL'][i],source_slug:kSource.slug,source_url:kSource.url,product_url:'/go-'+i,type:'prepaid',is_core:true,data_gb:p.data_gb,bonus_data_gb:5,local_tr_minutes:1000,sms:1000,validity_days:30,price_try:p.price_try-20})),[],{sources:[kSource]}),kktcell_sources:[kSource]};
-const trend={series:[{day:'2026-09-16',score:52},{day:'2026-09-23',score:57}],deltas:{'7d':5},latest:{score:57},baselines:{'7d':{score:52}}};
+const trend={series:Array.from({length:90},(_,i)=>({day:new Date(+now-(89-i)*86400000).toISOString().slice(0,10),score:40+i/2})),deltas:{'7d':3.5,'30d':15,'90d':45},latest:{score:84.5},baselines:{'7d':{score:81},'30d':{score:69.5},'90d':{score:39.5}}};
 const homeSource=HOME_INTERNET_SOURCES.find(s=>s.slug==='kibrisonline-home');
 const offers=[10,20,30].map((speed,i)=>normalizeOffer({source_slug:homeSource.slug,provider:homeSource.provider,name:'Ev Paketi '+(i+1),technology:'WDSL',speed_down_mbps:speed,duration_months:12,bonus_months:2,total_price_try:8400+i*1400,product_key:'role-home-'+i,source_url:homeSource.url}));
 const home=marketPayload([{source_slug:homeSource.slug,status:'ok',captured_at:at,payload_json:offers,parsed_count:offers.length,source_meta_json:{parser_version:'home-isp-2'}}],[]);
@@ -61,11 +61,23 @@ const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('l
 const origin='http://127.0.0.1:'+server.address().port;
 const technical=/Comparable Product Engine|Competitive Position Score|\bPrimary\b|\bSecondary\b|\bReject\b|override|shadow|\bmotor\b|metodoloji|baseline|kaynak sağlığı|tarama|bulutta tara|şimdi tara|provider|reklam sağlayıcısı|kuyru|queue|worker|proxy|apify|\bHTTP\b|parser|PostgreSQL|SMTP|\bcron\b|\bJSON\b|\bHTML\b|\bPNG\b|AI inceleme|AI sonucu beklenen/i;
 let browser;
+const titles={dashboard:'Dashboard',competitor:'Rakip Takip',home:'Ev İnterneti',ads:'Reklam Analizi',compare:'Ürün Karşılaştırma',trends:'Rakip Takip',evidence:'Kanıt Arşivi',reports:'Raporlar'};
+async function checkHeader(page,route){
+  assert.equal(await page.$$eval('h1',els=>els.length),1,route+' needs one page heading');
+  assert.equal(await page.$eval('.topbar .brand.page-brand #viewTitle h1',el=>el.textContent.trim()),titles[route]);
+  assert.ok(await page.$eval('.topbar .brand.page-brand #viewTitle p',el=>el.checkVisibility({checkVisibilityCSS:true})&&el.textContent.trim().length>10),route+' description belongs in the header');
+  assert.equal(await page.$$eval('.topbar .brand img,#marketPulseTopLogo',els=>els.length),0,route+' must not repeat the logo in the header');
+  assert.equal(await page.$$eval('.app-side-brand img',els=>els.length),1,'sidebar branding remains');
+  assert.equal(await page.$$eval('.app-nav [data-route="trends"]',els=>els.length),0,'Trendler is not a standalone main navigation item');
+  const parent=route==='trends'?'competitor':route;
+  assert.equal(await page.$eval('.app-nav .active',el=>el.dataset.route),parent,route+' main navigation selection');
+}
 async function check(page,role,label){
   const text=await page.evaluate(()=>document.body.innerText);
   if(role==='standard')assert.doesNotMatch(text,technical,label+' exposes operational text');
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),label+' horizontal overflow');
   assert.deepEqual(await page.evaluate(()=>window.__roleFlashes),[],label+' exposed an admin element before authorization');
+  if(await page.evaluate(()=>document.documentElement.dataset.userRole!=='pending'))await checkHeader(page,await page.evaluate(()=>document.body.dataset.view));
 }
 async function go(page,route){
   await page.locator('[data-route="'+route+'"]').click();
@@ -78,7 +90,7 @@ async function screenshot(page,role,width,route){
 try{
   const executablePath=['/usr/bin/google-chrome','/usr/bin/chromium','/usr/bin/chromium-browser'].find(existsSync);
   browser=await puppeteer.launch({executablePath,headless:true,args:['--no-sandbox','--disable-dev-shm-usage']});
-  await mkdir(output,{recursive:true});
+  await rm(output,{recursive:true,force:true});await mkdir(output,{recursive:true});
   for(const role of ['standard','admin'])for(const width of [1440,390]){
     const id=role+'-'+width;let release;
     cases.set(id,{id,role,gate:new Promise(resolve=>{release=resolve})});
@@ -136,12 +148,31 @@ try{
       await go(page,'compare');await page.waitForSelector('.bm-table tbody tr');
       assert.match(await page.$eval('#bmBox',el=>el.innerText),/Super Databol|Yeni GO/);
       assert.equal(await page.$$eval('.bm-table th',els=>els.length),role==='admin'?12:6);
-      if(role==='admin')assert.match(await page.evaluate(()=>document.body.innerText),/Comparable Product Engine/);
-      await go(page,'trends');
-      await page.locator('.bm-horizon:nth-child(2)').click();
-      assert.equal(await page.$eval('.bm-horizon.active',el=>el.textContent),'30 Gün');
-      await check(page,role,id+' trends');await go(page,'compare');
+      if(role==='admin')assert.match(await page.evaluate(()=>document.body.innerText),/Canlı motor|Metodoloji/);
       await check(page,role,id+' benchmark');await screenshot(page,role,width,'benchmark');
+
+      await go(page,'competitor');
+      await page.locator('#timelineTabs [data-market-days="90"]').click();
+      await page.waitForFunction(()=>window.MarketPulseData.getState().snapshot?.window_days===90&&!window.MarketPulseData.getState().loading);
+      await page.locator('#competitorViews [data-competitor-view="trends"]').click();
+      await page.waitForFunction(()=>document.body.dataset.view==='trends'&&location.hash==='#competitor/trends');
+      for(const days of [30,90]){
+        await page.locator('.bm-horizon[onclick="setBmTrendDays('+days+')"]').click();
+        assert.equal(await page.$eval('.bm-horizon.active',el=>el.textContent),days+' Gün');
+        assert.equal(await page.$eval('.bm-trend-stat span',el=>el.textContent),days+' Gün Değişim');
+        assert.equal(await page.$$eval('.bm-chart svg circle',els=>els.length),days,'graph displays the selected history window');
+        assert.equal(await page.$eval('#timelineTabs [aria-pressed="true"]',el=>el.dataset.marketDays),'90');
+        assert.equal(await page.evaluate(()=>window.MarketPulseData.getState().days),90,'graph period must not change the shared change window');
+      }
+      assert.ok(await page.$eval('#competitorViews [data-competitor-view="trends"]',el=>el.classList.contains('active')));
+      assert.equal(await page.$eval('#competitorViews [data-competitor-view="trends"]',el=>el.getAttribute('aria-pressed')),'true');
+      await check(page,role,id+' trends');await screenshot(page,role,width,'trends');
+      await page.evaluate(()=>{location.hash='#trends'});
+      await page.waitForFunction(()=>location.hash==='#competitor/trends'&&document.body.dataset.view==='trends');
+      await checkHeader(page,'trends');
+      await page.locator('#competitorViews [data-competitor-view="competitor"]').click();
+      await page.waitForFunction(()=>document.body.dataset.view==='competitor'&&location.hash==='#competitor');
+      assert.equal(await page.$eval('#timelineTabs [aria-pressed="true"]',el=>el.dataset.marketDays),'90');
 
       await go(page,'evidence');await page.waitForSelector('.ev-card');
       await page.locator('.ev-card .ev-open').click();await page.waitForSelector('#evDetailImage');
@@ -155,6 +186,13 @@ try{
       assert.ok(await page.$$eval('#reports-section [data-report-email]',els=>els.filter(el=>el.checkVisibility()).every(el=>!el.disabled)));
       if(role==='admin')assert.match(await page.evaluate(()=>document.body.innerText),/E-posta altyapısı/);
       await check(page,role,id+' reports');await screenshot(page,role,width,'reports');
+      if(width===1440){
+        await page.locator('#themeMini').click();
+        await page.waitForFunction(()=>document.documentElement.dataset.theme==='dark');
+        await check(page,role,id+' reports dark');await screenshot(page,role,width,'reports-dark');
+        await page.locator('#themeMini').click();
+        await page.waitForFunction(()=>document.documentElement.dataset.theme==='light');
+      }
       if(role==='standard'){
         await page.evaluate(async()=>{await scanNow();await loadBenchmark(true);await HomeInternetUI.scan();await MarketPulseAdminTools.refreshMatchReviewStatus()});
         const audit=requests.filter(r=>r.caseId===id);
@@ -167,7 +205,7 @@ try{
   }
   assert.deepEqual(unknown,[],'all production API requests need explicit fixtures');
   const files=(await readdir(output)).filter(name=>name.endsWith('.jpg'));
-  assert.equal(files.length,28);
+  assert.equal(files.length,34);
   const bytes=(await Promise.all(files.map(file=>stat(output+'/'+file)))).reduce((total,file)=>total+file.size,0);
   assert.ok(bytes<5*1024*1024,'viewport JPEG artifact should stay below 5 MiB');
   console.log('ROLE_UX_SCREENSHOTS '+files.length+' JPEGs, '+bytes+' bytes');

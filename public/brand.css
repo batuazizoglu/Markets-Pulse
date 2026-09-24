@@ -48,6 +48,30 @@ html[data-theme="dark"] body.branded-app a{color:var(--mp-cyan)}
 .view-title{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;margin:2px 0 16px}
 .view-title h2{margin:0;font-size:22px;letter-spacing:-.025em;color:var(--ink)}
 .view-title p{margin:3px 0 0;color:var(--muted);font-size:12px}
+.topbar .brand.page-brand{display:block;flex:1 1 420px;min-width:0}
+.topbar .app-page-heading{display:block;min-width:0;margin:0}
+.topbar .app-page-heading h1{margin:0;color:var(--ink);font-size:26px;font-weight:800;letter-spacing:-.035em;line-height:1.2;overflow-wrap:anywhere}
+.topbar .app-page-heading p{max-width:64ch;margin:5px 0 0;color:var(--muted);font-size:13px;line-height:1.5;overflow-wrap:anywhere}
+body.branded-app .topbar-inner{align-items:center;gap:20px}
+body.branded-app .topbar .actions{flex:0 0 auto;justify-content:flex-end;flex-wrap:wrap;max-width:100%}
+.competitor-views{display:none;align-items:center;gap:4px;width:fit-content;max-width:100%;margin:0 0 18px;padding:4px;border:1px solid var(--line);border-radius:999px;background:var(--surface)}
+#competitorViews.route-visible{display:flex!important}
+.competitor-views[hidden]{display:none!important}
+.competitor-views button{appearance:none;min-height:40px;min-width:116px;padding:9px 18px;border:0;border-radius:999px;background:transparent;color:var(--muted);font:700 13px/1.3 Inter,system-ui,sans-serif;cursor:pointer;transition:background .15s,color .15s}
+.competitor-views button:hover{background:var(--surface2);color:var(--ink)}
+.competitor-views button.active,.competitor-views button[aria-pressed="true"]{background:var(--mp-electric);color:#fff}
+.competitor-views button:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+/* The page heading names the section; keep its local controls and subheadings. */
+body.branded-app #ad-visual-section>.av-heading>div:first-child,
+body.branded-app #home-internet-section>.hi-title>div:first-child,
+body.branded-app #benchmark-section>.bm-headline>div:first-child,
+body.branded-app #reports-section>.section-title>div:first-child,
+body.branded-app #settings-section>.section-title{display:none}
+body.branded-app #ad-visual-section>.av-heading,
+body.branded-app #home-internet-section>.hi-title,
+body.branded-app #benchmark-section>.bm-headline,
+body.branded-app #reports-section>.section-title{justify-content:flex-end}
+body.branded-app #home-internet-section>.hi-title>.hi-actions{justify-content:flex-end}
 .view-chip{display:inline-flex;align-items:center;gap:6px;padding:6px 9px;border:1px solid var(--line);border-radius:999px;background:var(--surface);font-size:10px;color:var(--muted)}
 
 [data-route-section]{display:none!important}
@@ -130,6 +154,14 @@ html[data-theme="dark"] .bm-chart svg circle{fill:var(--mp-cyan)!important;strok
   .app-nav-btn{min-width:76px;height:52px;flex-direction:column;justify-content:center;gap:3px;padding:5px 7px;font-size:8px;white-space:nowrap}
   .app-nav-btn svg{width:16px;height:16px}
   .view-title{align-items:flex-start;margin-bottom:12px}.view-title h2{font-size:18px}.view-title p{font-size:10px}.view-chip{display:none}
+  body.branded-app .topbar-inner{flex-wrap:wrap;gap:10px 14px}
+  .topbar .brand.page-brand{flex:1 1 240px}
+  .topbar .app-page-heading h1{font-size:23px;line-height:1.2}
+  .topbar .app-page-heading p{font-size:12px;line-height:1.45;margin-top:4px}
+  body.branded-app .topbar .actions{margin-left:auto}
+  .competitor-views{margin-bottom:14px;width:100%}
+  .competitor-views button{flex:1;min-width:0;padding:9px 12px}
+  body.branded-app #reports-section>.section-title{margin-bottom:0}
   .report-grid,.settings-grid{grid-template-columns:1fr}
   .actions .theme-mini{display:grid}
 }
