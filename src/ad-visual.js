@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto';
 import {socialDirectory} from './isp-registry.js';
-import {requireOperationalAdmin,standardAdVisuals} from './operational-access.js';
+import {requireOperationalAdmin,standardAdVisuals,publishedAdRow} from './operational-access.js';
 import {AD_CATEGORIES,AD_TAXONOMY_VERSION,AD_CAPTION_MAX_LENGTH,isDynamicCategory,resolveCategoryProposal} from './ad-categories.js';
 
 export const AD_FEED_ROOT='https://raw.githubusercontent.com/batuazizoglu/Markets-Pulse/ad-visual-data/';
@@ -263,7 +263,9 @@ export function registerAdVisualRoutes(app,pool,sources,{sync=syncAdVisuals,now=
     catch(e){if(e.status===400)return res.status(400).json({error:e.message});next(e)}
   });
   app.get('/api/ad-visuals/history',async(req,res,next)=>{
-    try{const r=await pool.query('SELECT id,observed_at,event_type,analysis_json FROM ad_visual_versions WHERE ad_key=$1 ORDER BY observed_at DESC,id DESC LIMIT 30',[clean(req.query.key,100)]);res.json({rows:r.rows})}catch(e){next(e)}
+    try{const r=await pool.query('SELECT id,observed_at,event_type,analysis_json FROM ad_visual_versions WHERE ad_key=$1 ORDER BY observed_at DESC,id DESC LIMIT 30',[clean(req.query.key,100)]);
+      res.json({rows:req.appUser?.role==='admin'?r.rows:r.rows.map(row=>({...row,analysis_json:publishedAdRow(row.analysis_json||{})}))});
+    }catch(e){next(e)}
   });
   app.get('/api/ad-visuals/evidence/:hash.jpg',async(req,res,next)=>{
     if(!/^[a-f0-9]{64}$/.test(req.params.hash))return res.status(400).end();

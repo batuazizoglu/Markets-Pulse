@@ -70,7 +70,7 @@ test('social observation endpoint persists validated notes and blocks cross-site
   const {SCHEMA_SQL}=await import('../src/schema.js');
   const {registerSocialWatchRoutes}=await import('../src/social-watch.js');
   const db=new PGlite();await db.exec(SCHEMA_SQL);
-  const app=express();app.use(express.json());app.use((req,res,next)=>{req.appUser={id:null};next()});
+  const app=express();app.use(express.json());app.use((req,res,next)=>{req.appUser={id:null,role:'admin'};next()});
   registerSocialWatchRoutes(app,db,HOME_INTERNET_SOURCES);
   const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
   const url='http://127.0.0.1:'+server.address().port+'/api/home-internet/social-observations';

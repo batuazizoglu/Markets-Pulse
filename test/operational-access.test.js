@@ -8,6 +8,7 @@ import {SCHEMA_SQL} from '../src/schema.js';
 import {HOME_INTERNET_SOURCES} from '../src/home-internet.js';
 import {registerCloudRoutes} from '../src/ad-cloud.js';
 import {registerAdVisualRoutes} from '../src/ad-visual.js';
+import {registerSocialWatchRoutes} from '../src/social-watch.js';
 import {requireOperationalAdmin,requireAdminForRefresh,reportStatusForUser,standardAdVisuals} from '../src/operational-access.js';
 
 let db,server,base,operations=0,reportReads=0;
@@ -28,6 +29,7 @@ before(async()=>{
     const role=req.get('x-test-role');if(role)req.appUser={id:role==='admin'?2:1,role,email:role==='admin'?'admin@example.com':'reader@example.com'};next();
   });
   registerCloudRoutes(app,pool,HOME_INTERNET_SOURCES);
+  registerSocialWatchRoutes(app,pool,HOME_INTERNET_SOURCES);
   registerAdVisualRoutes(app,pool,HOME_INTERNET_SOURCES,{cloudStatus:async()=>cloud,sync:()=>assert.fail('No external sync in authorization tests')});
   // Register the real server route bodies without starting schedulers, mail or
   // network scrapers. Only their business dependencies are isolated test doubles.
@@ -50,7 +52,7 @@ after(async()=>{if(server)await new Promise(resolve=>server.close(resolve));awai
 const request=(path,{role='standard',method='GET',body}={})=>fetch(base+path,{method,headers:{...(role?{'x-test-role':role}:{}),'content-type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)})});
 
 test('manual scans, AI reanalysis and pending review require admin before invoking any operational work',async()=>{
-  const paths=['/api/scan','/api/home-internet/scan','/api/ad-visuals/scan','/api/ad-visuals/analyze','/api/ad-visuals/sync'];
+  const paths=['/api/scan','/api/home-internet/scan','/api/ad-visuals/scan','/api/ad-visuals/analyze','/api/ad-visuals/sync','/api/home-internet/social-observations'];
   const before=operations;
   for(const path of paths)for(const [role,status] of [['standard',403],[null,401]]){
     const response=await request(path,{role,method:'POST',body:{}});
@@ -65,6 +67,8 @@ test('manual scans, AI reanalysis and pending review require admin before invoki
   assert.equal(operations,before);
   assert.equal((await db.query('SELECT count(*)::int n FROM ad_cloud_jobs')).rows[0].n,0);
   assert.equal((await db.query('SELECT count(*)::int n FROM ad_provider_runs')).rows[0].n,0);
+  assert.equal((await db.query('SELECT count(*)::int n FROM social_watch_observations')).rows[0].n,0);
+  assert.equal((await request('/api/home-internet/social-observations')).status,200);
   assert.equal((await request('/api/scan',{role:'admin',method:'POST',body:{}})).status,200);
   assert.equal((await request('/api/home-internet/scan',{role:'admin',method:'POST',body:{}})).status,200);
   assert.equal((await request('/api/ad-visuals/sync',{role:'admin',method:'POST',body:{}})).status,409);
@@ -94,7 +98,13 @@ test('standard published ad results retain business data and evidence without pr
   const source=data.source_directory.find(row=>row.brand==='KKTCELL');assert.equal(source.page_id,'127496543986832');
   assert.ok(!Object.hasOwn(source,'research_note'));
   assert.doesNotMatch(JSON.stringify(data),/internal-proxy|daily_budget_usd|reserved_today_usd|internal-model|Internal provider detail/);
-  assert.equal((await request('/api/ad-visuals/history?key='+encodeURIComponent(adKey))).status,200);
+  const history=await request('/api/ad-visuals/history?key='+encodeURIComponent(adKey));assert.equal(history.status,200);
+  const version=(await history.json()).rows[0];assert.equal(version.event_type,'first_seen');
+  assert.equal(version.analysis_json.title,'Published package');assert.equal(version.analysis_json.offer.price_try,499);
+  for(const key of ['ai_queue_status','ai_analysis','taxonomy_version'])assert.ok(!Object.hasOwn(version.analysis_json,key));
+  const adminHistory=await (await request('/api/ad-visuals/history?key='+encodeURIComponent(adKey),{role:'admin'})).json();
+  assert.equal(adminHistory.rows[0].analysis_json.ai_analysis.model,'internal-model');
+  assert.equal(adminHistory.rows[0].analysis_json.taxonomy_version,'internal-taxonomy');
   assert.equal((await request('/api/ad-visuals/evidence/'+hash+'.jpg')).status,200);
   const admin=await (await request('/api/ad-visuals',{role:'admin'})).json();
   assert.equal(admin.cloud.capture_provider.daily_budget_usd,50);assert.equal(admin.rows[0].ai_analysis.model,'internal-model');

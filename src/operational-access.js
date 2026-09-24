@@ -17,6 +17,8 @@ export async function reportStatusForUser(pool,user,email){
   return {email,recent_runs:result.rows};
 }
 
+export function publishedAdRow({ai_queue_status,ai_analysis,taxonomy_version,...published}){return published}
+
 export function standardAdVisuals(data){
   const monitoring=data.monitoring||{},cloud=data.cloud,provider=cloud?.capture_provider;
   const incomplete=monitoring.status!=='ok'||Boolean(monitoring.stale||monitoring.last_error)||Number(data.pending_media?.total)>0||
@@ -26,7 +28,7 @@ export function standardAdVisuals(data){
     Boolean(provider?.enabled&&(provider.configured===false||(provider.runs||[]).some(run=>run.coverage_complete!==true)));
   const {generated_at,categories,groups,brand_groups,total,pagination}=data;
   return {generated_at,categories,groups,brand_groups,total,pagination,
-    rows:(data.rows||[]).map(({ai_queue_status,ai_analysis,taxonomy_version,...published})=>published),
+    rows:(data.rows||[]).map(publishedAdRow),
     source_directory:(data.source_directory||[]).map(({brand,page_id,capture_brand,ad_library_url,country,facebook,instagram})=>({brand,page_id,capture_brand,ad_library_url,country,facebook,instagram})),
     display_status:{incomplete,updated_at:monitoring.checked_at||null}};
 }
