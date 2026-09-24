@@ -1,6 +1,7 @@
 import puppeteer from 'puppeteer';
 import { REPORT_TZ, REPORT_NAMES, buildReportContext } from './report-data.js';
 import { monthlyOverviewHtml } from './monthly-report-content.js';
+import { reportChangeValue, reportChangeProduct } from './report-change-value.js';
 
 let reportBrowserPromise = null;
 
@@ -48,6 +49,7 @@ function css(){
     .source-health th:nth-child(1){width:42%}.source-health th:nth-child(2){width:12%}.source-health th:nth-child(3){width:9%}.source-health th:nth-child(4){width:10%}.source-health th:nth-child(5){width:9%}.source-health th:nth-child(6){width:18%}
     .source-health-home th:nth-child(1){width:32%}.source-health-home th:nth-child(2){width:23%}.source-health-home th:nth-child(3){width:12%}.source-health-home th:nth-child(4){width:9%}.source-health-home th:nth-child(5){width:9%}.source-health-home th:nth-child(6){width:15%}
     .source-health th,.source-health td{padding:6px 8px}.source-health{margin-bottom:10px}
+    .change-table th:nth-child(1){width:18%}.change-table th:nth-child(2){width:24%}.change-table th:nth-child(3),.change-table th:nth-child(4){width:29%}
     .good{color:#007653;font-weight:700}.bad{color:#b32d29;font-weight:700}.muted{color:#53627b}
     .two{display:block}.two>div{margin-bottom:18px}
     .pill{display:inline-block;padding:2px 7px;border-radius:9px;background:#eaf1ff;color:#173a9e;font-size:11px;font-weight:700;margin:2px 3px 2px 0}
@@ -124,14 +126,14 @@ function homeBodyHtml(ctx){
       (o?'<br><b>Öncelikli eşleşme:</b> '+esc(o.kktcell?.name)+' ↔ '+esc((o.competitor?.provider||'')+' '+(o.competitor?.name||''))+' • Home Value Score farkı '+esc((o.score_gap>0?'+':'')+o.score_gap):'')+'</div>';
   }
 
-  const changeRows=changes.slice(0,35).map(x=>'<tr><td>'+esc(localStamp(x.detected_at))+'</td><td>'+esc(x.provider||'—')+'</td><td>'+esc(x.product_name||'Paket')+'</td><td>'+esc(changeLabel(x))+'</td><td>'+esc(x.old_value||'—')+'</td><td>'+esc(x.new_value||'—')+'</td></tr>').join('');
+  const changeRows=changes.slice(0,35).map(x=>'<tr><td>'+esc(localStamp(x.detected_at))+'<span class="detail-line">'+esc(x.provider||'—')+'</span></td><td><b>'+esc(reportChangeProduct(x))+'</b><span class="detail-line">'+esc(changeLabel(x))+'</span></td><td>'+esc(reportChangeValue(x.old_value))+'</td><td>'+esc(reportChangeValue(x.new_value))+'</td></tr>').join('');
   const sourceRows=sources.map(x=>'<tr><td>'+esc(x.name)+'</td><td>'+esc(x.provider||'—')+'</td><td>'+esc(x.status||'—')+'</td><td>'+esc(x.http_status||'—')+'</td><td>'+esc(x.parsed_count||0)+'</td><td>'+esc(x.response_ms?x.response_ms+' ms':'—')+'</td></tr>').join('');
 
   return '<div class="grid">'+kpiHtml+'</div>'+insight+
     '<h2>'+(isFwa?'Superbox / Red Box Ürünleri':'Turkcell Ev İnterneti ve Pazar Benchmark')+'</h2>'+
     '<table class="home-products"><colgroup><col class="product-name"><col class="product-specs"><col class="product-price"><col class="product-year"><col class="product-value"></colgroup><thead><tr><th>Marka / Ürün</th><th>Hız, Kota ve Süre</th><th>Efektif Aylık</th><th>12 Ay Eşdeğer</th><th>Mbps / 100 TL</th></tr></thead><tbody>'+(rows||'<tr><td colspan="5">Güncel ürün kaydı bulunmuyor.</td></tr>')+'</tbody></table>'+
     '<div class="pagebreak"></div><h2>Son '+esc(ctx.days)+' Günlük Değişiklikler</h2>'+
-    '<table><thead><tr><th>Tarih</th><th>Sağlayıcı</th><th>Ürün</th><th>Hareket</th><th>Önce</th><th>Sonra</th></tr></thead><tbody>'+(changeRows||'<tr><td colspan="6">Anlamlı değişiklik yok.</td></tr>')+'</tbody></table>'+
+    '<table class="change-table"><thead><tr><th>Tarih / Sağlayıcı</th><th>Ürün / Hareket</th><th>Önce</th><th>Sonra</th></tr></thead><tbody>'+(changeRows||'<tr><td colspan="4">Anlamlı değişiklik yok.</td></tr>')+'</tbody></table>'+
     '<h2>Kaynak Sağlığı</h2><table class="source-health source-health-home"><thead><tr><th>Kaynak</th><th>Sağlayıcı</th><th>Durum</th><th>HTTP</th><th>Okunan</th><th>Yanıt</th></tr></thead><tbody>'+sourceRows+'</tbody></table>';
 }
 
@@ -182,10 +184,10 @@ function bodyHtml(ctx){
   const top=(m.top_threats||[]).slice(0,8);
   const threats=top.length?top.map(x=>'<div class="item"><h3>'+esc(x.product_name)+' <span class="pill">'+esc(x.segment)+'</span><span class="pill">'+esc(x.intent)+'</span></h3><div><span class="score">'+esc(x.threat)+'/100</span> • '+esc((x.reasons||[]).join(' • '))+'</div><div class="muted"><b>Öneri:</b> '+esc(x.action)+'</div></div>').join(''):'<div class="muted">Anlamlı rakip hareketi yok.</div>';
   const sourceRows=(ctx.sources||[]).map(x=>'<tr><td>'+esc(x.name)+'</td><td>'+esc(x.last_status||'—')+'</td><td>'+esc(x.http_status||'—')+'</td><td>'+esc(x.parsed_count||'—')+'</td><td>'+esc(x.active_products||0)+'</td><td>'+esc(x.response_ms?x.response_ms+' ms':'—')+'</td></tr>').join('');
-  const changes=(ctx.changes||[]).slice(0,40).map(c=>'<tr><td>'+esc(localStamp(c.detected_at))+'</td><td>'+esc(c.product_name||c.new_value||c.old_value||'Paket')+'</td><td>'+esc(changeLabel(c))+'</td><td>'+esc(c.old_value||'—')+'</td><td>'+esc(c.new_value||'—')+'</td><td>'+esc(c.severity)+'</td></tr>').join('');
+  const changes=(ctx.changes||[]).slice(0,40).map(c=>'<tr><td>'+esc(localStamp(c.detected_at))+'<span class="detail-line">Önem: '+esc(c.severity||'—')+'</span></td><td><b>'+esc(reportChangeProduct(c))+'</b><span class="detail-line">'+esc(changeLabel(c))+'</span></td><td>'+esc(reportChangeValue(c.old_value))+'</td><td>'+esc(reportChangeValue(c.new_value))+'</td></tr>').join('');
   let html='<div class="grid"><div class="kpi"><span>Competitive Pressure</span><strong>'+esc(m.pressure_index)+'/100</strong><small>'+esc(m.pressure_level)+'</small></div><div class="kpi"><span>Competitive Position</span><strong>'+esc(b.overall_score&&b.overall_score.score!=null?b.overall_score.score+'/100':'—')+'</strong><small>'+esc(b.overall_score?b.overall_score.level:'—')+'</small></div><div class="kpi"><span>Rakip Hamlesi</span><strong>'+esc(m.move_count||0)+'</strong><small>'+esc(ctx.days)+' günlük pencere</small></div><div class="kpi"><span>Değişiklik</span><strong>'+esc(s.total)+'</strong><small>'+esc(s.added)+' yeni • '+esc(s.removed)+' kaldırılan</small></div></div><div class="callout"><b>Yönetici Özeti</b><br>'+esc(m.executive_summary)+'</div><h2>Segment Bazlı Rekabet Pozisyonu</h2><table><thead><tr><th>Segment</th><th>Güncel</th><th>Dönem Başı</th><th>Delta</th><th>Durum</th><th>Güven</th></tr></thead><tbody>'+scoreTable+'</tbody></table><p class="muted">'+esc(b.methodology||'')+' '+esc(b.score_methodology||'')+' '+esc(b.history_note||'')+'</p><div class="two"><div><h2>Öncelikli Rakip Hamleleri</h2>'+threats+'</div><div><h2>Değişiklik Özeti</h2><div class="callout yellow"><b>'+esc(s.total)+' değişiklik</b><br>'+esc(s.critical)+' kritik • '+esc(s.high)+' yüksek • '+esc(s.medium)+' orta</div>'+(s.top_fields||[]).map(x=>'<div class="item"><b>'+esc(x.name)+'</b><span style="float:right">'+esc(x.count)+'</span></div>').join('')+'</div></div>';
   if(ctx.type!=='daily'){
-    html+='<div class="pagebreak"></div><h2>Son '+esc(ctx.days)+' Günde Telsim Ne Yaptı?</h2><table><thead><tr><th>Tarih</th><th>Paket</th><th>Hareket</th><th>Önce</th><th>Sonra</th><th>Önem</th></tr></thead><tbody>'+changes+'</tbody></table>'+evidenceHtml(ctx,ctx.type==='weekly'?4:6);
+    html+='<div class="pagebreak"></div><h2>Son '+esc(ctx.days)+' Günde Telsim Ne Yaptı?</h2><table class="change-table"><thead><tr><th>Tarih / Önem</th><th>Paket / Hareket</th><th>Önce</th><th>Sonra</th></tr></thead><tbody>'+changes+'</tbody></table>'+evidenceHtml(ctx,ctx.type==='weekly'?4:6);
   }
   if(ctx.type==='daily'||ctx.type==='weekly')html+=dailyHomeSummaryHtml(ctx);
   html+='<h2>Kaynak Sağlığı</h2><table class="source-health"><thead><tr><th>Kaynak</th><th>Durum</th><th>HTTP</th><th>Okunan</th><th>Aktif</th><th>Yanıt</th></tr></thead><tbody>'+sourceRows+'</tbody></table>';
