@@ -31,7 +31,7 @@ export function monthlyOverviewHtml(ctx,{compact=false}={}){
     '<h2>Kanıt Arşivi • 30 Günlük Kapsam</h2><p>'+esc(m.evidence_total??0)+' kayıt • '+esc(m.evidence_complete??0)+' eksiksiz • '+esc(m.evidence_missing??0)+' eksik dosyalı • '+esc(m.evidence_visual??0)+' görselli.</p>'+
     '<p>PDF seçilmiş kanıtları içerir. Ham HTML/JSON ve tüm görseller, platformda Kanıt Arşivi üzerinden kayıt bazında veya ZIP olarak indirilebilir.</p>';
   if(!compact){
-    html+='<div class="pagebreak"></div><h2>Haftalık Rekabet Pozisyonu Seyri</h2><p>KKTC takvim haftası bazında mevcut skor kayıtlarının ortalaması. İlk/son hafta ve veri birikimi eksik olabilir; ölçüm tarihlerini dikkate alın.</p>'+
+    html+='<h2>Haftalık Rekabet Pozisyonu Seyri</h2><p>KKTC takvim haftası bazında mevcut skor kayıtlarının ortalaması. İlk/son hafta ve veri birikimi eksik olabilir; ölçüm tarihlerini dikkate alın.</p>'+
       table(['Hafta başlangıcı','Segment','Skor ort. /100','Ölçüm','İlk / son ölçüm'],(m.trend||[]).length?m.trend.map(x=>[x.week,x.segment,x.average_score,x.samples,date(x.first_sample)+' / '+date(x.last_sample)]):[['—','Skor geçmişi bulunmuyor','—','0','—']])+
       '<h2>Kaynak Bazında Veri Kapsamı</h2>'+table(['Alan','Kaynak','İlk kayıt','Dönem taraması','Başarılı'],(m.coverage||[]).map(x=>[x.domain,x.source,date(x.first_recorded),x.scans,x.successful]));
   }

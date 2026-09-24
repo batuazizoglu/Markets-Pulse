@@ -47,6 +47,7 @@ function css(){
     .home-products .product-name{width:32%}.home-products .product-specs{width:19%}.home-products .product-price{width:18%}.home-products .product-year{width:17%}.home-products .product-value{width:14%}
     .source-health th:nth-child(1){width:42%}.source-health th:nth-child(2){width:12%}.source-health th:nth-child(3){width:9%}.source-health th:nth-child(4){width:10%}.source-health th:nth-child(5){width:9%}.source-health th:nth-child(6){width:18%}
     .source-health-home th:nth-child(1){width:32%}.source-health-home th:nth-child(2){width:23%}.source-health-home th:nth-child(3){width:12%}.source-health-home th:nth-child(4){width:9%}.source-health-home th:nth-child(5){width:9%}.source-health-home th:nth-child(6){width:15%}
+    .source-health th,.source-health td{padding:6px 8px}.source-health{margin-bottom:10px}
     .good{color:#007653;font-weight:700}.bad{color:#b32d29;font-weight:700}.muted{color:#53627b}
     .two{display:block}.two>div{margin-bottom:18px}
     .pill{display:inline-block;padding:2px 7px;border-radius:9px;background:#eaf1ff;color:#173a9e;font-size:11px;font-weight:700;margin:2px 3px 2px 0}
@@ -58,8 +59,8 @@ function css(){
     .evidence-card div{padding:8px 10px;color:#53627b;font-size:12px}
     .monthly-overview table{font-size:12px!important}.monthly-overview .report-note{font-size:12px!important;color:#53627b}
     .ad-report{font-family:Arial,Helvetica,sans-serif!important;font-size:14px!important;line-height:1.5!important;break-inside:auto!important}
-    .ad-report:has(.ad-report-card){break-before:page;page-break-before:always}
     .ad-report h2:first-child{margin-top:0}
+    .ad-report-header{break-inside:avoid;break-after:avoid}
     .ad-report h2,.ad-report h3,.ad-report h4{break-after:avoid}
     .ad-report-card{break-inside:avoid;page-break-inside:avoid;margin:0 0 18px!important}
     .ad-report-image{display:block;max-width:100%!important;max-height:75mm!important;width:100%!important;height:auto!important;object-fit:contain!important;object-position:top center!important;margin:0 auto 6px!important}
