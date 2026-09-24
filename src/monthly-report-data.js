@@ -1,13 +1,11 @@
 import { ENGINE_VERSION } from './comparable-engine.js';
+import {loadCompetitiveChanges} from './competitive-changes.js';
 
 // One frozen rolling 30-day window; never add totals from overlapping daily/weekly PDFs.
 export async function collectMonthlyData(pool,start,end){
   const range=[new Date(start).toISOString(),new Date(end).toISOString()];
   const [mobile,home,baseline,proof,trend,coverage]=await Promise.all([
-    pool.query(`SELECT c.*,s.slug source_slug,s.name source_name,s.url source_url,p.current_name product_name,p.identity_base,v.extras_json
-      FROM changes c JOIN sources s ON s.id=c.source_id LEFT JOIN products p ON p.id=c.product_id
-      LEFT JOIN LATERAL (SELECT extras_json FROM product_versions WHERE product_id=p.id AND captured_at<=c.detected_at ORDER BY captured_at DESC,id DESC LIMIT 1) v ON TRUE
-      WHERE c.detected_at >= $1 AND c.detected_at < $2 ORDER BY c.detected_at DESC,c.id DESC`,range),
+    loadCompetitiveChanges(pool,{start:range[0],end:range[1]}),
     pool.query('SELECT * FROM home_internet_changes WHERE detected_at >= $1 AND detected_at < $2 ORDER BY detected_at DESC,id DESC',range),
     pool.query("SELECT DISTINCT ON (segment) segment,score,bucket_at FROM competitive_position_history WHERE bucket_at <= $1 AND details_json->>'engine_version'=$2 ORDER BY segment,bucket_at DESC",[range[0],ENGINE_VERSION]),
     pool.query(`SELECT sn.id,sn.source_id,sn.captured_at,sn.kind,s.name source_name,
@@ -36,6 +34,6 @@ export async function collectMonthlyData(pool,start,end){
     CASE WHEN COALESCE(octet_length(sn.focused_screenshot_png),0)>0 THEN sn.focused_screenshot_png ELSE sn.screenshot_png END focused_screenshot_png
     FROM snapshots sn JOIN sources s ON s.id=sn.source_id WHERE sn.id=ANY($1::bigint[]) ORDER BY sn.captured_at DESC,sn.id DESC`,[chosen.map(x=>x.id)])).rows:[];
   const complete=proof.rows.filter(x=>x.has_focus&&x.has_screenshot&&x.has_html&&x.has_json).length;
-  return {changes:mobile.rows,homeChanges:home.rows,baseline:Object.fromEntries(baseline.rows.map(x=>[x.segment,x])),evidence:images,trend:trend.rows,coverage:coverage.rows,
+  return {changes:mobile,homeChanges:home.rows,baseline:Object.fromEntries(baseline.rows.map(x=>[x.segment,x])),evidence:images,trend:trend.rows,coverage:coverage.rows,
     summary:{evidence_total:proof.rows.length,evidence_complete:complete,evidence_missing:proof.rows.length-complete,evidence_visual:visual.length,selected_evidence_ids:images.map(x=>String(x.id))}};
 }

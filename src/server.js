@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import { initDb, pool } from './db.js';
 import { scanAll } from './scanner.js';
 import { buildMarketPulse } from './intelligence.js';
+import {competitiveWindow,loadCompetitiveChanges} from './competitive-changes.js';
 import { getKktcellCatalog, warmKktcellCatalog } from './kktcell-benchmark.js';
 import { currentBenchmark } from './live-benchmark.js';
 import { ENGINE_VERSION } from './comparable-engine.js';
@@ -202,20 +203,14 @@ app.get('/api/value-index', async (req,res,next)=>{try{
 }catch(e){next(e)}});
 
 app.get('/api/timeline', async (req,res,next)=>{try{
-  const days=Math.max(1,Math.min(180,parseInt(req.query.days||'30',10)||30));
-  const r=await pool.query(`SELECT c.*,s.slug source_slug,s.name source_name,s.url source_url,p.current_name product_name
-    FROM changes c JOIN sources s ON s.id=c.source_id LEFT JOIN products p ON p.id=c.product_id
-    WHERE c.detected_at >= NOW()-($1::text||' days')::interval
-    ORDER BY c.detected_at DESC,c.id DESC LIMIT 300`,[days]);
-  res.json(r.rows);
+  const window=competitiveWindow(parseInt(req.query.days||'30',10));
+  res.json(await loadCompetitiveChanges(pool,{start:window.window_start,end:window.window_end}));
 }catch(e){next(e)}});
 
 app.get('/api/changes', async (req,res,next)=>{try{
   const limit=Math.max(1,Math.min(250,parseInt(req.query.limit||'80',10)||80));
-  const r=await pool.query(`SELECT c.*,s.slug source_slug,s.name source_name,s.url source_url,p.current_name product_name
-    FROM changes c JOIN sources s ON s.id=c.source_id LEFT JOIN products p ON p.id=c.product_id
-    ORDER BY c.detected_at DESC,c.id DESC LIMIT $1`,[limit]);
-  res.json(r.rows);
+  const window=competitiveWindow(parseInt(req.query.days||'30',10));
+  res.json(await loadCompetitiveChanges(pool,{start:req.query.days?window.window_start:undefined,end:window.window_end,limit}));
 }catch(e){next(e)}});
 
 app.get('/api/scans', async (req,res,next)=>{try{

@@ -20,6 +20,8 @@ jobs:
         env:
           PUPPETEER_SKIP_DOWNLOAD: 'true'
       - run: npm test
+      - name: Shared competitor data desktop and mobile flows
+        run: node test/competitive-data-layout.mjs
       - name: Home internet desktop and mobile layouts
         run: node test/home-internet-layout.mjs
       - name: Ad analysis desktop and mobile layouts

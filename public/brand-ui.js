@@ -25,6 +25,7 @@ settings:'<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" str
 };
 let themeMode=localStorage.getItem('marketPulseThemeMode')||'auto';
 let currentUser=null;
+let executiveBenchmark=null,executiveBenchmarkError='',executiveBenchmarkRequest=null;
 const userEsc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 function cyprusHour(){
@@ -122,20 +123,31 @@ function applyRoute(route=currentRoute()){
 }
 function go(route){if(!routes[route])route='dashboard';history.replaceState(null,'','#'+route);applyRoute(route)}
 
-async function loadExecutiveInsights(){
+function renderExecutiveInsights(){
   const box=document.getElementById('executiveInsights');if(!box)return;
-  try{
-    const [br,mr]=await Promise.all([fetch('/api/benchmark',{cache:'no-store'}),fetch('/api/market-pulse?days=30',{cache:'no-store'})]);
-    if(!br.ok||!mr.ok)throw new Error('Executive data unavailable');
-    const b=await br.json(),m=await mr.json();
+  const market=window.MarketPulseData?.getState(),m=market?.snapshot,b=executiveBenchmark||{};
+  if(!document.getElementById('executiveSnapshotStatus'))box.insertAdjacentHTML('beforebegin','<p id="executiveSnapshotStatus" class="market-status" role="status"></p>');
+  const status=document.getElementById('executiveSnapshotStatus');status.textContent=market?window.MarketPulseData.statusText(market):'Rakip verileri yükleniyor…';status.classList.toggle('error-text',Boolean(market?.error));
     const scores=(b.segment_scores||[]).filter(x=>x.score!=null).sort((a,z)=>z.score-a.score);
-    const strongest=scores[0],weakest=scores[scores.length-1],threat=(m.top_threats||[])[0];
+    const strongest=scores[0],weakest=scores[scores.length-1],threat=m?window.MarketPulseData.orderedMoves(m)[0]:null;
+    const decision=threat?.decision==='OPPORTUNITY'?'Fırsat':threat?.decision==='NO_REACTION'?'İzle':'Tehdit';
+    const emptyTitle=m?'Bu dönemde hamle yok':'Veri bekleniyor';
+    const benchmarkNote=executiveBenchmarkError||(!executiveBenchmark?'Benchmark yükleniyor…':'');
     box.innerHTML=
-      '<article class="executive-card primary"><span>Genel Competitive Position</span><strong>'+(b.overall_score?.score??'—')+'/100</strong><small>'+(b.overall_score?.level||'Veri bekleniyor')+' • Güven '+(b.overall_score?.confidence||'—')+'</small></article>'+
-      '<article class="executive-card good"><span>En Güçlü Segment</span><strong>'+(strongest?.segment||'—')+'</strong><small>'+(strongest?.score??'—')+'/100 • '+(strongest?.level||'—')+'</small></article>'+
-      '<article class="executive-card risk"><span>En Baskı Altındaki Segment</span><strong>'+(weakest?.segment||'—')+'</strong><small>'+(weakest?.score??'—')+'/100 • '+(weakest?.level||'—')+'</small></article>'+
-      '<article class="executive-card action"><span>Öncelikli Rakip Hamlesi</span><strong>'+(threat?.product_name||'Anlamlı yeni hamle yok')+'</strong><small>'+(threat?('Tehdit '+threat.threat+'/100 • '+(threat.action||'')):'Son 30 günde kritik hareket görünmüyor')+'</small></article>';
-  }catch(e){console.error(e);box.innerHTML='<article class="executive-card"><span>Yönetici İçgörüleri</span><strong>Veri alınamadı</strong><small>Bir sonraki yenilemede tekrar denenecek.</small></article>'}
+      '<article class="executive-card primary"><span>Genel Competitive Position</span><strong>'+userEsc(b.overall_score?.score??'—')+'/100</strong><small>'+userEsc(benchmarkNote||((b.overall_score?.level||'Veri bekleniyor')+' • Güven '+(b.overall_score?.confidence||'—')))+'</small></article>'+
+      '<article class="executive-card good"><span>En Güçlü Segment</span><strong>'+userEsc(strongest?.segment||'—')+'</strong><small>'+userEsc(strongest?.score??'—')+'/100 • '+userEsc(strongest?.level||'—')+'</small></article>'+
+      '<article class="executive-card risk"><span>En Baskı Altındaki Segment</span><strong>'+userEsc(weakest?.segment||'—')+'</strong><small>'+userEsc(weakest?.score??'—')+'/100 • '+userEsc(weakest?.level||'—')+'</small></article>'+
+      '<article class="executive-card action" data-executive-move="'+userEsc(threat?.key||'')+'" data-window-days="'+userEsc(m?.window_days||'')+'"><span>Öncelikli Rakip Hamlesi</span><strong>'+userEsc(threat?.product_name||emptyTitle)+'</strong><small>'+userEsc((m?'Son '+m.window_days+' gün • ':'')+(threat?(decision+' • Tehdit skoru '+threat.threat+'/100 • '+(threat.action||'')):m?'Kaydedilmiş rakip hamlesi yok.':'Henüz başarılı veri yüklemesi yok.'))+'</small></article>';
+}
+function loadExecutiveInsights(){
+  if(executiveBenchmarkRequest)return executiveBenchmarkRequest;
+  executiveBenchmarkRequest=(async()=>{
+    try{
+      const response=await fetch('/api/benchmark',{cache:'no-store'});if(!response.ok)throw new Error('Benchmark unavailable');
+      executiveBenchmark=await response.json();executiveBenchmarkError='';
+    }catch(e){console.error(e);executiveBenchmarkError=executiveBenchmark?'Benchmark yenilenemedi; son başarılı skorlar gösteriliyor.':'Benchmark verisi alınamadı.'}
+    finally{executiveBenchmarkRequest=null;renderExecutiveInsights()}
+  })();return executiveBenchmarkRequest;
 }
 
 function reportDownload(type){
@@ -178,10 +190,14 @@ function csv(rows){
 }
 function saveBlob(name,text,type){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},300)}
 async function download(kind,format='json'){
-  let url='/api/market-pulse?days=30',name='market-pulse-executive';
-  if(kind==='benchmark'){url='/api/benchmark';name='market-pulse-benchmark'}
-  if(kind==='changes'){url='/api/changes?limit=250';name='market-pulse-changes'}
-  const r=await fetch(url,{cache:'no-store'});if(!r.ok)throw new Error('Rapor alınamadı');const data=await r.json();
+  let data,name='market-pulse-executive';
+  if(kind==='benchmark'){
+    const response=await fetch('/api/benchmark',{cache:'no-store'});if(!response.ok)throw new Error('Rapor alınamadı');data=await response.json();name='market-pulse-benchmark';
+  }else{
+    await window.MarketPulseData?.ensure();const state=window.MarketPulseData?.getState();
+    if(!state?.snapshot||state.snapshot.window_days!==state.days||state.error)throw new Error('Seçili dönem verileri alınamadı. Yenileyip tekrar deneyin.');
+    data=kind==='changes'?state.snapshot.changes:state.snapshot;name=kind==='changes'?'market-pulse-changes':'market-pulse-executive';name+='-'+state.days+'d';
+  }
   if(format==='csv'){
     const rows=kind==='benchmark'?(data.matches||[]):Array.isArray(data)?data:[data];
     saveBlob(name+'.csv',csv(rows),'text/csv;charset=utf-8');
@@ -201,6 +217,7 @@ function loadUsers(){return window.MarketPulseUsers?.load()}
 
 async function init(){
   await loadCurrentUser();document.body.classList.add('branded-app');sidebar();topBrand();ensureViews();organizeContent();applyTheme();applyRoute();loadExecutiveInsights();
+  window.MarketPulseData?.subscribe(()=>renderExecutiveInsights());
   const obs=new MutationObserver(()=>applyRoute(currentRoute()));obs.observe(document.querySelector('main.shell')||document.body,{childList:true,subtree:false});
   setInterval(()=>{if(themeMode==='auto')applyTheme()},60000);
   setInterval(loadExecutiveInsights,300000);

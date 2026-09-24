@@ -1,4 +1,5 @@
 let activeSource='all',showInactive=false,cachePackages=[],cacheValue=[],cacheSummary=null,searchTerm='';
+let appLoad=null,appGeneration=0,timelineLimit=40,changeFeedLimit=40,changeWindow=null;
 const $=id=>document.getElementById(id);
 const fmtTime=v=>v?new Intl.DateTimeFormat('tr-TR',{dateStyle:'short',timeStyle:'short',timeZone:'Asia/Famagusta'}).format(new Date(v)):'—';
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
@@ -6,19 +7,23 @@ const num=v=>v==null||v===''?null:Number(v);
 const val=(v,s='')=>v==null?'—':`${v}${s}`;
 async function api(path,opts){const r=await fetch(path,opts);let j;try{j=await r.json()}catch{j={}}if(!r.ok)throw new Error(j.error||r.statusText);return j}
 
-async function loadAll(){
-  try{
+function loadAll({force=false}={}){
+  if(appLoad&&!force)return appLoad;
+  const generation=++appGeneration;
+  const work=(async()=>{try{
     $('liveText').textContent='Güncelleniyor…';
-    const [sum,packs,changes,comp,value]=await Promise.all([
-      api('/api/summary'),api('/api/packages'),api('/api/changes?limit=100'),api('/api/comparison'),api('/api/value-index')
+    const [sum,packs,comp,value]=await Promise.all([
+      api('/api/summary'),api('/api/packages'),api('/api/comparison'),api('/api/value-index'),window.MarketPulseData.refresh({force})
     ]);
+    if(generation!==appGeneration)return;
     cacheSummary=sum;cachePackages=packs;cacheValue=value;
-    renderKpis(sum);renderSourceCards(sum.sources||[]);renderHero(changes,value);renderTabs(sum.sources||[]);renderPackages();
-    renderComparison(comp.rows||[]);renderValue(value||[]);renderChanges(changes);renderSourceTable(sum.sources||[]);
-    await loadTimeline(7);
-    $('liveText').textContent='Canlı • 60 sn';
+    renderKpis(sum);renderSourceCards(sum.sources||[]);renderTabs(sum.sources||[]);renderPackages();
+    renderComparison(comp.rows||[]);renderValue(value||[]);renderSourceTable(sum.sources||[]);
+    const market=window.MarketPulseData.getState();if(market.snapshot)renderHero(market.snapshot.changes,value,market);
+    $('liveText').textContent=market.error?'Rakip verileri güncellenemedi':'Canlı • 60 sn';
     window.EvidenceArchive?.refreshIfActive();
-  }catch(e){console.error(e);$('liveText').textContent='Bağlantı hatası'}
+  }catch(e){if(generation===appGeneration){console.error(e);$('liveText').textContent='Bağlantı hatası • Son veriler gösteriliyor'}}})();
+  appLoad=work;work.finally(()=>{if(generation===appGeneration)appLoad=null});return work;
 }
 
 function renderKpis(sum){
@@ -30,10 +35,12 @@ function renderKpis(sum){
   $('kpiLast').textContent=t?fmtTime(t):'—';
 }
 
-function renderHero(changes,value){
-  const todayKey=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Famagusta'}).format(new Date());
-  const today=(changes||[]).filter(c=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Famagusta'}).format(new Date(c.detected_at))===todayKey);
-  if(today.length){
+function renderHero(changes,value,market=window.MarketPulseData.getState()){
+  const localDay=date=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Famagusta'}).format(new Date(date)),todayKey=localDay(new Date());
+  const observed=market.snapshot?.generated_at,stale=market.error||!observed||localDay(observed)!==todayKey;
+  const today=(changes||[]).filter(c=>localDay(c.detected_at)===todayKey);
+  if(stale){$('heroMove').textContent='Güncel veri alınamadı';$('heroSub').textContent=observed?'Son başarılı güncelleme: '+fmtTime(observed)+' • Dönem kayıtları korunuyor.':'Başarılı veri yüklemesi bekleniyor.'}
+  else if(today.length){
     const c=today[0];
     $('heroMove').textContent=c.change_type==='field_changed'?`${c.product_name||'Paket'} • ${fieldLabel(c.field_name)}`:c.change_type==='added'?`${c.product_name||'Paket'} eklendi`:`${c.product_name||'Paket'} kaldırıldı`;
     $('heroSub').textContent=c.change_type==='field_changed'?`${pretty(c.old_value)} → ${pretty(c.new_value)} • ${c.source_name}`:`${c.source_name} • ${fmtTime(c.detected_at)}`;
@@ -87,13 +94,27 @@ function renderValue(rows){
 }
 
 function renderChanges(rows){
-  $('changeFeed').innerHTML=rows.length?rows.map(c=>`<article class="change" ${c.product_id?`onclick="showHistory(${c.product_id})"`:''}><div class="change-top"><div><div class="change-title">${esc(c.product_name||c.old_value||c.new_value||'Paket')}</div><div class="change-meta">${esc(c.source_name)} • ${fmtTime(c.detected_at)}</div></div><span class="status ${c.severity==='critical'?'err':c.severity==='high'?'warn':'ok'}">${esc(c.severity)}</span></div><div class="diff">${c.change_type==='field_changed'?`${esc(fieldLabel(c.field_name))}: <span class="old">${esc(pretty(c.old_value))}</span> → <span class="new">${esc(pretty(c.new_value))}</span>`:c.change_type==='added'?'<span class="new">Yeni paket eklendi</span>':'<span class="old">Paket kaldırıldı / görünmüyor</span>'}</div></article>`).join(''):`<div class="empty">Henüz anlamlı değişiklik yok.</div>`;
+  const shown=rows.slice(0,changeFeedLimit);
+  $('changeFeed').innerHTML=rows.length?shown.map(c=>`<article class="change" data-change-id="${esc(c.id)}" ${Number.isSafeInteger(Number(c.product_id))&&Number(c.product_id)>0?`onclick="showHistory(${Number(c.product_id)})"`:''}><div class="change-top"><div><div class="change-title">${esc(c.product_name||c.old_value||c.new_value||'Paket')}</div><div class="change-meta">${esc(c.source_name)} • ${fmtTime(c.detected_at)}</div></div><span class="status ${c.severity==='critical'?'err':c.severity==='high'?'warn':'ok'}">${esc(c.severity)}</span></div><div class="diff">${esc(window.MarketPulseData.changeText(c))}</div></article>`).join(''):`<div class="empty">Seçili dönemde kaydedilmiş değişiklik yok.</div>`;
+  $('changeFeedCount').textContent=shown.length+' / '+rows.length+' alan değişikliği';
+  $('changeFeedMore').hidden=shown.length>=rows.length;
 }
 
-async function loadTimeline(days=7,el){
-  if(el){el.parentElement.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));el.classList.add('active')}
-  const rows=await api('/api/timeline?days='+days);
-  $('timeline').innerHTML=rows.length?rows.slice(0,80).map(c=>`<div class="tl ${esc(c.severity)}"><div class="tl-time">${fmtTime(c.detected_at)}</div><div class="tl-axis"><span class="tl-dot"></span></div><div class="tl-content"><b>${esc(c.product_name||c.old_value||c.new_value||'Paket')}</b><div class="muted">${esc(c.source_name)} • ${changeText(c)}</div></div></div>`).join(''):`<div class="empty">Bu dönemde değişiklik yok.</div>`;
+function loadTimeline(days=window.MarketPulseData.getState().days){return window.MarketPulseData.selectDays(days)}
+function renderTimeline(rows){
+  const shown=rows.slice(0,timelineLimit);
+  $('timeline').innerHTML=rows.length?shown.map(c=>`<div class="tl ${esc(c.severity)}" data-change-id="${esc(c.id)}"><div class="tl-time">${fmtTime(c.detected_at)}</div><div class="tl-axis"><span class="tl-dot"></span></div><div class="tl-content"><b>${esc(c.product_name||c.old_value||c.new_value||'Paket')}</b><div class="muted">${esc(c.source_name)} • ${esc(window.MarketPulseData.changeText(c))}</div></div></div>`).join(''):`<div class="empty">Seçili dönemde kaydedilmiş değişiklik yok.</div>`;
+  $('timelineCount').textContent=shown.length+' / '+rows.length+' alan değişikliği';
+  $('timelineMore').hidden=shown.length>=rows.length;
+}
+function renderMarketChanges(state){
+  $('marketSnapshotStatus').textContent=window.MarketPulseData.statusText(state);
+  $('marketSnapshotStatus').classList.toggle('error-text',Boolean(state.error));
+  $('changes-section').setAttribute('aria-busy',String(state.loading));
+  if(!state.snapshot)return;
+  const data=state.snapshot;
+  if(changeWindow!==data.window_days){timelineLimit=40;changeFeedLimit=40;changeWindow=data.window_days}
+  renderTimeline(data.changes);renderChanges(data.changes);renderHero(data.changes,cacheValue,state);
 }
 
 function renderSourceTable(rows){
@@ -108,9 +129,15 @@ async function showHistory(id){
   $('historySection').scrollIntoView({behavior:'smooth',block:'start'});
 }
 
-async function scanNow(){const b=$('scanBtn');b.disabled=true;b.textContent='Taranıyor…';try{const r=await api('/api/scan',{method:'POST'});await loadAll();const failed=(r.sources||[]).filter(x=>!x.ok);if(failed.length)alert('Bazı kaynaklar taranamadı: '+failed.map(x=>x.source).join(', '))}catch(e){alert('Tarama hatası: '+e.message)}finally{b.disabled=false;b.textContent='Şimdi Tara'}}
+async function scanNow(){const b=$('scanBtn');b.disabled=true;b.textContent='Taranıyor…';try{const r=await api('/api/scan',{method:'POST'});await loadAll({force:true});const failed=(r.sources||[]).filter(x=>!x.ok);if(failed.length)alert('Bazı kaynaklar taranamadı: '+failed.map(x=>x.source).join(', '))}catch(e){alert('Tarama hatası: '+e.message)}finally{b.disabled=false;b.textContent='Şimdi Tara'}}
 function fieldLabel(f){return ({data_gb:'Data',bonus_data_gb:'Bonus Data',local_tr_minutes:'Ada İçi + Türkiye DK',international_minutes:'Uluslararası DK',sms:'SMS',validity_days:'Geçerlilik',price_try:'Fiyat',name:'Paket Adı',extras_json:'Ek Fayda / Koşul','Data':'Data','Bonus Data':'Bonus Data','Ada İçi + TR Dakika':'Ada İçi + TR Dakika','Uluslararası Dakika':'Uluslararası Dakika','Geçerlilik (gün)':'Geçerlilik','Fiyat':'Fiyat'})[f]||f||'Alan'}
 function pretty(v){if(v==null)return '—';try{const x=JSON.parse(v);if(typeof x==='object')return JSON.stringify(x)}catch{}return String(v)}
 function changeText(c){if(c.change_type==='field_changed')return `${fieldLabel(c.field_name)}: ${pretty(c.old_value)} → ${pretty(c.new_value)}`;if(c.change_type==='added')return 'Yeni paket eklendi';return 'Paket kaldırıldı / görünmüyor'}
 
+window.MarketPulseData.subscribe(renderMarketChanges);
+document.addEventListener('click',event=>{
+  const more=event.target.closest('[data-market-more]')?.dataset.marketMore;
+  if(more==='timeline')timelineLimit+=40;else if(more==='changes')changeFeedLimit+=40;else return;
+  renderMarketChanges(window.MarketPulseData.getState());
+});
 loadAll();setInterval(loadAll,60000);

@@ -1,4 +1,5 @@
-import { buildMarketPulse, marketPulseFromRows } from './intelligence.js';
+import { marketPulseFromRows } from './intelligence.js';
+import {competitiveWindow,loadCompetitiveChanges} from './competitive-changes.js';
 import { collectMonthlyData } from './monthly-report-data.js';
 import { currentBenchmark } from './live-benchmark.js';
 import { ENGINE_VERSION } from './comparable-engine.js';
@@ -35,17 +36,8 @@ async function sourceHealth(pool) {
   return r.rows;
 }
 
-async function periodChanges(pool, days) {
-  const r = await pool.query(
-    "SELECT c.*,s.slug source_slug,s.name source_name,s.url source_url,p.current_name product_name" +
-    " FROM changes c JOIN sources s ON s.id=c.source_id LEFT JOIN products p ON p.id=c.product_id" +
-    " WHERE c.detected_at >= NOW()-($1::text||' days')::interval" +
-    " ORDER BY c.detected_at DESC,c.id DESC LIMIT 600", [days]
-  );
-  return r.rows;
-}
-
-export async function periodEvidence(pool, days, mode='meta') {
+export async function periodEvidence(pool, days, mode='meta',now=new Date()) {
+  const window=competitiveWindow(days,now);
   const cols = mode==='full'
     ? "sn.html_gzip,sn.extracted_json,sn.screenshot_png,sn.focused_screenshot_png,"
     : mode==='visual'
@@ -55,18 +47,18 @@ export async function periodEvidence(pool, days, mode='meta') {
     "SELECT sn.id,sn.captured_at,sn.kind,sn.page_hash,sn.screenshot_meta," + cols +
     " s.slug source_slug,s.name source_name,s.url source_url" +
     " FROM snapshots sn JOIN sources s ON s.id=sn.source_id" +
-    " WHERE sn.captured_at >= NOW()-($1::text||' days')::interval" +
-    " ORDER BY sn.captured_at DESC LIMIT 80", [days]
+    " WHERE sn.captured_at >= $1::timestamptz AND sn.captured_at < $2::timestamptz" +
+    " ORDER BY sn.captured_at DESC,sn.id DESC LIMIT 80", [window.window_start,window.window_end]
   );
   return r.rows;
 }
 
-async function scoreBaselines(pool, days) {
+async function scoreBaselines(pool, start) {
   const r = await pool.query(
     "SELECT DISTINCT ON (segment) segment,score,bucket_at,level,confidence" +
     " FROM competitive_position_history" +
-    " WHERE bucket_at <= NOW()-($1::text||' days')::interval AND details_json->>'engine_version'=$2" +
-    " ORDER BY segment,bucket_at DESC", [days,ENGINE_VERSION]
+    " WHERE bucket_at <= $1::timestamptz AND details_json->>'engine_version'=$2" +
+    " ORDER BY segment,bucket_at DESC", [start,ENGINE_VERSION]
   );
   const m = {};
   for (const x of r.rows) m[x.segment] = x;
@@ -104,7 +96,7 @@ function dailyHomeSections(home,days=1,now=new Date()){
   const cutoff=new Date(now).getTime()-Math.max(1,Number(days)||1)*86400000;
   const productMap=new Map((home.products||[]).map(x=>[x.product_key,x]));
   const familyChanges=family=>(home.changes||[]).filter(ch=>{
-    if(new Date(ch.detected_at).getTime()<cutoff||new Date(ch.detected_at)>new Date(now))return false;
+    if(new Date(ch.detected_at).getTime()<cutoff||new Date(ch.detected_at)>=new Date(now))return false;
     const p=productMap.get(ch.product_key);
     if(p)return (p.product_family||'fixed')===family;
     if(family==='fwa')return ['kktcell-superbox','lifecell-digital-superbox','telsim-redbox'].includes(ch.source_slug)||/superbox|red box/i.test(ch.product_name||'');
@@ -122,8 +114,8 @@ function dailyHomeSections(home,days=1,now=new Date()){
 }
 
 export async function buildReportContext(pool, type, options={},loaders={currentBenchmark,sourceHealth,getHomeInternetMarket}) {
-  const days = reportDays(type,options.days);
-  const periodEnd = new Date(), periodStart = new Date(periodEnd.getTime()-days*86400000);
+  const window=competitiveWindow(reportDays(type,options.days),options.now??new Date()),days=window.window_days;
+  const periodEnd = new Date(window.window_end), periodStart = new Date(window.window_start);
 
   const adSection=await buildAdReportSection(pool,type,periodStart,periodEnd);
 
@@ -138,7 +130,7 @@ export async function buildReportContext(pool, type, options={},loaders={current
   }
 
   if(type==='home'||type==='fwa'){
-    const home=await getHomeInternetMarket(pool,{refresh:false});
+    const home=await loaders.getHomeInternetMarket(pool,{refresh:false});
     const family=type==='fwa'?'fwa':'fixed';
     const products=(home.products||[]).filter(x=>(x.product_family||'fixed')===family);
     const productMap=new Map((home.products||[]).map(x=>[x.product_key,x]));
@@ -151,22 +143,23 @@ export async function buildReportContext(pool, type, options={},loaders={current
     const sources=(home.sources||[]).filter(s=>type==='fwa'?['kktcell-superbox','lifecell-digital-superbox','telsim-redbox'].includes(s.slug):!['kktcell-superbox','lifecell-digital-superbox','telsim-redbox'].includes(s.slug));
     return {
       ...adSection,type,title:REPORT_NAMES[type],days,
-      period_start:periodStart.toISOString(),period_end:periodEnd.toISOString(),generated_at:new Date().toISOString(),
+      period_start:periodStart.toISOString(),period_end:periodEnd.toISOString(),generated_at:periodEnd.toISOString(),
       home:{...home,products,changes,sources},
       changes,stats:changeStats(changes),sources
     };
   }
 
   const tasks=[
-    buildMarketPulse(pool,days),currentBenchmark(pool),sourceHealth(pool),periodChanges(pool,days),scoreBaselines(pool,days),periodEvidence(pool,days,type==='evidence'?'full':type==='daily'?'meta':'visual')
+    loaders.currentBenchmark(pool),loaders.sourceHealth(pool),loadCompetitiveChanges(pool,{start:window.window_start,end:window.window_end}),scoreBaselines(pool,window.window_start),periodEvidence(pool,days,type==='evidence'?'full':type==='daily'?'meta':'visual',periodEnd)
   ];
-  if(type==='daily'||type==='weekly')tasks.push(getHomeInternetMarket(pool,{refresh:false}));
+  if(type==='daily'||type==='weekly')tasks.push(loaders.getHomeInternetMarket(pool,{refresh:false}));
   const results=await Promise.all(tasks);
-  const [market,benchmark,sources,changes,baseline,evidence]=results;
-  const daily_home=(type==='daily'||type==='weekly')?dailyHomeSections(results[6],days):null;
+  const [benchmark,sources,changes,baseline,evidence]=results;
+  const market=marketPulseFromRows(changes,days,periodEnd);
+  const daily_home=(type==='daily'||type==='weekly')?dailyHomeSections(results[5],days,periodEnd):null;
   return {
     ...adSection,type,title:REPORT_NAMES[type]||'Markets Pulse Raporu',days,
-    period_start:periodStart.toISOString(),period_end:periodEnd.toISOString(),generated_at:new Date().toISOString(),
+    period_start:periodStart.toISOString(),period_end:periodEnd.toISOString(),generated_at:periodEnd.toISOString(),
     market,benchmark,sources,changes,stats:changeStats(changes),score_deltas:scoreDeltas(benchmark,baseline),evidence,
     daily_home
   };
