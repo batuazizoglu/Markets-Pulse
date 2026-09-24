@@ -20,11 +20,13 @@ import { reportDays } from './report-data.js';
 import {registerSocialWatchRoutes} from './social-watch.js';
 import {registerAdVisualRoutes} from './ad-visual.js';
 import {createCloudWorker,getCloudStatus,registerCloudRoutes} from './ad-cloud.js';
+import {registerReportMediaRoutes} from './report-ad-media.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 app.use(express.json({limit:'1mb'}));
 
+registerReportMediaRoutes(app,pool);
 registerAuth(app,pool,path.join(__dirname,'..','public'));
 registerSocialWatchRoutes(app,pool,HOME_INTERNET_SOURCES);
 registerAdVisualRoutes(app,pool,HOME_INTERNET_SOURCES,{cloudStatus:()=>getCloudStatus(pool,{sources:HOME_INTERNET_SOURCES})});

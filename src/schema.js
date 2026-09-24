@@ -235,6 +235,13 @@ CREATE TABLE IF NOT EXISTS ad_visual_evidence (
   jpeg BYTEA NOT NULL,
   imported_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+CREATE TABLE IF NOT EXISTS ad_report_image_assets (
+  sha256 TEXT PRIMARY KEY CHECK(sha256 ~ '^[a-f0-9]{64}$'),
+  jpeg BYTEA NOT NULL CHECK(octet_length(jpeg) BETWEEN 1 AND 153600),
+  width INTEGER NOT NULL CHECK(width BETWEEN 1 AND 960),
+  height INTEGER NOT NULL CHECK(height BETWEEN 1 AND 1280),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 CREATE TABLE IF NOT EXISTS ad_visual_items (
   ad_key TEXT PRIMARY KEY,
   brand TEXT NOT NULL,

@@ -144,7 +144,7 @@ export async function captureCloudAds(source,onCapture,{maxAds=12,timeoutMs=1100
         const shots=[Buffer.from(await card.screenshot({type:'jpeg',quality:85})),Buffer.from(await creative.screenshot({type:'jpeg',quality:90}))];
         if(shots.some(b=>b.length>1500000))continue;
         const at=new Date().toISOString();
-        const evidence=shots.map(bytes=>({sha256:createHash('sha256').update(bytes).digest('hex'),bytes,captured_at:at}));
+        const evidence=shots.map((bytes,index)=>({sha256:createHash('sha256').update(bytes).digest('hex'),bytes,captured_at:at,role:index===1?'creative':'ad_card'}));
         checkProxy();
         await onCapture({brand:source.brand,page_id:source.page_id,ad_id:data.ad_id,variant_id:'1',source_url:url,
           observed_at:at,started_on:null,ad_status:/\bInactive\b|Aktif değil/i.test(data.ad_text)?'inactive':/\bActive\b|\bAktif\b/i.test(data.ad_text)?'active':'unknown',
