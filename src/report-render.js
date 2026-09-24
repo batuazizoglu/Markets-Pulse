@@ -201,7 +201,7 @@ export function renderReportHtml(ctx){
       '<p>Mobil değişiklik tablosu son '+Math.min(40,(ctx.changes||[]).length)+' / '+(ctx.changes||[]).length+' kaydı gösterir. Yönetici özetindeki sayılar dönemdeki tüm kayıtları kapsar.</p>';
     for(const [family,title] of [['fixed','Turkcell Ev İnterneti • Aylık Detay'],['fwa','Superbox / Red Box • Aylık Detay']]){
       const section=ctx.daily_home?.[family]||{products:[],changes:[],sources:[]};
-      content+='<div class="pagebreak"></div><h2>'+title+'</h2>'+homeBodyHtml({...ctx,type:family==='fixed'?'home':'fwa',home:section})+
+      content+=(family==='fixed'?'<div class="pagebreak"></div>':'')+'<h2>'+title+'</h2>'+homeBodyHtml({...ctx,type:family==='fixed'?'home':'fwa',home:section})+
         '<p>Seçilmiş ürünler ve son '+Math.min(35,section.changes.length)+' / '+section.changes.length+' değişiklik gösterilir. Ürün tablosu güncel katalogdan ilk '+Math.min(family==='fixed'?55:30,section.products.length)+' / '+section.products.length+' teklifi içerir.</p>';
     }
   }
