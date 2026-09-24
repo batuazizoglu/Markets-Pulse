@@ -41,7 +41,11 @@ test('standard benchmark retains comparisons, prices, evidence and trends withou
     assert.equal(f.d.querySelectorAll('.bm-chart circle').length,2);
     assert.ok(f.d.querySelector('a[href="https://www.kktcell.com/go-m"]'));
     assert.ok(f.d.querySelector('a[href="https://www.kktctelsim.com/paketler"]'));
-    assert.equal(f.d.querySelector('.bm-kpis article:nth-child(3) strong').textContent,String(f.data.counts.PARITY));
+    assert.equal(f.d.querySelector('.bm-kpis article:nth-child(3) strong').textContent,String([...f.data.matches,...f.data.secondary_matches].filter(m=>m.position==='PARITY').length));
+    assert.equal(f.d.querySelectorAll('.bm-table .bm-badge').length,1);
+    assert.match(f.d.querySelector('.bm-table .bm-badge').textContent,/Alternatif teklif/);
+    assert.match(f.d.querySelector('.bm-mobile').textContent,/Alternatif teklif/);
+    assert.match(text,/Avantaj sayıları tüm teklifleri kapsar; alternatif teklifler rekabet skoruna dahil edilmez/);
     assert.equal(f.d.querySelector('.bm-kpis article:nth-child(4) strong').textContent,f.data.overall_score.score+'/100');
     f.w.setBmSegment('Asker');
     assert.match(f.d.querySelector('#bmBox').textContent,/Skor için yeterli karşılaştırılabilir ürün yok/);
@@ -69,6 +73,7 @@ test('admin benchmark retains full diagnostics and forced refresh after role res
     assert.match(text,/Comparable Product Engine/);assert.match(text,/Primary/);assert.match(text,/Secondary/);
     assert.match(text,/Metodoloji/);assert.match(text,/Kaynak Sağlığı/);assert.match(text,/41 ms/);
     assert.equal(f.d.querySelectorAll('.bm-table th').length,12);
+    assert.equal(f.d.querySelector('.bm-kpis article:nth-child(3) strong').textContent,String(f.data.counts.PARITY));
     f.d.querySelector('.bm-refresh').click();await tick();
     assert.ok(f.requests.includes('/api/benchmark?refresh=1'));
     f.setRole('standard');

@@ -18,13 +18,18 @@ html:not([data-user-role="admin"]) .mp-kpis .mp-mini small{font-size:12px}
 html:not([data-user-role="admin"]) .executive-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
 html:not([data-user-role="admin"]) #changes-section>.grid2{grid-template-columns:minmax(0,1fr)}
 html:not([data-user-role="admin"]) .ev-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+html[data-user-role="standard"] #ad-visual-section .av-heading>div:first-child,
+html[data-user-role="standard"] #home-internet-section>.hi-title>div:first-child,
+html[data-user-role="standard"] .bm-headline>div:first-child{display:none}
+html[data-user-role="standard"] #ad-visual-section .av-heading,
+html[data-user-role="standard"] #home-internet-section>.hi-title,
+html[data-user-role="standard"] .bm-headline{justify-content:flex-end}
 .change-detail{font-size:12px;line-height:1.6;margin:4px 0}
 .change-detail summary{color:var(--blue);cursor:pointer;font-weight:650}
 .change-values{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
 .change-values>div{padding:10px;background:var(--surface2);border:1px solid var(--line);border-radius:8px;overflow-wrap:anywhere;min-width:0}
 .change-values strong{font-size:11px;color:var(--muted);display:block;margin-bottom:5px}
 .change-values ul{margin:0;padding-left:18px}
-.standard-foot{padding:20px 0 8px;font-size:11px;color:var(--muted);text-align:right}
 .bm-grid.bm-grid-simple{grid-template-columns:1fr}.bm-table.bm-table-simple{min-width:680px}
 @media(max-width:900px){html:not([data-user-role="admin"]) .mp-list{grid-template-columns:1fr}html:not([data-user-role="admin"]) .executive-grid{grid-template-columns:1fr}}
-@media(max-width:720px){html:not([data-user-role="admin"]) .mp-summary h2{font-size:20px}html:not([data-user-role="admin"]) .mp-list{padding:8px 12px 14px}.change-values{grid-template-columns:1fr}html:not([data-user-role="admin"]) .mp-move{padding:14px}.standard-foot{text-align:left}}
+@media(max-width:720px){html:not([data-user-role="admin"]) .mp-summary h2{font-size:20px}html:not([data-user-role="admin"]) .mp-list{padding:8px 12px 14px}.change-values{grid-template-columns:1fr}html:not([data-user-role="admin"]) .mp-move{padding:14px}}

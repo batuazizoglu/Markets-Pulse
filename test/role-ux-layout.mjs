@@ -137,8 +137,10 @@ try{
       assert.match(await page.$eval('#bmBox',el=>el.innerText),/Super Databol|Yeni GO/);
       assert.equal(await page.$$eval('.bm-table th',els=>els.length),role==='admin'?12:6);
       if(role==='admin')assert.match(await page.evaluate(()=>document.body.innerText),/Comparable Product Engine/);
+      await go(page,'trends');
       await page.locator('.bm-horizon:nth-child(2)').click();
       assert.equal(await page.$eval('.bm-horizon.active',el=>el.textContent),'30 Gün');
+      await check(page,role,id+' trends');await go(page,'compare');
       await check(page,role,id+' benchmark');await screenshot(page,role,width,'benchmark');
 
       await go(page,'evidence');await page.waitForSelector('.ev-card');
