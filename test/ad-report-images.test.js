@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import sharp from 'sharp';
 import {JSDOM} from 'jsdom';
+import {PGlite} from '@electric-sql/pglite';
+import {SCHEMA_SQL} from '../src/schema.js';
 import {cropAdReportImage,prepareAdReportImages} from '../src/ad-report-images.js';
 import {adVisualReportHtml} from '../src/ad-visual-report.js';
 
@@ -16,10 +18,10 @@ async function creative({width=600,height=800,border=0}={}){
 function row(id,images,category='home'){
   return {event_type:'first_seen',observed_at:at,analysis_json:{key:'111111:'+id+':1',ad_id:String(id),brand:'Telsim',title:'Ev interneti',category,source_url:'https://www.facebook.com/ads/library/?id='+id,observed_at:at,visual_summary:'Paket görseli',offer:{price_try:499,billing_period:'monthly',speed_mbps:20},conditions:['İlk 12 ay'],uncertainties:['Kurulum bedeli okunamadı'],images:images.map(item=>typeof item==='string'?{sha256:item}:item)}};
 }
-function poolFor(assets,{pairs=[],throwAssets=false}={}){
+function poolFor(assets,{pairs=[],providers=[],throwAssets=false}={}){
   const calls=[];return {calls,query:async(sql,params)=>{
     calls.push({sql,params});
-    if(sql.includes('ad_cloud_candidates'))return {rows:pairs};
+    if(sql.includes('ad_cloud_candidates'))return {rows:sql.includes('JOIN ad_provider_runs')?providers:pairs};
     assert.match(sql,/SELECT sha256,jpeg FROM ad_visual_evidence WHERE sha256=ANY/);
     if(throwAssets)throw new Error('Archive unavailable');
     return {rows:params[0].filter(id=>assets.has(id)).map(id=>({sha256:id,jpeg:assets.get(id)}))};
@@ -65,6 +67,39 @@ test('historical second image requires an exact ordered browser-capture proof',a
   assert.equal(data.rows[0].report_image.source_sha256,hash(image));assert.equal(data.rows[0].report_image.selection,'browser_creative');
   assert.equal(data.rows[1].report_image.source_sha256,hash(card));assert.equal(data.rows[2].report_image.source_sha256,hash(card));
   assert.match(pool.calls[0].sql,/j.status<>'imported'/);assert.match(pool.calls[0].sql,/NOT EXISTS\(SELECT 1 FROM ad_provider_runs/);
+  const explicitCard=row(123459,[hash(card),{sha256:hash(image),role:'ad_card'}]);
+  const guarded=await prepareAdReportImages(poolFor(assets,{pairs:[{ad_key:explicitCard.analysis_json.key,images:[{sha256:hash(card)},{sha256:hash(image)}]}]}),{rows:[explicitCard]});
+  assert.equal(guarded.data.rows[0].report_image.selection,'evidence');
+  assert.equal(guarded.data.rows[0].report_image.source_sha256,hash(card));
+});
+
+test('historical provider creatives require an exact single candidate image and a non-imported provider job',async()=>{
+  const db=new PGlite();await db.exec(SCHEMA_SQL);
+  try{
+    const image=await creative(),digest=hash(image),other='f'.repeat(64);
+    await db.query('INSERT INTO ad_visual_evidence(sha256,jpeg) VALUES($1,$2)',[digest,image]);
+    const cases=[
+      {name:'provider image',provider:true,expected:'creative'},
+      {name:'provider video preview',provider:true,kind:'video_preview',expected:'creative'},
+      {name:'manual image',expected:'evidence'},
+      {name:'manual video preview',kind:'video_preview',expected:'evidence'},
+      {name:'imported provider-linked image',provider:true,status:'imported',expected:'evidence'},
+      {name:'later provider candidate version',provider:true,payloadImages:[{sha256:other}],expected:'evidence'},
+      {name:'provider candidate with several images',provider:true,payloadImages:[{sha256:digest},{sha256:other}],expected:'evidence'},
+      {name:'explicit archive card',provider:true,role:'ad_card',expected:'evidence'},
+      {name:'candidate explicitly identifies archive card',provider:true,payloadImages:[{sha256:digest,role:'ad_card'}],expected:'evidence'}
+    ];
+    const rows=[];
+    for(const [index,item] of cases.entries()){
+      const entry=row(500000+index,[{sha256:digest,...(item.role?{role:item.role}:{})}]);entry.analysis_json.media_kind=item.kind||'image';rows.push(entry);
+      const job=(await db.query('INSERT INTO ad_cloud_jobs(batch_key,brand,source_json,status) VALUES($1,$2,$3,$4) RETURNING id',[item.name,'Telsim','{}',item.status||'complete'])).rows[0];
+      if(item.provider)await db.query("INSERT INTO ad_provider_runs(job_id,state,max_run_usd) VALUES($1,'complete',1)",[job.id]);
+      await db.query('INSERT INTO ad_cloud_candidates(ad_key,job_id,fingerprint,payload,observed_at) VALUES($1,$2,$3,$4,$5)',[entry.analysis_json.key,job.id,'test',JSON.stringify({images:item.payloadImages||[{sha256:digest}]}),at]);
+    }
+    const prepared=await prepareAdReportImages(db,{rows});
+    for(const [index,item] of cases.entries())assert.equal(prepared.data.rows[index].report_image.selection,item.expected,item.name);
+    assert.equal(prepared.data.image_summary.prepared,cases.length,'unproven screenshots remain available only as evidence');
+  }finally{await db.close()}
 });
 
 test('missing, corrupt and hash-mismatched assets fall back without suppressing report text',async()=>{

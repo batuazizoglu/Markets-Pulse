@@ -45,6 +45,8 @@ function css(){
     tbody tr:nth-child(even){background:#f7f9fc}
     td small,.detail-line{display:block;font-size:12px;color:#53627b;margin-top:4px}
     .home-products .product-name{width:32%}.home-products .product-specs{width:19%}.home-products .product-price{width:18%}.home-products .product-year{width:17%}.home-products .product-value{width:14%}
+    .source-health th:nth-child(1){width:42%}.source-health th:nth-child(2){width:12%}.source-health th:nth-child(3){width:9%}.source-health th:nth-child(4){width:10%}.source-health th:nth-child(5){width:9%}.source-health th:nth-child(6){width:18%}
+    .source-health-home th:nth-child(1){width:32%}.source-health-home th:nth-child(2){width:23%}.source-health-home th:nth-child(3){width:12%}.source-health-home th:nth-child(4){width:9%}.source-health-home th:nth-child(5){width:9%}.source-health-home th:nth-child(6){width:15%}
     .good{color:#007653;font-weight:700}.bad{color:#b32d29;font-weight:700}.muted{color:#53627b}
     .two{display:block}.two>div{margin-bottom:18px}
     .pill{display:inline-block;padding:2px 7px;border-radius:9px;background:#eaf1ff;color:#173a9e;font-size:11px;font-weight:700;margin:2px 3px 2px 0}
@@ -60,12 +62,11 @@ function css(){
     .ad-report h2:first-child{margin-top:0}
     .ad-report h2,.ad-report h3,.ad-report h4{break-after:avoid}
     .ad-report-card{break-inside:avoid;page-break-inside:avoid;margin:0 0 18px!important}
-    .ad-report-image{display:block;max-width:100%!important;max-height:80mm!important;width:auto!important;height:auto!important;object-fit:contain!important;margin:0 auto 10px!important}
-    .ad-report-layout,.ad-report-layout tbody,.ad-report-layout tr,.ad-report-image-cell,.ad-report-details{display:block!important;width:100%!important}
+    .ad-report-image{display:block;max-width:100%!important;max-height:75mm!important;width:100%!important;height:auto!important;object-fit:contain!important;object-position:top center!important;margin:0 auto 6px!important}
     .ad-report-layout{margin:0!important}.ad-report-layout td{border:0!important;background:#fff!important}
-    .ad-report-image-cell{padding:10px 12px 0!important}
+    .ad-report-image-cell{width:42%!important;padding:10px 14px 0 0!important}
     .ad-report-card-title{font-size:16px!important;line-height:1.4!important;margin:0!important}
-    .ad-report-details{font-size:12px!important;line-height:1.5!important;overflow-wrap:anywhere;padding:10px 12px!important}
+    .ad-report-details{font-size:12px!important;line-height:1.5!important;overflow-wrap:anywhere;padding:10px 0 0!important}
     .ad-report-details p{margin:0 0 7px!important}
     .ad-report-source{font-size:11px!important;line-height:1.4!important}
     .ad-report-continuation{font-size:12px;line-height:1.5;break-inside:auto;orphans:3;widows:3;margin:8px 0 20px}
@@ -130,7 +131,7 @@ function homeBodyHtml(ctx){
     '<table class="home-products"><colgroup><col class="product-name"><col class="product-specs"><col class="product-price"><col class="product-year"><col class="product-value"></colgroup><thead><tr><th>Marka / Ürün</th><th>Hız, Kota ve Süre</th><th>Efektif Aylık</th><th>12 Ay Eşdeğer</th><th>Mbps / 100 TL</th></tr></thead><tbody>'+(rows||'<tr><td colspan="5">Güncel ürün kaydı bulunmuyor.</td></tr>')+'</tbody></table>'+
     '<div class="pagebreak"></div><h2>Son '+esc(ctx.days)+' Günlük Değişiklikler</h2>'+
     '<table><thead><tr><th>Tarih</th><th>Sağlayıcı</th><th>Ürün</th><th>Hareket</th><th>Önce</th><th>Sonra</th></tr></thead><tbody>'+(changeRows||'<tr><td colspan="6">Anlamlı değişiklik yok.</td></tr>')+'</tbody></table>'+
-    '<h2>Kaynak Sağlığı</h2><table><thead><tr><th>Kaynak</th><th>Sağlayıcı</th><th>Durum</th><th>HTTP</th><th>Okunan</th><th>Yanıt</th></tr></thead><tbody>'+sourceRows+'</tbody></table>';
+    '<h2>Kaynak Sağlığı</h2><table class="source-health source-health-home"><thead><tr><th>Kaynak</th><th>Sağlayıcı</th><th>Durum</th><th>HTTP</th><th>Okunan</th><th>Yanıt</th></tr></thead><tbody>'+sourceRows+'</tbody></table>';
 }
 
 function dailyHomeSummaryHtml(ctx){
@@ -186,7 +187,7 @@ function bodyHtml(ctx){
     html+='<div class="pagebreak"></div><h2>Son '+esc(ctx.days)+' Günde Telsim Ne Yaptı?</h2><table><thead><tr><th>Tarih</th><th>Paket</th><th>Hareket</th><th>Önce</th><th>Sonra</th><th>Önem</th></tr></thead><tbody>'+changes+'</tbody></table>'+evidenceHtml(ctx,ctx.type==='weekly'?4:6);
   }
   if(ctx.type==='daily'||ctx.type==='weekly')html+=dailyHomeSummaryHtml(ctx);
-  html+='<h2>Kaynak Sağlığı</h2><table><thead><tr><th>Kaynak</th><th>Durum</th><th>HTTP</th><th>Okunan</th><th>Aktif</th><th>Yanıt</th></tr></thead><tbody>'+sourceRows+'</tbody></table>';
+  html+='<h2>Kaynak Sağlığı</h2><table class="source-health"><thead><tr><th>Kaynak</th><th>Durum</th><th>HTTP</th><th>Okunan</th><th>Aktif</th><th>Yanıt</th></tr></thead><tbody>'+sourceRows+'</tbody></table>';
   return html;
 }
 export function renderReportHtml(ctx){

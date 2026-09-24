@@ -24,6 +24,8 @@ jobs:
         run: node test/home-internet-layout.mjs
       - name: Ad analysis desktop and mobile layouts
         run: node test/ad-visual-layout.mjs
+      - name: Install PDF page validation tools
+        run: sudo apt-get update -qq && sudo apt-get install -y poppler-utils
       - name: PDF reports and illustrated email layouts
         run: node test/report-layout.mjs
       - uses: actions/upload-artifact@v4

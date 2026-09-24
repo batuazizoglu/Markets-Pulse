@@ -73,11 +73,23 @@ export async function prepareAdReportImages(pool,data,{maxImages=bounds.maxImage
       AND NOT EXISTS(SELECT 1 FROM ad_provider_runs p WHERE p.job_id=j.id)`,[keys]);
     browserPairs=new Map(found.rows.map(row=>[row.ad_key,(row.images||[]).map(image=>image.sha256)]));
   }catch{/* Provenance unavailable: retain the first evidence image. */}
+  // Before explicit roles were stored, the provider persisted one downloaded
+  // creative per candidate. media_kind also exists on imported/manual records,
+  // so it is not proof: require the exact candidate image and a provider-run job.
+  let providerImages=new Map();
+  const providerKeys=[...new Set(selected.filter(row=>imagesOf(row).length===1&&!imagesOf(row)[0].role).map(row=>row.analysis_json?.key).filter(Boolean))];
+  if(providerKeys.length)try{
+    const found=await pool.query(`SELECT c.ad_key,c.payload->'images' images FROM ad_cloud_candidates c
+      JOIN ad_cloud_jobs j ON j.id=c.job_id JOIN ad_provider_runs p ON p.job_id=j.id
+      WHERE c.ad_key=ANY($1::text[]) AND j.status<>'imported'`,[providerKeys]);
+    providerImages=new Map(found.rows.map(row=>[row.ad_key,Array.isArray(row.images)?row.images:[]]));
+  }catch{/* No durable provider proof: the image remains archive evidence only. */}
   const plans=selected.map(row=>{
-    const candidates=imagesOf(row),explicit=candidates.find(image=>image.role==='creative'),pair=browserPairs.get(row.analysis_json?.key);
-    const browserCreative=pair?.length===2&&candidates.length===2&&candidates.every((image,index)=>image.sha256===pair[index]);
+    const candidates=imagesOf(row),explicit=candidates.find(image=>image.role==='creative'),pair=browserPairs.get(row.analysis_json?.key),provider=providerImages.get(row.analysis_json?.key);
+    const browserCreative=pair?.length===2&&candidates.length===2&&candidates[1].role!=='ad_card'&&candidates.every((image,index)=>image.sha256===pair[index]);
+    const providerCreative=provider?.length===1&&candidates.length===1&&!candidates[0].role&&provider[0]?.role!=='ad_card'&&provider[0]?.sha256===candidates[0].sha256;
     const chosen=explicit||(browserCreative?candidates[1]:candidates[0]);
-    return {row,candidates:chosen?[chosen,...candidates.filter(image=>image.sha256!==chosen.sha256)]:[],selection:explicit?'creative':browserCreative?'browser_creative':candidates.length===1&&candidates[0].role!=='ad_card'&&['image','video_preview'].includes(row.analysis_json?.media_kind)?'creative':'evidence'};
+    return {row,candidates:chosen?[chosen,...candidates.filter(image=>image.sha256!==chosen.sha256)]:[],selection:explicit||providerCreative?'creative':browserCreative?'browser_creative':'evidence'};
   });
   // Bounded, hash-addressed archive reads only. No CDN or authenticated HTTP URL
   // is fetched, and the original evidence in the archive is never changed.

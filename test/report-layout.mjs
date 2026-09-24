@@ -29,10 +29,10 @@ const command=(name,args)=>{
 const hasPoppler=['pdfinfo','pdftotext','pdftoppm'].every(name=>spawnSync(name,['-v'],{encoding:'utf8'}).status===0);
 const browser=await puppeteer.launch({executablePath,headless:true,args:['--no-sandbox','--disable-dev-shm-usage']});
 try{
-  const page=await browser.newPage();await page.setViewport({width:688,height:1000,deviceScaleFactor:1});await page.emulateMediaType('print');
   for(const [name,ctx] of Object.entries(fixtures)){
+    const page=await browser.newPage();await page.setViewport({width:688,height:1000,deviceScaleFactor:1});await page.emulateMediaType('print');
     const html=renderReportHtml(ctx);await writeFile(`${output}/${name}.html`,html);
-    await page.setContent(html,{waitUntil:'networkidle0'});
+    await page.setContent(html,{waitUntil:'load',timeout:60000});
     await page.evaluate(async()=>{await document.fonts.ready;await Promise.all(Array.from(document.images,image=>image.decode()))});
     const metrics=await page.evaluate(()=>({
       width:innerWidth,scroll:document.documentElement.scrollWidth,
@@ -49,6 +49,7 @@ try{
     assert.equal(metrics.oversizedCards,0,name+' ad card exceeds printable page');
     if(name!=='empty'){assert.ok(metrics.cards>=4,name+' missing ad cards');assert.ok(metrics.images>=4,name+' missing embedded creative images')}
     await page.screenshot({path:`${output}/${name}-flow.png`,fullPage:true});
+    await page.close();
     const {buffer}=await renderReportPdf(ctx,{executablePath});
     const path=`${output}/${name}.pdf`;await writeFile(path,buffer);
     let pages=null;
@@ -69,12 +70,12 @@ try{
     results.push({name,pages,bytes:buffer.length,...metrics});
     console.log('REPORT_LAYOUT '+JSON.stringify(results.at(-1)));
   }
-  await page.emulateMediaType('screen');
   for(const name of ['daily','monthly','home','fwa']){
     const ctx=fixtures[name],html=emailHtml(ctx.type,ctx,[{filename:`markets-pulse-${name}.pdf`}],REPORT_NAMES,REPORT_TZ,monthlyOverviewHtml);
     await writeFile(`${output}/email-${name}.html`,html);
     for(const width of [700,390]){
-      await page.setViewport({width,height:1000,deviceScaleFactor:1});await page.setContent(html,{waitUntil:'networkidle0'});
+      const page=await browser.newPage();await page.emulateMediaType('screen');
+      await page.setViewport({width,height:1000,deviceScaleFactor:1});await page.setContent(html,{waitUntil:'load',timeout:60000});
       await page.evaluate(async()=>{await document.fonts.ready;await Promise.all(Array.from(document.images,image=>image.decode()))});
       const metrics=await page.evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth,images:document.images.length,
         brokenImages:Array.from(document.images).filter(el=>!el.complete||!el.naturalWidth).length,
@@ -88,6 +89,7 @@ try{
       assert.ok(metrics.images>=5,`email ${name} missing illustrated ad cards ${width}`);
       assert.equal(metrics.mode,'email',`email ${name} must render email ad markup`);
       emails.push({name,...metrics});console.log('EMAIL_LAYOUT '+JSON.stringify(emails.at(-1)));
+      await page.close();
     }
   }
 }finally{await browser.close()}
