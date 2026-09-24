@@ -46,7 +46,19 @@ try{
     await page.locator('[data-user-id="2"][data-user-action="delete"]').click();assert.ok(await page.$eval('dialog [type="submit"]',el=>el.disabled));await page.type('#umDeleteName','İpek Uzun Soyisimli Yönetici');
     await page.screenshot({path:`test-output/users-delete-${width}.png`,fullPage:true});await page.locator('dialog [type="submit"]').click();await page.waitForFunction(()=>!document.querySelector('dialog')&&!document.querySelector('[data-user-id="2"]'));
     await page.locator('[data-um-view="deleted"]').click();await page.waitForSelector('[data-user-id="2"][data-user-action="restore"]');await page.screenshot({path:`test-output/users-deleted-${width}.png`,fullPage:true});
-    await page.locator('[data-user-id="2"][data-user-action="restore"]').click();await page.waitForFunction(()=>!document.querySelector('[data-user-id="2"]'));
+    // Center the physical click above the mobile fixed bottom navigation. Visibility alone
+    // does not guarantee that Puppeteer's click target is not covered by that navigation.
+    const restoreSelector='[data-user-id="2"][data-user-action="restore"]';
+    await page.$eval(restoreSelector,el=>el.scrollIntoView({block:'center',behavior:'instant'}));
+    const restoreHit=await page.$eval(restoreSelector,el=>{const r=el.getBoundingClientRect(),hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);return {onTarget:el===hit||el.contains(hit),targetTop:r.top,targetBottom:r.bottom,hitTag:hit?.tagName,hitClass:hit?.className,hitText:hit?.textContent?.slice(0,100)}});
+    assert.ok(restoreHit.onTarget,'restore action covered: '+JSON.stringify(restoreHit));
+    try{
+      await page.locator(restoreSelector).click();await page.waitForFunction(()=>!document.querySelector('[data-user-id="2"]'));
+    }catch(error){
+      const diagnostic=await page.evaluate(()=>({view:document.querySelector('[data-um-view][aria-pressed="true"]')?.dataset.umView,notice:document.querySelector('.um-notice')?.textContent,dialog:document.querySelector('dialog')?.textContent,userButtons:[...document.querySelectorAll('[data-user-id="2"]')].map(el=>({action:el.dataset.userAction,disabled:el.disabled,text:el.textContent}))}));
+      console.error('USER_RESTORE_FAILURE '+JSON.stringify({width,restoreHit,diagnostic,mutations:mutations.slice(-3),record:users.find(u=>u.id===2)}));
+      await page.screenshot({path:`test-output/users-restore-failure-${width}.png`,fullPage:true});throw error;
+    }
     await page.locator('[data-um-view="current"]').click();await page.waitForSelector('[data-user-id="2"][data-user-action="access"]');assert.equal(await page.$eval('[data-user-id="2"][data-user-action="access"]',el=>el.textContent),'Aktifleştir');
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'restored list overflow');assert.ok(requests.every(url=>url.startsWith('http://127.0.0.1:')));assert.deepEqual(errors,[]);await page.close();console.log('USER_ADMIN_LAYOUT '+width+' OK');
   }
