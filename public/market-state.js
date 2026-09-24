@@ -32,6 +32,10 @@
   function stamp(value){return value&&Number.isFinite(+new Date(value))?new Intl.DateTimeFormat('tr-TR',{dateStyle:'short',timeStyle:'short',timeZone:'Asia/Famagusta'}).format(new Date(value)):'—'}
   function statusText(state=getState()){
     const data=state.snapshot;
+    if(!window.MarketPulseAccess?.isAdmin()){
+      const period=data?'Son '+data.window_days+' gün · Güncelleme: '+stamp(data.generated_at):'Veriler yükleniyor.';
+      return (state.error?'Güncelleme yapılamadı. '+(data?'Son veriler gösteriliyor. ':'Yeniden deneyin. '):state.loading?'Güncelleniyor… ':'')+period;
+    }
     const period=data?'Son '+data.window_days+' gün • '+stamp(data.window_start)+' – '+stamp(data.window_end)+' • KKTC saati • Son güncelleme: '+stamp(data.generated_at):'Henüz başarılı veri yüklemesi yok.';
     return (state.error?state.error+' '+(data?'Son başarılı veriler gösteriliyor. ':''):state.loading?state.days+' günlük veriler yenileniyor. ':'')+period;
   }
@@ -46,6 +50,18 @@
     const recent=(a,b)=>new Date(b.detected_at)-new Date(a.detected_at)||String(b.key).localeCompare(String(a.key),'en',{numeric:true});
     return [...(data?.moves||[])].sort(order==='recent'?recent:(a,b)=>Number(b.threat)-Number(a.threat)||recent(a,b));
   }
+  const escape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  function benefitLines(value){
+    let parsed=value;try{parsed=JSON.parse(value)}catch{}
+    if(Array.isArray(parsed))return parsed.map(valueText);
+    if(parsed&&typeof parsed==='object')return Object.entries(parsed).map(([key,value])=>key+': '+(Array.isArray(value)?value.map(valueText).join(', '):valueText(value)));
+    return [valueText(parsed)];
+  }
+  function changeMarkup(change){
+    if(window.MarketPulseAccess?.isAdmin()||change.change_type!=='field_changed'||!/extras|ek fayda|koşul/i.test(change.field_name||''))return escape(changeText(change));
+    const values=(label,value)=>'<div><strong>'+label+'</strong><ul>'+benefitLines(value).map(line=>'<li>'+escape(line)+'</li>').join('')+'</ul></div>';
+    return '<details class="change-detail"><summary>Ek faydalar ve koşullar değişti</summary><div class="change-values">'+values('Önce',change.old_value)+values('Şimdi',change.new_value)+'</div></details>';
+  }
   document.addEventListener('click',event=>{const button=event.target.closest('[data-market-days]');if(button)selectDays(button.dataset.marketDays)});
-  window.MarketPulseData={getState,subscribe,refresh,ensure,selectDays,statusText,changeText,orderedMoves};
+  window.MarketPulseData={getState,subscribe,refresh,ensure,selectDays,statusText,changeText,changeMarkup,orderedMoves};
 })();

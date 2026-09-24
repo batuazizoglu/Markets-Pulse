@@ -1,0 +1,30 @@
+/* Fail closed while the authenticated role is loading, including late modules. */
+html:not([data-user-role="admin"]) [data-admin-only],
+html[data-user-role="admin"] [data-standard-only]{display:none!important}
+html[data-user-role="pending"] main.shell{visibility:hidden}
+html[data-user-role="pending"] body:before{content:"Markets Pulse yükleniyor…";display:block;padding:32px;color:var(--muted);font:14px system-ui}
+html:not([data-user-role="admin"]) .mp-main{grid-template-columns:minmax(0,1fr)}
+html:not([data-user-role="admin"]) .mp-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;padding:8px 16px 18px}
+html:not([data-user-role="admin"]) .mp-move{border:1px solid var(--line);border-radius:12px;padding:16px;min-width:0;display:flex;flex-direction:column;gap:7px}
+html:not([data-user-role="admin"]) .mp-move:last-child{border-bottom:1px solid var(--line)}
+html:not([data-user-role="admin"]) .mp-move-title{font-size:15px;line-height:1.4}
+html:not([data-user-role="admin"]) .mp-meta{font-size:12px;line-height:1.6}
+html:not([data-user-role="admin"]) .mp-score{font-size:12px;min-width:58px}
+html:not([data-user-role="admin"]) .mp-change-list{margin:4px 0;font-size:13px}
+html:not([data-user-role="admin"]) .mp-action{margin-top:auto;font-size:12px;line-height:1.55}
+html:not([data-user-role="admin"]) .mp-summary h2{font-size:24px}
+html:not([data-user-role="admin"]) .mp-summary p{font-size:14px}
+html:not([data-user-role="admin"]) .mp-kpis .mp-mini small{font-size:12px}
+html:not([data-user-role="admin"]) .executive-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+html:not([data-user-role="admin"]) #changes-section>.grid2{grid-template-columns:minmax(0,1fr)}
+html:not([data-user-role="admin"]) .ev-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+.change-detail{font-size:12px;line-height:1.6;margin:4px 0}
+.change-detail summary{color:var(--blue);cursor:pointer;font-weight:650}
+.change-values{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+.change-values>div{padding:10px;background:var(--surface2);border:1px solid var(--line);border-radius:8px;overflow-wrap:anywhere;min-width:0}
+.change-values strong{font-size:11px;color:var(--muted);display:block;margin-bottom:5px}
+.change-values ul{margin:0;padding-left:18px}
+.standard-foot{padding:20px 0 8px;font-size:11px;color:var(--muted);text-align:right}
+.bm-grid.bm-grid-simple{grid-template-columns:1fr}.bm-table.bm-table-simple{min-width:680px}
+@media(max-width:900px){html:not([data-user-role="admin"]) .mp-list{grid-template-columns:1fr}html:not([data-user-role="admin"]) .executive-grid{grid-template-columns:1fr}}
+@media(max-width:720px){html:not([data-user-role="admin"]) .mp-summary h2{font-size:20px}html:not([data-user-role="admin"]) .mp-list{padding:8px 12px 14px}.change-values{grid-template-columns:1fr}html:not([data-user-role="admin"]) .mp-move{padding:14px}.standard-foot{text-align:left}}

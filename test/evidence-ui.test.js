@@ -21,10 +21,14 @@ async function until(condition){
   const deadline=Date.now()+5000;
   while(!condition()){if(Date.now()>deadline)assert.fail('Expected archive UI state was not reached');await new Promise(resolve=>setTimeout(resolve,10));}
 }
-async function screen(query=''){
+async function screen(query='',{role='admin',beforeAccessReady}={}){
   const dom=new JSDOM(html,{url:base+'/'+query+'#evidence',runScripts:'outside-only',pretendToBeVisual:true});
   const w=dom.window;windows.push(w);const requests=[],downloads=[],blobs=new Map();
-  w.fetch=(url,options)=>{requests.push(String(url));return fetch(new URL(url,base),options);};
+  const user={id:1,role,first_name:'Örnek',last_name:'Kullanıcı',username:'preview'};
+  let resolveAccess,accessUser=null;
+  w.MarketPulseAccess={ready:new Promise(resolve=>{resolveAccess=resolve;}),isAdmin:()=>accessUser?.role==='admin',getUser:()=>accessUser,subscribe(){return()=>{};}};
+  w.document.documentElement.dataset.userRole='pending';
+  w.fetch=(url,options)=>{requests.push(String(url));return String(url)==='/api/auth/me'?Promise.resolve(new Response(JSON.stringify({user}))):fetch(new URL(url,base),options);};
   w.AbortController=AbortController;w.AbortSignal=AbortSignal;
   w.scrollTo=()=>{};
   w.HTMLDialogElement.prototype.showModal=function(){this.setAttribute('open','');};
@@ -35,8 +39,10 @@ async function screen(query=''){
   w.navigator.clipboard={writeText:async text=>{w.copiedLink=text;}};
   // Unrelated dynamic dashboard modules are outside this test's scope.
   w.eval(scripts[0].replace(/^import\(.*$/gm,''));w.eval(scripts[1]);
+  await beforeAccessReady?.({w,requests});
+  accessUser=user;w.document.documentElement.dataset.userRole=role;resolveAccess(user);
   const $=id=>w.document.getElementById(id);
-  await until(()=>$('evPageInfo').textContent.startsWith('Sayfa')||!$('evMessage').hidden);
+  await until(()=>$('evPageInfo')?.textContent.startsWith('Sayfa')||($('evMessage')&&!$('evMessage').hidden));
   assert.equal($('evMessage').hidden,true,$('evMessage').textContent);
   const submit=()=>{$('evFilters').dispatchEvent(new w.Event('submit',{cancelable:true}));};
   const ready=()=>until(()=>$('evResults').getAttribute('aria-busy')==='false');
@@ -119,5 +125,71 @@ test('a record without images or JSON opens an enabled tab and escaped package t
   };
   w.document.querySelector('[data-open="3"]').click();await until(()=>!!$('evTab-packages'));$('evTab-packages').click();
   assert.match($('evPackageRows').textContent,/<img src=x/);assert.equal($('evPackageRows').querySelector('img,script'),null);
+  w.close();
+});
+
+test('standard archive waits for access and keeps proof, history and image downloads without technical controls',async()=>{
+  const {w,$,requests,downloads}=await screen('?ev_availability=complete&evidence=4',{role:'standard',beforeAccessReady:async({w,requests})=>{
+    w.EvidenceArchive.activate();await Promise.resolve();
+    assert.equal(w.document.getElementById('evExport'),null);
+    assert.equal(w.document.querySelector('.ev-file-row'),null);
+    assert.equal(requests.some(url=>url.startsWith('/api/evidence')),false);
+  }});
+  await until(()=>!!$('evTab-focus'));
+  assert.equal(w.document.querySelectorAll('.ev-stat').length,2);
+  assert.deepEqual([...$('evFilter-availability').options].map(option=>option.value),['','visual','no_visual']);
+  assert.equal(new URL(requests.find(url=>url.startsWith('/api/evidence?')),base).searchParams.get('availability'),'');
+  assert.equal(w.document.querySelector('#evExport,#evDownloadOne,#evSelection,[data-select],.ev-file-row,.ev-record-id'),null);
+  assert.doesNotMatch($('evidenceArchive').textContent,/HTML|JSON|ZIP|dosya hazır|Eksiksiz kayıt/);
+  assert.doesNotMatch($('evDialog').textContent,/HTML|JSON|ZIP|dosya eksik/);
+  const links=[...w.document.querySelectorAll('.ev-detail-files a[download]')];
+  assert.equal(links.length,2);
+  assert.ok(links.every(link=>/\/(focus|image)\?download=1$/.test(link.href)));
+  links[0].click();assert.equal(downloads.length,1);
+  assert.match(w.document.querySelector('.ev-detail-actions a').href,/kktctelsim\.com/);
+  $('evTab-packages').click();assert.equal($('evPackageRows').children.length,3);
+  $('evTab-changes').click();assert.match($('evDetailBody').textContent,/599/);assert.match($('evDetailBody').textContent,/699/);
+  $('evTab-compare').click();assert.equal(w.document.querySelectorAll('.ev-compare img').length,2);
+  assert.doesNotMatch($('evDetailBody').textContent,/#7/);
+  $('evOpenPrevious').click();await until(()=>$('evTab-full')?.getAttribute('aria-selected')==='true');
+  assert.equal($('evDownloadOne'),null);
+  assert.equal(w.document.querySelectorAll('.ev-detail-files a[download]').length,1);
+  assert.equal(requests.some(url=>url.startsWith('/api/evidence/export')),false);
+  w.close();
+});
+
+test('standard archive reports unavailable images without file diagnostics',async()=>{
+  const {w,$,submit,ready}=await screen('',{role:'standard'});
+  $('evFilter-availability').value='no_visual';submit();await ready();
+  assert.match($('evResultCount').textContent,/5 kayıt/);
+  assert.ok([...w.document.querySelectorAll('.ev-card')].every(card=>card.textContent.includes('Görsel bulunmuyor')));
+  w.document.querySelector('[data-open="14"]').click();await until(()=>!!$('evTab-packages'));
+  assert.equal($('evTab-packages').getAttribute('aria-selected'),'true');
+  assert.match(w.document.querySelector('.ev-detail-files').textContent,/Görsel bulunmuyor/);
+  assert.equal(w.document.querySelectorAll('.ev-detail-files a').length,0);
+  assert.doesNotMatch($('evDialog').textContent,/HTML|JSON|ZIP|eksik|dosya/);
+  $('evTab-compare').click();assert.match($('evDetailBody').textContent,/Bu kayıtta görsel bulunmuyor/);
+  const comparisonImage=w.document.querySelector('.ev-compare img');comparisonImage.dispatchEvent(new w.Event('error'));
+  assert.match($('evDetailBody').textContent,/Görsel yüklenemedi\. Kaydı yeniden açarak tekrar deneyebilirsiniz\./);
+  w.close();
+});
+
+test('standard archive presents benefit changes and failed requests in plain language',async()=>{
+  const {w,$,ready}=await screen('',{role:'standard'});const actualFetch=w.fetch;
+  w.fetch=async(url,options)=>{
+    const response=await actualFetch(url,options);
+    if(String(url)!=='/api/evidence/4')return response;
+    const row=await response.json();
+    row.changes=[{change_type:'field_changed',field_name:'extras_json',old_value:'["Sınırsız WhatsApp"]',new_value:'["Sınırsız WhatsApp","10 GB hediye","<img src=x onerror=alert(1)>"]'}];
+    return new Response(JSON.stringify(row),{headers:{'content-type':'application/json'}});
+  };
+  w.document.querySelector('[data-open="4"]').click();await until(()=>!!$('evTab-changes'));$('evTab-changes').click();
+  assert.match($('evDetailBody').textContent,/Sınırsız WhatsApp · 10 GB hediye/);
+  assert.doesNotMatch($('evDetailBody').textContent,/\["Sınırsız/);
+  assert.equal($('evDetailBody').querySelector('img'),null);
+  $('evClose').click();
+  w.fetch=async()=>new Response(JSON.stringify({error:'storage backend: secret technical detail'}),{status:503});
+  $('evRefresh').click();await ready();
+  assert.equal($('evMessage').textContent,'Kayıtlar alınamadı. Yeniden deneyin.');
   w.close();
 });

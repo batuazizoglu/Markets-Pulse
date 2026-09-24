@@ -220,7 +220,7 @@ test('capture detects blocks and explicit empty results without equating parse f
 });
 test('cloud scan endpoint only queues work, rejects cross-site requests and shares durable throttling',async()=>{
   const {default:express}=await import('express');const db=await dbFixture();
-  const app=express();app.use(express.json());registerCloudRoutes(app,db,HOME_INTERNET_SOURCES);
+  const app=express();app.use(express.json());app.use((req,res,next)=>{req.appUser={id:1,role:'admin'};next()});registerCloudRoutes(app,db,HOME_INTERNET_SOURCES);
   const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));const url='http://127.0.0.1:'+server.address().port+'/api/ad-visuals/scan';
   try{
     const post=headers=>fetch(url,{method:'POST',headers,body:'{}'});

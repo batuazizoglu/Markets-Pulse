@@ -31,8 +31,7 @@ export async function refreshReportRecipients(pool=dbPool){
 function recipientDisplay(count){
   return {length:count,join:()=>count+' kişi',toJSON:()=>[count+' kişi']};
 }
-export function getReportEmailStatus(){
-  const actual=dynamicRecipients.length?dynamicRecipients:uniqueEmails(parseList(process.env.REPORT_EMAIL_TO));
+function reportEmailStatus(actual,source=recipientSource){
   const count=actual.length;
   const apiConfigured=Boolean(process.env.BREVO_API_KEY&&process.env.REPORT_EMAIL_FROM&&count);
   const smtpConfigured=Boolean(process.env.SMTP_HOST&&process.env.REPORT_EMAIL_FROM&&count);
@@ -40,7 +39,7 @@ export function getReportEmailStatus(){
   const status={
     configured,api_configured:apiConfigured,smtp_configured:smtpConfigured,
     delivery_mode:apiConfigured?'brevo-api':smtpConfigured?'smtp':'none',
-    recipients:recipientDisplay(count),recipient_count:count,recipient_source:recipientSource,
+    recipients:recipientDisplay(count),recipient_count:count,recipient_source:source,
     from:process.env.REPORT_EMAIL_FROM||null,smtp_host:process.env.SMTP_HOST||null,
     daily_cron:process.env.REPORT_DAILY_CRON||'0 8 * * *',
     weekly_cron:process.env.REPORT_WEEKLY_CRON||'15 8 * * 1',
@@ -49,8 +48,11 @@ export function getReportEmailStatus(){
   Object.defineProperty(status,'recipient_emails',{value:actual,enumerable:false,writable:false});
   return status;
 }
-function transportConfig(){
-  const status=getReportEmailStatus();
+export function getReportEmailStatus(){
+  return reportEmailStatus(dynamicRecipients.length?dynamicRecipients:uniqueEmails(parseList(process.env.REPORT_EMAIL_TO)));
+}
+function transportConfig(recipients,source){
+  const status=reportEmailStatus(recipients,source);
   if(!status.configured){const e=new Error('E-posta yapılandırılmadı. Aktif Markets Pulse kullanıcısı ve REPORT_EMAIL_FROM ile BREVO_API_KEY (önerilen) veya SMTP ayarları gerekli.');e.code='EMAIL_NOT_CONFIGURED';throw e;}
   if(status.api_configured) return {status,transport:null};
   const port=Number(process.env.SMTP_PORT||587);
@@ -292,8 +294,11 @@ function emailHtml(type,ctx,attachments=[]){
     '</table></td></tr></table></body></html>';
 }
 export async function sendReportEmail(pool,type,options={}){
-  await refreshReportRecipients(pool);
-  const mail=transportConfig();
+  // Keep the recipient snapshot local throughout this delivery. Personal sends
+  // must never replace the scheduled distribution list or another user's list.
+  const personal=options.recipientEmails!==undefined;
+  const recipients=personal?uniqueEmails(options.recipientEmails):await refreshReportRecipients(pool);
+  const mail=transportConfig(recipients,personal?'manual-user':recipientSource);
   const recipientEmails=mail.status.recipient_emails||[];
   let attachments=[],ctx,totalBytes=0;
   if(type==='evidence'){

@@ -13,6 +13,7 @@ async function fixture(campaigns=[]){
   data.campaigns=campaigns;
   const dom=new JSDOM('<main class="shell"></main>',{url:'https://marketspulse.cloud/#home',runScripts:'outside-only'});
   dom.window.fetch=async url=>({ok:true,json:async()=>url.includes('social-observations')?{rows:[{id:1,brand:'Telsim',kind:'ad',source_url:'https://www.facebook.com/kktctelsim',note:'<script>alert(1)</script>',created_at:new Date().toISOString()}]}:data});
+  dom.window.MarketPulseAccess={ready:Promise.resolve({role:'admin'}),isAdmin:()=>true};
   dom.window.eval(await readFile(new URL('../public/home-internet.js',import.meta.url),'utf8'));
   await new Promise(r=>setTimeout(r,30));await dom.window.HomeInternetUI.load();
   return dom;

@@ -11,6 +11,7 @@ const directory=['Nethouse','Telsim'].map((brand,i)=>({brand,page_id:String(1234
 async function dashboard(data){
   const dom=new JSDOM('<main class="shell"></main>',{url:'https://www.marketspulse.cloud/#ads',runScripts:'outside-only'});
   dom.window.fetch=async()=>({ok:true,json:async()=>({rows:[],source_directory:directory,...data})});
+  dom.window.MarketPulseAccess={ready:Promise.resolve({role:'admin'}),isAdmin:()=>true};
   dom.window.eval(script);await dom.window.AdVisualUI.load();return dom;
 }
 

@@ -20,6 +20,8 @@ jobs:
         env:
           PUPPETEER_SKIP_DOWNLOAD: 'true'
       - run: npm test
+      - name: Full app standard and admin desktop and mobile flows
+        run: node test/role-ux-layout.mjs
       - name: Shared competitor data desktop and mobile flows
         run: node test/competitive-data-layout.mjs
       - name: Home internet desktop and mobile layouts
@@ -32,6 +34,11 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y poppler-utils
       - name: PDF reports and illustrated email layouts
         run: node test/report-layout.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: role-ux-screenshots
+          path: test-output/roles/
       - uses: actions/upload-artifact@v4
         if: always()
         with:

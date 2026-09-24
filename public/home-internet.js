@@ -1,5 +1,7 @@
 (()=>{
 const state={data:null,view:'tracking',family:'fixed',provider:'Tümü',tech:'Tümü',segment:'all',search:'',bestOnly:true,selected:new Set(),loading:false,observations:[],socialLoaded:false};
+const isAdmin=()=>Boolean(window.MarketPulseAccess?.isAdmin());
+const accessReady=()=>Promise.resolve(window.MarketPulseAccess?.ready).catch(()=>null);
 const $=id=>document.getElementById(id);
 const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 const num=(v,d=0)=>v==null?'—':Number(v).toLocaleString('tr-TR',{maximumFractionDigits:d});
@@ -13,13 +15,14 @@ const price=x=>x.effective_monthly_try!=null?money(x.effective_monthly_try):x.pr
 const statusText={tracked:'İzleniyor',partial:'Kısmi kapsam',stale:'Son doğrulanmış veri',website_unverified:'Site doğrulanamadı',unavailable:'Erişim / ayrıştırma sorunu',discovery:'Paket doğrulaması gerekli',source_needed:'Kaynak gerekli',pending:'İlk tarama bekleniyor',ok:'Sağlıklı',error:'Erişim sorunu',parse_error:'Paket okunamadı'};
 function ensure(){
   const shell=document.querySelector('main.shell');if(!shell||$('home-internet-section'))return;
+  const admin=isAdmin();
   const section=document.createElement('section');section.id='home-internet-section';section.className='section hi-section';
   section.innerHTML=[
-    '<div class="section-title hi-title"><div><h2>Ev İnterneti</h2><p>BTHK kapsamındaki ISP şirketleri, paketleri ve rekabet hareketleri</p></div><div class="hi-actions"><span id="hiUpdated" class="view-chip">Veri bekleniyor</span><button class="btn" id="hiScanBtn">Şimdi Tara</button></div></div>',
+    '<div class="section-title hi-title"><div><h2>Ev İnterneti</h2><p>Paketleri, fiyatları ve kampanyaları karşılaştırın.</p></div><div class="hi-actions"><span id="hiUpdated" class="view-chip">Veri bekleniyor</span><button class="btn" id="hiScanBtn">'+(admin?'Şimdi Tara':'Yenile')+'</button></div></div>',
     '<nav class="hi-subnav" aria-label="Ev İnterneti görünümleri"><button data-view="tracking" aria-pressed="true">Rakip Takip</button><button data-view="compare" aria-pressed="false">Ürün Karşılaştırma <span id="hiSelectedCount"></span></button><button data-view="social" aria-pressed="false">Reklam &amp; Sayfalar</button></nav>',
-    '<p id="hiMessage" role="status" aria-live="polite"></p>',
+    '<p id="hiMessage" role="status" aria-live="polite"></p><p id="hiFreshness" class="hi-help"></p>',
     '<div id="hiMarketViews">',
-      '<div id="hiTrackingTop"><article class="hi-panel"><div class="panel-head"><strong>Değişiklikler</strong><span>Son 30 gün • ilk tarama başlangıç kaydıdır</span></div><div id="hiChanges" class="hi-change-list"></div></article></div>',
+      '<div id="hiTrackingTop"><article class="hi-panel"><div class="panel-head"><strong>Değişiklikler</strong><span>Son 30 gün'+(admin?' • ilk tarama başlangıç kaydıdır':'')+'</span></div><div id="hiChanges" class="hi-change-list"></div></article></div>',
       '<div id="hiKpis" class="hi-kpis"></div>',
       '<div id="hiCompareView" hidden><article class="hi-panel"><div class="panel-head"><strong>Seçili ürünleri karşılaştır</strong><button class="btn" data-clear-selection>Seçimi temizle</button></div><div id="hiCompareResult"></div></article></div>',
       '<div class="hi-family-tabs"><button class="hi-family-tab" data-family="fixed">Sabit İnternet</button><button class="hi-family-tab" data-family="fwa">Superbox / Red Box</button></div>',
@@ -31,31 +34,32 @@ function ensure(){
         '<label class="hi-toggle"><input id="hiBestOnly" type="checkbox" checked>Her paketin en uygun dönemi</label>',
       '</div>',
       '<article class="hi-panel"><div class="panel-head"><strong>Paketler ve hizmetler</strong><span id="hiRowCount"></span></div><p class="hi-help">Karşılaştırmak için 2–4 teklif seçin. Efektif aylık tutar hediye süreyi içerir; kurulum, kablo ve modem ayrıca değerlendirilir.</p><div class="table-wrap"><table class="data-table hi-table"><thead><tr><th>Seç</th><th>Sağlayıcı / Ürün</th><th>Teknoloji</th><th>İndirme / Yükleme</th><th>Ödeme + Hediye</th><th>Toplam Paket</th><th>Efektif Aylık</th><th>Kurulum</th><th>Doğrulama</th></tr></thead><tbody id="hiProducts"><tr><td colspan="9">Yükleniyor…</td></tr></tbody></table></div></article>',
-      '<div id="hiTrackingBottom"><article class="hi-panel" id="hiCampaignPanel"><div class="panel-head"><strong>Kampanyalar</strong><span id="hiCampaignCount"></span></div><p class="hi-help">Kampanya koşulları ayrıca izlenir. Süresi dolmuş veya geçerliliği doğrulanmamış kampanyalar paket fiyatlarına uygulanmaz.</p><div id="hiCampaigns"></div></article><article class="hi-panel"><div class="panel-head"><strong>BTHK şirket kapsamı</strong><span id="hiCoverageCount"></span></div><p class="hi-help" id="hiScopeNote"></p><div class="table-wrap"><table class="data-table hi-directory"><thead><tr><th>Şirket / Markalar</th><th>Web sitesi ve paketler</th><th>Kapsam</th><th>Teklif</th></tr></thead><tbody id="hiCompanies"></tbody></table></div></article>',
-      '<article class="hi-panel"><div class="panel-head"><strong>Kaynak Sağlığı ve İzlenen Kaynaklar</strong><span id="hiSourceCount"></span></div><div id="hiSources" class="hi-source-list"></div></article></div>',
+      '<div id="hiTrackingBottom"><article class="hi-panel" id="hiCampaignPanel"><div class="panel-head"><strong>Kampanyalar</strong><span id="hiCampaignCount"></span></div><p class="hi-help">Süresi dolmuş kampanyalar paket fiyatlarına dahil edilmez.</p><div id="hiCampaigns"></div></article><article class="hi-panel" data-admin-only><div class="panel-head"><strong>BTHK şirket kapsamı</strong><span id="hiCoverageCount"></span></div><p class="hi-help" id="hiScopeNote"></p><div class="table-wrap"><table class="data-table hi-directory"><thead><tr><th>Şirket / Markalar</th><th>Web sitesi ve paketler</th><th>Kapsam</th><th>Teklif</th></tr></thead><tbody id="hiCompanies"></tbody></table></div></article>',
+      '<article class="hi-panel" data-admin-only><div class="panel-head"><strong>Kaynak Sağlığı ve İzlenen Kaynaklar</strong><span id="hiSourceCount"></span></div><div id="hiSources" class="hi-source-list"></div></article></div>',
     '</div>',
     '<div id="hiSocialView" hidden><div id="hiAdVisualMount"></div>',
-      '<article class="hi-panel hi-social-intro"><h3>Reklam ve sosyal sayfa takibi</h3><p>Resmî hesapları açın, gördüğünüz reklamı veya paylaşımı bağlantısı ve notuyla kaydedin. Gözlemler ekip içinde saklanır.</p><p><b>Reklam görselleri ayrı analiz ediliyor.</b> Ev İnterneti sonuçları aşağıda; GSM ve MNP için <a href="#ads">Reklam Analizi</a> ekranını açın. Sosyal sayfa notları manuel kaydedilir. Sayfa kimliği doğrulanmayan markalarda Ad Library bağlantısı marka araması açar; sonuçların markaya ait olduğunu kontrol edin.</p><label for="hiAdCountry">Ad Library ülke filtresi </label><select id="hiAdCountry"><option value="ALL">Tüm ülkeler</option><option value="CY">Kıbrıs (CY)</option><option value="TR">Türkiye (TR)</option></select><small>Ülke filtresi reklamın erişimini sınırlar; KKTC kapsamının tamamını garanti etmez.</small></article>',
+      '<article class="hi-panel hi-social-intro"><h3>Reklamlar ve sosyal hesaplar</h3>'+(admin?'<p>Resmî hesapları açın, gördüğünüz reklamı veya paylaşımı bağlantısı ve notuyla kaydedin. Gözlemler ekip içinde saklanır.</p><p><b>Reklam görselleri ayrı analiz ediliyor.</b> Ev İnterneti sonuçları aşağıda; GSM ve MNP için <a href="#ads">Reklam Analizi</a> ekranını açın. Sosyal sayfa notları manuel kaydedilir. Sayfa kimliği doğrulanmayan markalarda Ad Library bağlantısı marka araması açar; sonuçların markaya ait olduğunu kontrol edin.</p><label for="hiAdCountry">Ad Library ülke filtresi </label><select id="hiAdCountry"><option value="ALL">Tüm ülkeler</option><option value="CY">Kıbrıs (CY)</option><option value="TR">Türkiye (TR)</option></select><small>Ülke filtresi reklamın erişimini sınırlar; KKTC kapsamının tamamını garanti etmez.</small>':'<p>Markaların reklamlarına ve sosyal hesaplarına ulaşın. Diğer kategoriler için <a href="#ads">tüm reklamları açın</a>.</p>')+'</article>',
       '<div id="hiSocialCards" class="hi-social-grid"></div>',
-      '<article class="hi-panel hi-observation"><h3>Gözlem kaydet</h3><form id="hiObservationForm"><div class="hi-observation-grid"><label>Marka<select id="hiObservationBrand" required></select></label><label>Tür<select id="hiObservationKind"><option value="ad">Reklam</option><option value="post">Paylaşım</option><option value="page">Sayfa</option></select></label></div><label>Kaynak bağlantısı<input id="hiObservationUrl" type="url" required placeholder="https://www.facebook.com/…" maxlength="2048"></label><label>Gözlem notu<textarea id="hiObservationNote" required minlength="3" maxlength="2000" placeholder="Kampanya, fiyat, hedef kitle veya gördüğünüz değişiklik"></textarea></label><button class="btn" id="hiSaveObservation" type="submit">Gözlemi kaydet</button><span id="hiObservationStatus" role="status"></span></form></article>',
-      '<article class="hi-panel"><div class="panel-head"><strong>Gözlem geçmişi</strong><span>Manuel inceleme kayıtları</span></div><div id="hiObservations"></div></article>',
+      '<article class="hi-panel hi-observation" data-admin-only><h3>Gözlem kaydet</h3><form id="hiObservationForm"><div class="hi-observation-grid"><label>Marka<select id="hiObservationBrand" required></select></label><label>Tür<select id="hiObservationKind"><option value="ad">Reklam</option><option value="post">Paylaşım</option><option value="page">Sayfa</option></select></label></div><label>Kaynak bağlantısı<input id="hiObservationUrl" type="url" required placeholder="https://www.facebook.com/…" maxlength="2048"></label><label>Gözlem notu<textarea id="hiObservationNote" required minlength="3" maxlength="2000" placeholder="Kampanya, fiyat, hedef kitle veya gördüğünüz değişiklik"></textarea></label><button class="btn" id="hiSaveObservation" type="submit">Gözlemi kaydet</button><span id="hiObservationStatus" role="status"></span></form></article>',
+      '<article class="hi-panel" data-admin-only><div class="panel-head"><strong>Gözlem geçmişi</strong><span>Manuel inceleme kayıtları</span></div><div id="hiObservations"></div></article>',
     '</div>'
   ].join('');
+  if(!admin)section.querySelectorAll('[data-admin-only]').forEach(el=>el.remove());
   shell.append(section);
-  $('hiScanBtn').addEventListener('click',()=>load(true));
+  $('hiScanBtn').addEventListener('click',()=>load(isAdmin()));
   section.addEventListener('click',e=>{
     const b=e.target.closest('button');if(!b)return;
     if(b.dataset.view)setView(b.dataset.view);
     if(b.dataset.family)setFamily(b.dataset.family);
     if(b.hasAttribute('data-clear-selection')){state.selected.clear();renderProducts();renderCompare()}
-    if(b.dataset.observe){$('hiObservationBrand').value=b.dataset.observe;$('hiObservationUrl').value=b.dataset.url||'';$('hiObservationNote').focus()}
+    if(b.dataset.observe&&isAdmin()){$('hiObservationBrand').value=b.dataset.observe;$('hiObservationUrl').value=b.dataset.url||'';$('hiObservationNote').focus()}
   });
   section.addEventListener('change',e=>{if(e.target.dataset.pick)pick(e.target.dataset.pick,e.target.checked)});
   for(const [id,key] of [['hiProvider','provider'],['hiTech','tech'],['hiSegment','segment']])$(id).addEventListener('change',e=>{state[key]=e.target.value;renderProducts()});
   $('hiSearch').addEventListener('input',e=>{state.search=e.target.value;renderProducts()});
   $('hiBestOnly').addEventListener('change',e=>{state.bestOnly=e.target.checked;renderProducts()});
-  $('hiAdCountry').addEventListener('change',renderSocial);
-  $('hiObservationForm').addEventListener('submit',saveObservation);
+  $('hiAdCountry')?.addEventListener('change',renderSocial);
+  $('hiObservationForm')?.addEventListener('submit',saveObservation);
 }
 function bestRows(rows){
   if(!state.bestOnly)return rows;
@@ -78,7 +82,7 @@ function filtered(){
 }
 function renderProducts(){
   const rows=filtered();$('hiRowCount').textContent=rows.length+' teklif';
-  $('hiProducts').innerHTML=rows.map(x=>'<tr class="'+(x.stale?'hi-stale':'')+'"><td><input type="checkbox" data-pick="'+esc(x.product_key)+'" '+(state.selected.has(x.product_key)?'checked':'')+' aria-label="'+esc(x.provider+' '+x.name+' '+term(x)+' karşılaştır')+'"></td><td><b>'+esc(x.provider)+'</b><div>'+link(x.product_url||x.source_url,x.name)+'</div><small>'+esc(x.market_segment==='business'?'Kurumsal':'Bireysel')+'</small></td><td>'+esc(x.technology)+'</td><td>'+num(x.speed_down_mbps)+' / '+num(x.speed_up_mbps)+' Mbps</td><td>'+esc(term(x))+'</td><td>'+money(x.total_price_try)+'</td><td><b>'+esc(price(x))+'</b></td><td>'+money(x.install_fee_try)+'</td><td><span class="status '+(x.stale?'warn':'ok')+'">'+(x.stale?'Son doğrulanmış':'Doğrulandı')+'</span><small>'+dt(x.verified_at)+'</small></td></tr>').join('')||'<tr><td colspan="9" class="empty">Bu filtrede doğrulanmış teklif yok. Firma kapsamından kaynak durumunu ve resmî paket sayfasını kontrol edebilirsiniz.</td></tr>';
+  $('hiProducts').innerHTML=rows.map(x=>'<tr class="'+(x.stale?'hi-stale':'')+'"><td><input type="checkbox" data-pick="'+esc(x.product_key)+'" '+(state.selected.has(x.product_key)?'checked':'')+' aria-label="'+esc(x.provider+' '+x.name+' '+term(x)+' karşılaştır')+'"></td><td><b>'+esc(x.provider)+'</b><div>'+link(x.product_url||x.source_url,x.name)+'</div><small>'+esc(x.market_segment==='business'?'Kurumsal':'Bireysel')+'</small></td><td>'+esc(x.technology)+'</td><td>'+num(x.speed_down_mbps)+' / '+num(x.speed_up_mbps)+' Mbps</td><td>'+esc(term(x))+'</td><td>'+money(x.total_price_try)+'</td><td><b>'+esc(price(x))+'</b></td><td>'+money(x.install_fee_try)+'</td><td><span class="status '+(x.stale?'warn':'ok')+'">'+(x.stale?'Son doğrulanmış':'Doğrulandı')+'</span><small>'+dt(x.verified_at)+'</small></td></tr>').join('')||'<tr><td colspan="9" class="empty">Bu seçimde henüz yayımlanmış paket yok.</td></tr>';
 }
 function pick(key,checked){
   $('hiMessage').textContent='';
@@ -112,7 +116,7 @@ function renderCompare(){
 }
 function renderKpis(){
   const d=state.data,rows=d.products.filter(x=>(x.product_family||'fixed')===state.family),current=rows.filter(x=>!x.stale);
-  const cards=[['BTHK şirket kapsamı',d.companies?.length||0,'29 şirket • 2026 Q2 listesi'],['Paket verisi alınan şirket',d.metrics.tracked_companies||0,'Kaynak durumu aşağıda'],['Güncel teklif',current.length,current.filter(x=>x.effective_monthly_try>0).length+' fiyatlı • '+rows.filter(x=>x.stale).length+' eski kayıt'],['7 günlük değişiklik',d.metrics.changes_7d||0,'Fiyat, hız ve süre takibi']];
+  const cards=isAdmin()?[['BTHK şirket kapsamı',d.companies?.length||0,'29 şirket • 2026 Q2 listesi'],['Paket verisi alınan şirket',d.metrics.tracked_companies||0,'Kaynak durumu aşağıda'],['Güncel teklif',current.length,current.filter(x=>x.effective_monthly_try>0).length+' fiyatlı • '+rows.filter(x=>x.stale).length+' eski kayıt'],['7 günlük değişiklik',d.metrics.changes_7d||0,'Fiyat, hız ve süre takibi']]:[['Sağlayıcı',new Set(rows.map(x=>x.provider)).size,'Paketleri karşılaştırın'],['Güncel teklif',current.length,'Son doğrulanan paketler'],['Fiyatı yayımlanan',current.filter(x=>x.effective_monthly_try>0).length,'Aylık tutarı karşılaştırın'],['7 günlük değişiklik',d.metrics.changes_7d||0,'Fiyat, hız ve süre']];
   $('hiKpis').innerHTML=cards.map(([label,value,note])=>'<article class="hi-kpi"><span>'+esc(label)+'</span><strong>'+num(value)+'</strong><small>'+esc(note)+'</small></article>').join('');
 }
 function changeValue(v){
@@ -121,9 +125,10 @@ function changeValue(v){
 function renderChanges(){
   const sources=new Set((state.data.sources||[]).filter(s=>state.family==='fwa'?/superbox|redbox/.test(s.slug):!/superbox|redbox/.test(s.slug)).map(x=>x.slug));
   const changes=(state.data.changes||[]).filter(c=>sources.has(c.source_slug));
-  $('hiChanges').innerHTML=changes.length?changes.slice(0,24).map(c=>'<div class="hi-change"><div><b>'+esc(c.provider+' • '+(c.product_name||'Paket'))+'</b><small>'+esc(c.change_type==='added'?(c.product_key?.includes('|campaign|')?'Yeni kampanya':'Yeni paket'):c.change_type==='removed'?(c.product_key?.includes('|campaign|')?'Kampanya kaldırıldı':'Paket kaldırıldı'):c.field_name)+' • '+esc(changeValue(c.old_value))+' → '+esc(changeValue(c.new_value))+'</small></div><small>'+dt(c.detected_at)+'</small></div>').join(''):'<p class="hi-help">Henüz değişiklik yok. İlk başarılı tarama başlangıç kaydı oluşturur; sonraki başarılı taramalar karşılaştırılır.</p>';
+  $('hiChanges').innerHTML=changes.length?changes.slice(0,24).map(c=>'<div class="hi-change"><div><b>'+esc(c.provider+' • '+(c.product_name||'Paket'))+'</b><small>'+esc(c.change_type==='added'?(c.product_key?.includes('|campaign|')?'Yeni kampanya':'Yeni paket'):c.change_type==='removed'?(c.product_key?.includes('|campaign|')?'Kampanya kaldırıldı':'Paket kaldırıldı'):c.field_name)+' • '+esc(changeValue(c.old_value))+' → '+esc(changeValue(c.new_value))+'</small></div><small>'+dt(c.detected_at)+'</small></div>').join(''):'<p class="hi-help">'+(isAdmin()?'Henüz değişiklik yok. İlk başarılı tarama başlangıç kaydı oluşturur; sonraki başarılı taramalar karşılaştırılır.':'Son 30 günde değişiklik kaydı yok.')+'</p>';
 }
 function renderCoverage(){
+  if(!isAdmin()||!$('hiCompanies'))return;
   const companies=state.data.companies||[];$('hiCoverageCount').textContent=companies.length+' şirket';
   $('hiScopeNote').innerHTML=esc(state.data.scope?.note||'')+' '+link(state.data.scope?.report_url,'BTHK raporu')+' • '+link(state.data.scope?.directory_url,'Resmî firma rehberi');
   $('hiCompanies').innerHTML=companies.map(c=>'<tr><td><b>'+esc(c.legal_name)+'</b><small>'+esc(c.brands.join(' • '))+'</small></td><td>'+ (c.website?link(c.website,'Web sitesi'):'Site doğrulanamadı')+'<div class="hi-source-links">'+c.sources.map(s=>link(s.url,s.name)).join('<br>')+'</div></td><td><span class="status '+(['tracked','partial'].includes(c.status)?'ok':'warn')+'">'+esc(statusText[c.status]||c.status)+'</span></td><td>'+num(c.current_products)+' güncel<br><small>'+num(c.priced_products)+' fiyatlı</small></td></tr>').join('');
@@ -134,7 +139,7 @@ function renderCampaigns(){
   const rows=state.data.campaigns||[],labels={active:'Aktif',expired:'Süresi doldu',unconfirmed:'Geçerlilik teyidi gerekli'};
   $('hiCampaignPanel').hidden=state.family==='fwa';
   $('hiCampaignCount').textContent=rows.length+' kayıt • '+rows.filter(c=>c.availability==='active'&&!c.stale).length+' güncel aktif';
-  $('hiCampaigns').innerHTML=rows.map(c=>'<details class="hi-note"><summary><b>'+esc(c.provider+' • '+c.name)+'</b> <span class="status '+(c.availability==='active'&&!c.stale?'ok':'warn')+'">'+esc(c.stale?'Son doğrulanmış • '+(labels[c.availability]||''):labels[c.availability]||'Geçerlilik teyidi gerekli')+'</span></summary><p>'+esc(c.campaign_text)+'</p><small>'+(c.expires_at?'Bitiş: '+esc(c.expires_at)+' • ':'')+'Son kontrol: '+dt(c.verified_at)+'</small> '+link(c.url||c.source_url,'Kampanya kaynağı')+'</details>').join('')||'<p class="hi-help">Doğrulanmış kampanya kaydı yok. Kaynak durumunu aşağıdan kontrol edebilirsiniz.</p>';
+  $('hiCampaigns').innerHTML=rows.map(c=>'<details class="hi-note"><summary><b>'+esc(c.provider+' • '+c.name)+'</b> <span class="status '+(c.availability==='active'&&!c.stale?'ok':'warn')+'">'+esc(c.stale?'Son doğrulanmış • '+(labels[c.availability]||''):labels[c.availability]||'Geçerlilik teyidi gerekli')+'</span></summary><p>'+esc(c.campaign_text)+'</p><small>'+(c.expires_at?'Bitiş: '+esc(c.expires_at)+' • ':'')+'Son kontrol: '+dt(c.verified_at)+'</small> '+link(c.url||c.source_url,'Kampanya kaynağı')+'</details>').join('')||'<p class="hi-help">Henüz yayımlanmış kampanya yok.</p>';
 }
 function populateFilters(){
   const fam=state.data.products.filter(x=>(x.product_family||'fixed')===state.family);
@@ -143,23 +148,26 @@ function populateFilters(){
   $('hiTech').innerHTML='<option>Tümü</option>'+[...new Set(fam.map(x=>x.technology).filter(Boolean))].sort().map(x=>'<option>'+esc(x)+'</option>').join('');$('hiTech').value=state.tech;
 }
 function renderSocial(){
-  const country=$('hiAdCountry').value,rows=state.data.social||[];
+  const country=$('hiAdCountry')?.value||'CY',rows=state.data.social||[],admin=isAdmin();
   $('hiSocialCards').innerHTML=rows.map(s=>{
     const u=new URL(s.ad_library_url);u.searchParams.set('country',country);
     const last=state.observations.find(x=>x.brand===s.brand);
-    return '<article class="hi-social-card"><h3>'+esc(s.brand)+'</h3><p>'+link(u.href,s.ad_library_type==='verified_page'?'Ad Library • Doğrulanmış sayfa':'Ad Library • Marka araması')+'</p><p>'+(s.facebook?link(s.facebook,'Facebook'):'<span>Facebook doğrulanmadı</span>')+'</p><p>'+(s.instagram?link(s.instagram,'Instagram'):'<span>Instagram doğrulanmadı</span>')+'</p>'+(s.additional_social_links||[]).map(x=>'<p>'+link(x.url,'Diğer '+(x.platform==='instagram'?'Instagram':'Facebook')+' hesabı')+'</p>').join('')+(s.research_note?'<p>'+esc(s.research_note)+'</p>':'')+'<small>'+(last?'Son manuel gözlem '+dt(last.created_at):'Henüz manuel gözlem yok')+'</small><button class="btn" data-observe="'+esc(s.brand)+'" data-url="'+esc(s.facebook||u.href)+'">Gözlem ekle</button></article>';
+    return '<article class="hi-social-card"><h3>'+esc(s.brand)+'</h3><p>'+link(u.href,admin?(s.ad_library_type==='verified_page'?'Ad Library • Doğrulanmış sayfa':'Ad Library • Marka araması'):'Reklamları aç')+'</p>'+(s.facebook?'<p>'+link(s.facebook,'Facebook')+'</p>':admin?'<p>Facebook doğrulanmadı</p>':'')+(s.instagram?'<p>'+link(s.instagram,'Instagram')+'</p>':admin?'<p>Instagram doğrulanmadı</p>':'')+(s.additional_social_links||[]).map(x=>'<p>'+link(x.url,'Diğer '+(x.platform==='instagram'?'Instagram':'Facebook')+' hesabı')+'</p>').join('')+(admin?(s.research_note?'<p>'+esc(s.research_note)+'</p>':'')+'<small>'+(last?'Son manuel gözlem '+dt(last.created_at):'Henüz manuel gözlem yok')+'</small><button class="btn" data-admin-only data-observe="'+esc(s.brand)+'" data-url="'+esc(s.facebook||u.href)+'">Gözlem ekle</button>':'')+'</article>';
   }).join('');
+  if(!admin||!$('hiObservationBrand'))return;
   const prev=$('hiObservationBrand').value;$('hiObservationBrand').innerHTML=rows.map(s=>'<option>'+esc(s.brand)+'</option>').join('');if(prev)$('hiObservationBrand').value=prev;
 }
 function renderObservations(){
+  if(!isAdmin()||!$('hiObservations'))return;
   $('hiObservations').innerHTML=state.observations.length?state.observations.map(x=>'<div class="hi-note"><div><b>'+esc(x.brand)+'</b> • '+esc({ad:'Reklam',post:'Paylaşım',page:'Sayfa'}[x.kind]||x.kind)+' <small>'+dt(x.created_at)+'</small></div><p>'+esc(x.note)+'</p>'+link(x.source_url,'Kaynağı aç')+'</div>').join(''):'<p class="hi-help">Henüz kaydedilmiş gözlem yok. Reklam veya paylaşım bağlantısını açıp gördüklerinizi kaydedebilirsiniz.</p>';
 }
 async function loadSocial(){
+  await accessReady();if(!isAdmin())return;
   try{const r=await fetch('/api/home-internet/social-observations',{cache:'no-store'});if(!r.ok)throw new Error('Gözlem geçmişi alınamadı');const data=await r.json();state.observations=data.rows||[];state.socialLoaded=true;renderSocial();renderObservations()}
   catch(e){$('hiObservations').textContent=e.message}
 }
 async function saveObservation(e){
-  e.preventDefault();const button=$('hiSaveObservation');button.disabled=true;$('hiObservationStatus').textContent='Kaydediliyor…';
+  e.preventDefault();await accessReady();if(!isAdmin())return;const button=$('hiSaveObservation');button.disabled=true;$('hiObservationStatus').textContent='Kaydediliyor…';
   try{
     const r=await fetch('/api/home-internet/social-observations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({brand:$('hiObservationBrand').value,kind:$('hiObservationKind').value,source_url:$('hiObservationUrl').value,note:$('hiObservationNote').value})});
     const data=await r.json();if(!r.ok)throw new Error(data.error||'Kaydedilemedi');
@@ -171,7 +179,8 @@ function render(){
   const keys=new Set(state.data.products.map(x=>x.product_key));state.selected=new Set([...state.selected].filter(k=>keys.has(k)));
   $('home-internet-section').querySelectorAll('[data-family]').forEach(b=>{b.classList.toggle('active',b.dataset.family===state.family);b.setAttribute('aria-pressed',String(b.dataset.family===state.family))});
   renderKpis();renderChanges();populateFilters();renderProducts();renderCompare();renderCampaigns();renderCoverage();renderSocial();renderObservations();
-  const times=state.data.sources.map(x=>x.captured_at).filter(Boolean).sort();$('hiUpdated').textContent='Son tarama '+dt(times.at(-1));
+  const times=[...state.data.sources.filter(x=>isAdmin()||x.status==='ok').map(x=>x.captured_at),...state.data.products.map(x=>x.verified_at)].filter(Boolean).sort();$('hiUpdated').textContent=(isAdmin()?'Son tarama ':'Son güncelleme ')+dt(times.at(-1));
+  $('hiFreshness').textContent=!isAdmin()&&(state.data.products.some(x=>x.stale)||state.data.sources.some(x=>x.status!=='ok'))?'Bazı paketlerin güncelliği henüz doğrulanamadı. Son bilinen teklifler gösteriliyor.':'';
   setView(state.view);
 }
 function setView(view){
@@ -179,20 +188,20 @@ function setView(view){
   $('home-internet-section').querySelectorAll('[data-view]').forEach(b=>{b.classList.toggle('active',b.dataset.view===view);b.setAttribute('aria-pressed',String(b.dataset.view===view))});
   $('hiMarketViews').hidden=view==='social';$('hiSocialView').hidden=view!=='social';
   $('hiTrackingTop').hidden=view!=='tracking';$('hiTrackingBottom').hidden=view!=='tracking';$('hiCompareView').hidden=view!=='compare';
-  if(view==='social'&&state.data&&!state.socialLoaded)loadSocial();
+  if(view==='social'&&state.data&&!state.socialLoaded&&isAdmin())loadSocial();
   if(view==='social'&&window.AdVisualUI)window.AdVisualUI.mountHome();
 }
 function setFamily(family){state.family=family==='fwa'?'fwa':'fixed';state.provider='Tümü';state.tech='Tümü';render()}
 async function load(force=false){
-  ensure();if(state.loading)return;state.loading=true;const button=$('hiScanBtn');button.disabled=true;button.textContent=force?'Taranıyor…':'Yükleniyor…';$('hiMessage').textContent='';
+  await accessReady();force=force&&isAdmin();ensure();if(state.loading)return;state.loading=true;const button=$('hiScanBtn');button.disabled=true;button.textContent=force?'Taranıyor…':'Yükleniyor…';$('hiMessage').textContent='';
   try{
     const r=await fetch('/api/home-internet'+(force?'?refresh=1':''),{cache:'no-store'});
     if(!r.ok)throw new Error(r.status===401?'Oturum süresi doldu. Tekrar giriş yapın.':'Ev interneti verisi alınamadı');
     state.data=await r.json();render();
   }catch(e){$('hiMessage').textContent=e.message}
-  finally{state.loading=false;button.disabled=false;button.textContent='Şimdi Tara'}
+  finally{state.loading=false;button.disabled=false;button.textContent=isAdmin()?'Şimdi Tara':'Yenile'}
 }
 window.HomeInternetUI={ensure,load,scan:()=>load(true),setFamily,setView};
-function init(){ensure();if(location.hash==='#home')load()}
+async function init(){await accessReady();ensure();if(location.hash==='#home')load()}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
 })();

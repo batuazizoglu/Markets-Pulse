@@ -12,6 +12,7 @@ function ad(category,category_label,brand='Telsim'){
 async function dashboard(getData){
   const dom=new JSDOM('<main class="shell"><div id="hiAdVisualMount"></div></main>',{url:'https://www.marketspulse.cloud/#ads',runScripts:'outside-only'}),requests=[];
   dom.window.fetch=async url=>{requests.push(url);return {ok:true,json:async()=>getData(new URL(url,'https://www.marketspulse.cloud'))}};
+  dom.window.MarketPulseAccess={ready:Promise.resolve({role:'admin'}),isAdmin:()=>true};
   dom.window.eval(script);await dom.window.AdVisualUI.load();
   return {dom,requests,d:dom.window.document};
 }

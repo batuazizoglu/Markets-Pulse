@@ -89,7 +89,7 @@ test('a valid checkpoint clears the initial setup error and logs persisted categ
 test('manual sync imports immediately, rejects cross-site requests and bounds repeated work',async()=>{
   const {default:express}=await import('express');const db=await dbFixture();
   let calls=0,clock=100000;
-  const app=express();app.use(express.json());
+  const app=express();app.use(express.json());app.use((req,res,next)=>{req.appUser={id:1,role:'admin'};next()});
   registerAdVisualRoutes(app,db,HOME_INTERNET_SOURCES,{now:()=>clock,sync:async()=>{calls++;return importAdFeed(db,valid(fixture()),{fetcher:async()=>new Response(jpeg)})}});
   const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
   const url='http://127.0.0.1:'+server.address().port+'/api/ad-visuals/sync';
@@ -105,6 +105,7 @@ test('manual sync imports immediately, rejects cross-site requests and bounds re
 });
 test('empty dashboard retains the verified ISP directory independently of image imports',async()=>{
   const {default:express}=await import('express');const db=await dbFixture(),app=express();
+  app.use((req,res,next)=>{req.appUser={id:1,role:'admin'};next()});
   const blocked={brand:'Nethouse',status:'blocked',captured:0,note:'Ad Library erişimi HTTP 403 ile sonuçlandı.'};
   registerAdVisualRoutes(app,db,HOME_INTERNET_SOURCES,{cloudStatus:async()=>({sources:[blocked]})});
   const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
@@ -132,7 +133,8 @@ test('UI category navigation isolates GSM/MNP and home embeds only fixed-home ad
   const requests=[];
   dom.window.fetch=async(url,options)=>{requests.push({url,options});return {ok:true,json:async()=>({rows:ads,groups:{home:1,gsm:1,mnp:1},monitoring:{status:'partial',checked_at:iso(0),schedule:{enabled:true,description:'Her sabah'},coverage:[]}})}};
   try{
-    dom.window.eval(await readFile(new URL('../public/ad-visual.js',import.meta.url),'utf8'));
+    dom.window.MarketPulseAccess={ready:Promise.resolve({role:'admin'}),isAdmin:()=>true};
+  dom.window.eval(await readFile(new URL('../public/ad-visual.js',import.meta.url),'utf8'));
     await dom.window.AdVisualUI.load();const d=dom.window.document;
     assert.equal(d.querySelectorAll('#ad-visual-section .av-card').length,1);
     dom.window.AdVisualUI.setCategory('mnp');
@@ -156,7 +158,8 @@ test('registered ISPs remain selectable without images, live blocking supersedes
   const dom=new JSDOM('<main class="shell"><div id="hiAdVisualMount"></div></main>',{url:'https://www.marketspulse.cloud/#ads',runScripts:'outside-only'});
   dom.window.fetch=async()=>({ok:true,json:async()=>data});
   try{
-    dom.window.eval(await readFile(new URL('../public/ad-visual.js',import.meta.url),'utf8'));
+    dom.window.MarketPulseAccess={ready:Promise.resolve({role:'admin'}),isAdmin:()=>true};
+  dom.window.eval(await readFile(new URL('../public/ad-visual.js',import.meta.url),'utf8'));
     await dom.window.AdVisualUI.load();await dom.window.AdVisualUI.mountHome();const d=dom.window.document;
     const choices=[...d.querySelector('#ad-visual-section [data-av-brand]').options].map(x=>x.value);
     for(const brand of ['Nethouse','Kıbrıs Online','Yeni kaynak','Eski kapsam markası','Kuyruktaki kaynak','Telsim'])assert.ok(choices.includes(brand),brand+' missing');
@@ -186,7 +189,8 @@ test('source states distinguish a successful empty scan, retry and unpublished a
   const dom=new JSDOM('<main class="shell"></main>',{url:'https://www.marketspulse.cloud/#ads',runScripts:'outside-only'});
   dom.window.fetch=async()=>({ok:true,json:async()=>({rows:[],source_directory,cloud:{sources}})});
   try{
-    dom.window.eval(await readFile(new URL('../public/ad-visual.js',import.meta.url),'utf8'));await dom.window.AdVisualUI.load();const d=dom.window.document;
+    dom.window.MarketPulseAccess={ready:Promise.resolve({role:'admin'}),isAdmin:()=>true};
+  dom.window.eval(await readFile(new URL('../public/ad-visual.js',import.meta.url),'utf8'));await dom.window.AdVisualUI.load();const d=dom.window.document;
     for(const [brand,pattern] of [['Boş sonuç',/Son taramada bu filtrede reklam bulunamadı/],['Yeniden denenecek',/Sonraki deneme/],['AI sonucu beklenen',/Görseller kaydedildi; analiz sonucu henüz yayınlanmadı/],[source_directory[3].brand,/<script>bad\(\)<\/script>/]]){
       const filter=d.querySelector('[data-av-brand]');filter.value=brand;filter.dispatchEvent(new dom.window.Event('change',{bubbles:true}));
       assert.match(d.querySelector('.av-source-focus').textContent,pattern);assert.equal(d.querySelectorAll('.av-card').length,0);

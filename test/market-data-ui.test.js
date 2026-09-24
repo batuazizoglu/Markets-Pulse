@@ -6,7 +6,7 @@ import {marketPulseFromRows} from '../src/intelligence.js';
 
 const now=new Date('2026-09-24T12:00:00Z');
 const html=await readFile(new URL('../public/index.html',import.meta.url),'utf8');
-const scripts=await Promise.all(['market-state','app','market-pulse','brand-ui'].map(name=>readFile(new URL('../public/'+name+'.js',import.meta.url),'utf8')));
+const scripts=await Promise.all(['access-ui','market-state','app','market-pulse','brand-ui'].map(name=>readFile(new URL('../public/'+name+'.js',import.meta.url),'utf8')));
 function sampleRows(revision=''){
   return Array.from({length:18},(_,i)=>{
     const base={id:i*3+1,scan_id:i+1,product_id:i+1,product_name:(i===0?'Newest removed':i===1?'Recent low-score':'High-score '+i)+revision,detected_at:new Date(+now-(i+1)*86400000).toISOString(),source_name:'Official source',severity:i<2?'low':'high'};
@@ -24,7 +24,7 @@ async function fixture(getMarket=days=>snapshot(days)){
     const url=new URL(raw,'https://www.marketspulse.cloud');requests.push(url);
     if(url.pathname==='/api/market-pulse'){const data=await getMarket(Number(url.searchParams.get('days')));return {ok:true,json:async()=>data}}
     const data={
-      '/api/auth/me':{user:{id:1,first_name:'Test',last_name:'Admin',role:'standard',username:'test'}},
+      '/api/auth/me':{user:{id:1,first_name:'Test',last_name:'Admin',role:'admin',username:'test'}},
       '/api/summary':{sources:[]},'/api/packages':[],'/api/comparison':{rows:[]},'/api/value-index':[],
       '/api/benchmark':{segment_scores:[],overall_score:{}},'/api/scan':{sources:[]}
     }[url.pathname];

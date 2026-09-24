@@ -66,7 +66,8 @@ test('pending evidence has bounded pages, only stored media, and an unclassified
     assert.equal(first.rows[0].secret,undefined);assert.equal(first.rows[0].media_url,undefined);assert.equal(first.rows[0].category,undefined);assert.equal(first.rows[0].offer,undefined);
     const next=await getPendingAdVisuals(db,{cursor:first.pagination.next_cursor});assert.equal(next.rows.length,15);assert.equal(next.pagination.has_more,false);assert.equal(new Set([...first.rows,...next.rows].map(row=>row.key)).size,65);
     const brand=await getPendingAdVisuals(db,{brand:'Nethouse'});assert.equal(brand.pagination.total,55);await assert.rejects(getPendingAdVisuals(db,{limit:101}),/en fazla 100/);
-    dom.window.eval(await readFile(new URL('../public/ad-visual.js',import.meta.url),'utf8'));await settled();await dom.window.AdVisualUI.mountHome();const d=dom.window.document;
+    dom.window.MarketPulseAccess={ready:Promise.resolve({role:'admin'}),isAdmin:()=>true};
+  dom.window.eval(await readFile(new URL('../public/ad-visual.js',import.meta.url),'utf8'));await settled();await dom.window.AdVisualUI.mountHome();const d=dom.window.document;
     assert.match(d.querySelector('.av-pending>summary').textContent,/65/);assert.equal(requests.filter(url=>url.includes('/pending')).length,0);assert.equal(d.querySelector('#hiAdVisualMount .av-pending'),null);
     d.querySelector('.av-pending').open=true;await settled();assert.equal(d.querySelectorAll('.av-pending-item').length,50);assert.equal(d.querySelectorAll('.av-pending .av-card,.av-pending .av-offer').length,0);
     assert.match(d.querySelector('.av-pending-item').textContent,/AI incelemesi bekliyor.*Kategori doğrulanmadı/s);assert.match(d.querySelector('.av-pending-item').textContent,/videonun tamamı incelenmedi/);assert.equal(d.querySelector('.av-pending script'),null);
@@ -97,7 +98,8 @@ test('UI exposes the full archive with bounded load-more and server filters whil
   };
   const settled=async()=>{await dom.window.AdVisualUI.load();await new Promise(r=>setTimeout(r,0))};
   try{
-    dom.window.eval(await readFile(new URL('../public/ad-visual.js',import.meta.url),'utf8'));await settled();const d=dom.window.document;
+    dom.window.MarketPulseAccess={ready:Promise.resolve({role:'admin'}),isAdmin:()=>true};
+  dom.window.eval(await readFile(new URL('../public/ad-visual.js',import.meta.url),'utf8'));await settled();const d=dom.window.document;
     assert.equal(requests.length,2);assert.equal(d.querySelectorAll('#ad-visual-section .av-card').length,100);
     assert.match(d.querySelector('.av-pagination').textContent,/100 \/ 520/);assert.match(d.querySelector('[data-av-category="gsm"]').textContent,/30/);
     await settled();assert.equal(requests.length,2,'no unbounded background pagination');

@@ -11,7 +11,7 @@ const rows=Array.from({length:5},(_,i)=>normalizeOffer({source_slug:s.slug,provi
 const data=marketPayload([{source_slug:s.slug,status:'ok',captured_at:new Date().toISOString(),payload_json:rows,parsed_count:rows.length,source_meta_json:{parser_version:'home-isp-2'}}],[]);
 data.campaigns=[{provider:'FixNet',name:'Yıllık paketlere özel hediye kampanyası',availability:'expired',expires_at:'2025-07-30',campaign_text:'Bu kampanya sona erdi. Paket fiyatlarına uygulanmaz.',verified_at:new Date().toISOString(),url:'https://www.fixnetbroadband.com/kampanyalar'}];
 const app=express();app.use(express.static('public'));
-app.get('/preview-home',(_,res)=>res.type('html').send('<!doctype html><html lang="tr" data-theme="light"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/app.css"><link rel="stylesheet" href="/brand.css"><main class="shell"></main><script src="/home-internet.js"></script></html>'));
+app.get('/preview-home',(_,res)=>res.type('html').send('<!doctype html><html lang="tr" data-theme="light"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/app.css"><link rel="stylesheet" href="/brand.css"><main class="shell"></main><script>window.MarketPulseAccess={ready:Promise.resolve({role:"admin"}),isAdmin:()=>true};</script><script src="/home-internet.js"></script></html>'));
 app.get('/api/home-internet',(_,res)=>res.json(data));
 app.get('/api/home-internet/social-observations',(_,res)=>res.json({rows:[]}));
 const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
