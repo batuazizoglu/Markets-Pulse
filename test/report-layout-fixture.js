@@ -5,10 +5,21 @@ import {adVisualReportHtml} from '../src/ad-visual-report.js';
 
 const at='2026-09-21T06:00:00.000Z';
 const stamp=(day=20)=>`2026-09-${String(day).padStart(2,'0')}T09:30:00.000Z`;
-const changes=(count,provider='Turkcell Ev İnterneti')=>Array.from({length:count},(_,i)=>({
-  detected_at:stamp(20-i%8),provider,brand:provider,product_name:`${i+1}. Aile ve Öğrenciye Özel Sınırsız İnternet Paketi`,
-  change_type:i%4===0?'added':'field_changed',field_name:'Aylık fiyat',old_value:i%4===0?null:'999 TL / ay',new_value:'1.199 TL / ay • 12 aylık taahhüt',severity:i%3===0?'high':'medium'
-}));
+const changes=(count,provider='Turkcell Ev İnterneti')=>Array.from({length:count},(_,i)=>{
+  const name=`${i+1}. Aile ve Öğrenciye Özel Sınırsız İnternet Paketi`,fwa=provider==='Superbox / Red Box';
+  // Real added/removed events store full product snapshots, not a price string.
+  // Raw parser text and metadata previously made a single row span entire pages.
+  const snapshot=JSON.stringify({name,provider,brand:fwa?'Superbox':provider,source_slug:'fixture-source',
+    source_url:'https://example.com/paketler',product_url:'https://example.com/paketler/aile',product_key:'fixture-source|aile|12',
+    technology:fwa?'5G FWA':'Fiber',speed_down_mbps:fwa?null:100,speed_up_mbps:fwa?null:20,data_limit_gb:fwa?500:null,unlimited:!fwa,
+    duration_months:12,bonus_months:2,contract_months:12,price_monthly_try:1199,total_price_try:14388,effective_monthly_try:1027.71,install_fee_try:0,
+    features:['Yeni abonelere özel','Ücretsiz kurulum'],campaign_text:'12 ay taahhüt ve yeni abonelik koşulu geçerlidir. Kapsama kontrolü gereklidir.',
+    raw_text:'Paketler ve kampanyalar: Hakkımızda Hizmetler İletişim Kullanım Koşulları Aile interneti paket ayrıntıları ve altyapı seçenekleri. '.repeat(12),
+    source_meta_json:{parser_version:'fixture-parser',source_revision:2},ownership_group:'Fixture Ltd',product_hash:'a'.repeat(64),market_score:78,mbps_per_100tl:9.73});
+  const type=i%4===0?'added':i%4===1?'removed':'field_changed';
+  return {detected_at:stamp(20-i%8),provider,brand:provider,product_name:name,change_type:type,field_name:'Aylık fiyat',
+    old_value:type==='added'?null:type==='removed'?snapshot:'999 TL / ay',new_value:type==='removed'?null:type==='added'?snapshot:'1.199 TL / ay • 12 aylık taahhüt',severity:i%3===0?'high':'medium'};
+});
 const sources=count=>Array.from({length:count},(_,i)=>({
   name:`${i+1}. Kuzey Kıbrıs Uzun İsimli İnternet Sağlayıcısı Paketler ve Kampanyalar`,provider:i%2?'Örnek Rakip':'Turkcell Ev İnterneti',status:i===2?'blocked':'ok',last_status:i===2?'blocked':'ok',http_status:i===2?403:200,parsed_count:12,active_products:12,response_ms:1420
 }));
