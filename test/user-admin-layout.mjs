@@ -39,7 +39,7 @@ try{
     await page.locator('[data-user-id="2"][data-user-action="edit"]').click();await page.waitForSelector('dialog[open]');
     assert.ok(await page.evaluate(()=>document.querySelector('dialog').contains(document.activeElement)),'native dialog focuses content');
     const dialogBounds=await page.$eval('dialog',el=>({scroll:el.scrollWidth,client:el.clientWidth,left:el.getBoundingClientRect().left,right:el.getBoundingClientRect().right}));assert.ok(dialogBounds.scroll<=dialogBounds.client+1&&dialogBounds.left>=0&&dialogBounds.right<=width,'dialog overflow at '+width);
-    await page.screenshot({path:`test-output/users-edit-${width}.png`,fullPage:true});await page.keyboard.press('Escape');assert.equal(await page.$('dialog'),null);assert.equal(await page.evaluate(()=>document.activeElement?.dataset.userAction),'edit');
+    await page.screenshot({path:`test-output/users-edit-${width}.png`,fullPage:true});await page.keyboard.press('Escape');await page.waitForFunction(()=>!document.querySelector('dialog'));assert.equal(await page.$('dialog'),null);assert.equal(await page.evaluate(()=>document.activeElement?.dataset.userAction),'edit');
     await page.locator('[data-user-id="1"][data-user-action="edit"]').click();assert.ok(await page.$eval('#umEditRole',el=>el.disabled));assert.ok(await page.$eval('#umActive',el=>el.disabled));
     await page.$eval('#umFirst',el=>el.value='Batu Güncel');await page.locator('dialog [type="submit"]').click();await page.waitForFunction(()=>!document.querySelector('dialog'));
     assert.equal(await page.$eval('.app-user-mini b',el=>el.textContent),'Batu Güncel Test');assert.equal(await page.$eval('.user-chip b',el=>el.textContent),'Batu Güncel Test');
