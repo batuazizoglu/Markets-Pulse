@@ -55,7 +55,7 @@ function css(){
     .pill{display:inline-block;padding:2px 7px;border-radius:9px;background:#eaf1ff;color:#173a9e;font-size:11px;font-weight:700;margin:2px 3px 2px 0}
     .item{border-bottom:1px solid #dce5f2;padding:11px 0;break-inside:avoid}.item:last-child{border-bottom:0}
     .score{font-size:21px;font-weight:800;color:#174de0}
-    .pagebreak,.section-start{break-before:page;page-break-before:always}.section-start{margin-top:0}
+    .section-start{margin-top:24px;break-before:auto;page-break-before:auto}
     .evidence{display:block}.evidence-card{margin:0 0 16px;border:1px solid #dce5f2;border-radius:6px;overflow:hidden;break-inside:avoid}
     .evidence-card img{width:100%;height:220px;object-fit:contain;object-position:top;background:#f7f9fc;display:block}
     .evidence-card div{padding:8px 10px;color:#53627b;font-size:12px}
@@ -208,7 +208,7 @@ export function renderReportHtml(ctx){
     }
   }
   content+=ctx.ad_analysis_html_pdf??ctx.ad_analysis_html??'';
-  // Put the break on the heading itself, so an empty spacer cannot create a blank page.
+  // Let sections flow naturally; forcing a new page can isolate a trailing note or source row.
   content=content.replace(/<div class="pagebreak"><\/div><h2>/g,'<h2 class="section-start">');
   return '<!doctype html><html lang="tr"><head><meta charset="utf-8"><title>'+esc(ctx.title)+'</title><style>'+css()+'</style></head><body><div class="header"><div>'+logoSvg()+'</div><div class="meta"><b>'+esc(ctx.title)+'</b>'+esc(range)+'<br>Üretim: '+esc(localStamp(ctx.generated_at))+'</div></div><h1>'+esc(ctx.title)+'</h1><div class="sub">'+esc(subtitle)+'</div>'+content+'</body></html>';
 }
