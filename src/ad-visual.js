@@ -253,7 +253,7 @@ export function registerAdVisualRoutes(app,pool,sources,{sync=syncAdVisuals,now=
   app.get('/api/ad-visuals',async(req,res,next)=>{try{
     const data=await getAdVisuals(pool,{limit:req.query.limit,brand:req.query.brand,category:req.query.category,cursor:req.query.cursor});
     // Source identity is independent of successful capture or AI publication.
-    data.source_directory=socialDirectory(sources).map(({brand,page_id,ad_library_url,ad_library_type,facebook,instagram,additional_social_links,research_note,research_checked_at})=>({brand,page_id:page_id||null,ad_library_url,ad_library_type,country:'CY',facebook,instagram,additional_social_links,research_note,research_checked_at}));
+    data.source_directory=socialDirectory(sources).map(({brand,page_id,capture_brand,ad_library_url,ad_library_type,facebook,instagram,additional_social_links,research_note,research_checked_at})=>({brand,page_id:page_id||null,capture_brand,ad_library_url,ad_library_type,country:'CY',facebook,instagram,additional_social_links,research_note,research_checked_at}));
     if(cloudStatus){data.cloud=await cloudStatus();data.monitoring.schedule=data.cloud.schedule}
     res.json(data);
   }catch(e){if(e.status===400)return res.status(400).json({error:e.message});next(e)}});
