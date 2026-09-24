@@ -1,14 +1,14 @@
 (()=>{
 const routes={
   dashboard:{label:'Dashboard',desc:'Pazarın nabzı, kritik gelişmeler, aksiyonlar ve yönetici özeti.',ids:['market-pulse-section','dashboard-insights-section','overview']},
-  competitor:{label:'Rakip Takip',desc:'Değişiklik akışı, günlük değişim, Telsim paketleri ve kaynak sağlığı.',ids:['changes-section','daily-market-section','packages-section','historySection','source-health-section','sources-section']},
+  competitor:{label:'Rakip Takip',desc:'Değişiklik akışı, günlük değişim, Telsim paketleri ve kaynak sağlığı.',ids:['competitorViews','changes-section','daily-market-section','packages-section','historySection','source-health-section','sources-section']},
   home:{label:'Ev İnterneti',desc:'KKTC sabit internet pazarında fiyat, hız, teknoloji, TCO ve rakip hareketleri.',ids:['home-internet-section']},
   ads:{label:'Reklam Analizi',desc:'AI tarafından kategorilere ayrılan rakip reklamları, görsel teklifler ve değişimler.',ids:['ad-visual-section']},
   compare:{label:'Ürün Karşılaştırma',desc:'Telsim ve KKTCELL ürünlerini segment bazında karşılaştırın.',ids:['benchmark-section']},
   segment:{label:'Segment Analizi',desc:'Genel, Asker, Öğrenci/Genç, Turist ve Premium/Platinum pozisyonu.',ids:['benchmark-section']},
-  trends:{label:'Trendler',desc:'Rekabet pozisyonu ve rakip hareketlerinin 7/30/90 günlük seyri.',ids:['benchmark-section','changes-section']},
+  trends:{label:'Trendler',desc:'Rekabet pozisyonu ve rakip hareketlerinin 7/30/90 günlük seyri.',ids:['competitorViews','benchmark-section','changes-section']},
   evidence:{label:'Kanıt Arşivi',desc:'Telsim tarife sayfalarının tarihli kayıtlarını bulun, karşılaştırın ve indirin.',ids:['evidence-section']},
-  reports:{label:'Raporlar',desc:'Yönetici, ürün ve değişiklik verilerini dışa aktarın.',ids:['reports-section']},
+  reports:{label:'Raporlar',desc:'Raporları indirin veya kendi e-posta adresinize gönderin.',ids:['reports-section']},
   settings:{label:'Ayarlar',desc:'Kullanıcı yönetimi, tema ve tarama tercihleri.',ids:['settings-section']}
 };
 const icon={
@@ -38,7 +38,6 @@ function resolvedTheme(){if(themeMode==='light'||themeMode==='dark')return theme
 function applyTheme(){
   const theme=resolvedTheme();document.documentElement.dataset.theme=theme;
   document.querySelector('meta[name="theme-color"]')?.setAttribute('content',theme==='dark'?'#000F64':'#f5f8fc');
-  const logo=document.getElementById('marketPulseTopLogo');if(logo)logo.src=theme==='dark'?'/brand/market-pulse-logo-dark.svg':'/brand/market-pulse-logo-light.svg';
   const status=document.getElementById('themeStatus');if(status)status.textContent=themeMode==='auto'?('Otomatik • '+(theme==='dark'?'Dark':'Light')):(theme==='dark'?'Dark':'Light');
   const mini=document.getElementById('themeMini');if(mini)mini.textContent=theme==='dark'?'☾':'☀';
   document.querySelectorAll('[data-theme-choice]').forEach(b=>b.classList.toggle('active',b.dataset.themeChoice===themeMode));
@@ -50,26 +49,30 @@ function sidebar(){
   if(document.querySelector('.app-sidebar'))return;
   const aside=document.createElement('aside');aside.className='app-sidebar';
   aside.innerHTML='<div class="app-side-brand"><img src="/brand/market-pulse-logo-dark.svg" alt="Markets Pulse by Turkcell"><div class="app-side-tag">Competitive Intelligence</div></div>'+
-    '<nav class="app-nav">'+Object.entries(routes).filter(([k])=>k!=='settings'||currentUser?.role==='admin').map(([k,r])=>'<button class="app-nav-btn" data-route="'+k+'" onclick="MarketPulseUI.go(\''+k+'\')">'+icon[k]+'<span>'+r.label+'</span></button>').join('')+'</nav>'+
+    '<nav class="app-nav">'+Object.entries(routes).filter(([k])=>k!=='trends'&&(k!=='settings'||currentUser?.role==='admin')).map(([k,r])=>'<button class="app-nav-btn" data-route="'+k+'" onclick="MarketPulseUI.go(\''+k+'\')">'+icon[k]+'<span>'+r.label+'</span></button>').join('')+'</nav>'+
     '<div class="app-side-bottom"><div class="app-user-mini"><b>'+userEsc(((currentUser?.first_name||'')+' '+(currentUser?.last_name||'')).trim())+'</b><span>'+(currentUser?.role==='admin'?'Admin':'Standart')+' • '+userEsc(currentUser?.username||'')+'</span></div><button class="app-logout" onclick="MarketPulseUI.logout()">Çıkış Yap</button><div class="app-theme-status"><span class="app-theme-dot"></span><span id="themeStatus">Otomatik</span></div><div class="app-side-copy">Daha fazla veri<br>Daha güçlü kararlar</div></div>';
   document.body.prepend(aside);
 }
 function topBrand(){
   const b=document.querySelector('.brand');if(!b)return;
-  b.innerHTML='<img id="marketPulseTopLogo" src="/brand/market-pulse-logo-light.svg" alt="Markets Pulse by Turkcell">';
+  b.classList.add('page-brand');
+  const oldTitle=document.getElementById('viewTitle');if(oldTitle&&!b.contains(oldTitle))oldTitle.remove();
+  if(!b.querySelector('#viewTitle'))b.innerHTML='<div id="viewTitle" class="view-title app-page-heading"><div><h1 id="pageTitle">Dashboard</h1><p>Önemli rakip hamleleri ve pazar özeti.</p></div></div>';
   const actions=document.querySelector('.actions');
   if(actions&&!document.getElementById('themeMini'))actions.insertAdjacentHTML('afterbegin','<div class="user-chip"><b>'+userEsc(((currentUser?.first_name||'')+' '+(currentUser?.last_name||'')).trim())+'</b><span>'+(currentUser?.role==='admin'?'Admin':'Standart')+'</span></div><button id="themeMini" class="theme-mini" onclick="MarketPulseUI.cycleTheme()" title="Tema değiştir">☀</button>');
 }
 function ensureViews(){
   const shell=document.querySelector('main.shell');if(!shell)return;
-  if(!document.getElementById('viewTitle')) {
-    const nav=document.querySelector('.section-nav');
-    (nav||shell.firstElementChild)?.insertAdjacentHTML(nav?'afterend':'afterend','<div id="viewTitle" class="view-title"><div><h2>Dashboard</h2><p>Pazarın nabzı, kritik gelişmeler ve yönetici özeti.</p></div><span class="view-chip" data-admin-only>Markets Pulse • Live</span></div>');
+  if(!document.getElementById('competitorViews')){
+    const nav=document.createElement('nav');nav.id='competitorViews';nav.className='competitor-views';nav.setAttribute('aria-label','Rakip Takip görünümleri');nav.dataset.routeSection='1';
+    nav.innerHTML='<button type="button" data-competitor-view="competitor" aria-pressed="true">Değişiklikler</button><button type="button" data-competitor-view="trends" aria-pressed="false">Trendler</button>';
+    nav.addEventListener('click',event=>{const button=event.target.closest('[data-competitor-view]');if(button)go(button.dataset.competitorView)});
+    const header=shell.querySelector('.topbar');if(header)header.insertAdjacentElement('afterend',nav);else shell.prepend(nav);
   }
   if(!document.getElementById('dashboard-insights-section')) shell.insertAdjacentHTML('beforeend',`<section id="dashboard-insights-section" class="section"><div class="section-title"><div><h2>Rekabet Özeti</h2><p data-admin-only>Benchmark ve rakip hareketlerinden türetilen dört kritik sinyal</p></div></div><div id="executiveInsights" class="executive-grid"><article class="executive-card"><span>Genel Pozisyon</span><strong>—</strong><small>Hesaplanıyor</small></article><article class="executive-card"><span>En Güçlü Segment</span><strong>—</strong><small>Hesaplanıyor</small></article><article class="executive-card"><span>En Baskı Altındaki</span><strong>—</strong><small>Hesaplanıyor</small></article><article class="executive-card"><span>Öncelikli Aksiyon</span><strong>—</strong><small>Hesaplanıyor</small></article></div></section>`);
   if(!document.getElementById('reports-section')) shell.insertAdjacentHTML('beforeend',`
   <section id="reports-section" class="section">
-    <div class="section-title"><div><h2>Rapor Merkezi</h2><p>Raporları indirin veya kendi e-posta adresinize gönderin.</p></div><span id="reportEmailBadge" class="view-chip">E-posta kontrol ediliyor…</span></div>
+    <div class="section-title report-heading"><span id="reportEmailBadge" class="view-chip">E-posta kontrol ediliyor…</span></div>
     <div id="reportStatusStrip" data-admin-only class="report-status-strip"><div><b>Otomatik dağıtım</b><span>Durum yükleniyor…</span></div></div>
     <div class="report-grid report-grid-4">
       <article class="report-card"><div class="report-icon">☀</div><h3>Günlük Yönetici Özeti</h3><p>Son 24 saatin önemli rakip hamleleri, pazar durumu ve aksiyon önerileri.</p><div class="report-actions"><button class="btn primary" onclick="MarketPulseUI.reportDownload('daily')">PDF İndir</button><button class="btn" data-report-email onclick="MarketPulseUI.sendReport('daily',this)">Hesabıma Gönder</button></div></article>
@@ -106,24 +109,42 @@ function organizeContent(){
   if(mp&&insights&&mp.nextElementSibling!==insights)mp.insertAdjacentElement('afterend',insights);
 }
 function allRouteIds(){return [...new Set(Object.values(routes).flatMap(r=>r.ids))]}
-function currentRoute(){const h=location.hash.replace('#','');return h==='evidence-section'?'evidence':routes[h]?h:'dashboard'}
+function routeName(value){
+  const route=String(value||'').replace(/^#/,'');
+  return route==='competitor/trends'?'trends':route==='evidence-section'?'evidence':routes[route]?route:'dashboard';
+}
+function routeHash(route){return route==='trends'?'#competitor/trends':'#'+route}
+function currentRoute(){return routeName(location.hash)}
 function applyRoute(route=currentRoute()){
+  route=routeName(route);if(route==='settings'&&!isAdmin())route='dashboard';
+  if(location.hash==='#trends'||(location.hash==='#settings'&&!isAdmin()))history.replaceState(null,'',routeHash(route));
   organizeContent();
-  if(!routes[route])route='dashboard';if(route==='settings'&&currentUser?.role!=='admin')route='dashboard';document.body.dataset.view=route;
+  document.body.dataset.view=route;
   const ids=allRouteIds();
   ids.forEach(id=>{const el=document.getElementById(id);if(el){el.dataset.routeSection='1';el.classList.toggle('route-visible',routes[route].ids.includes(id))}});
-  document.querySelectorAll('.app-nav-btn').forEach(b=>b.classList.toggle('active',b.dataset.route===route));
-  const vt=document.getElementById('viewTitle');if(vt)vt.innerHTML='<div><h2>'+routes[route].label+'</h2><p>'+userEsc(isAdmin()?routes[route].desc:standardDescriptions[route]||routes[route].desc)+'</p></div><span class="view-chip" data-admin-only>Markets Pulse • Live</span>';
+  const parentRoute=route==='trends'?'competitor':route;
+  document.querySelectorAll('.app-nav-btn').forEach(button=>{
+    const active=button.dataset.route===parentRoute;button.classList.toggle('active',active);
+    if(active)button.setAttribute('aria-current','page');else button.removeAttribute('aria-current');
+  });
+  document.querySelectorAll('[data-competitor-view]').forEach(button=>{const active=button.dataset.competitorView===route;button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active))});
+  const vt=document.getElementById('viewTitle');if(vt)vt.innerHTML='<div><h1 id="pageTitle">'+userEsc(routes[parentRoute].label)+'</h1><p>'+userEsc(isAdmin()?routes[route].desc:standardDescriptions[route]||routes[route].desc)+'</p></div>';
+  const competitorViews=document.getElementById('competitorViews'),benchmark=document.getElementById('benchmark-section');
+  if(route==='trends'&&competitorViews&&benchmark&&competitorViews.nextElementSibling!==benchmark)competitorViews.insertAdjacentElement('afterend',benchmark);
   if(route==='segment'&&window.setBmSegment)window.setBmSegment('Genel');
   if(route==='trends'&&window.setBmSegment)window.setBmSegment('Tümü');
   if(route==='evidence'&&window.EvidenceArchive)window.EvidenceArchive.activate();
   if(route==='reports')loadReportStatus();
   if(route==='ads'&&window.AdVisualUI)window.AdVisualUI.load();
-  if(route==='settings'&&currentUser?.role==='admin')loadUsers();
+  if(route==='settings'&&isAdmin())loadUsers();
   if(route==='home'&&window.HomeInternetUI)window.HomeInternetUI.load();
   window.scrollTo({top:0,behavior:'auto'});
 }
-function go(route){if(!routes[route])route='dashboard';history.replaceState(null,'','#'+route);applyRoute(route)}
+function go(value){
+  let route=routeName(value);if(route==='settings'&&!isAdmin())route='dashboard';
+  const hash=routeHash(route);if(location.hash!==hash)history.pushState(null,'',hash);
+  applyRoute(route);
+}
 
 function renderExecutiveInsights(){
   const box=document.getElementById('executiveInsights');if(!box)return;

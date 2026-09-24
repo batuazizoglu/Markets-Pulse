@@ -18,12 +18,6 @@ html:not([data-user-role="admin"]) .mp-kpis .mp-mini small{font-size:12px}
 html:not([data-user-role="admin"]) .executive-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
 html:not([data-user-role="admin"]) #changes-section>.grid2{grid-template-columns:minmax(0,1fr)}
 html:not([data-user-role="admin"]) .ev-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
-html[data-user-role="standard"] #ad-visual-section .av-heading>div:first-child,
-html[data-user-role="standard"] #home-internet-section>.hi-title>div:first-child,
-html[data-user-role="standard"] .bm-headline>div:first-child{display:none}
-html[data-user-role="standard"] #ad-visual-section .av-heading,
-html[data-user-role="standard"] #home-internet-section>.hi-title,
-html[data-user-role="standard"] .bm-headline{justify-content:flex-end}
 .change-detail{font-size:12px;line-height:1.6;margin:4px 0}
 .change-detail summary{color:var(--blue);cursor:pointer;font-weight:650}
 .change-values{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
