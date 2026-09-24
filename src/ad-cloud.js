@@ -35,9 +35,18 @@ async function assertLease(db,owner){
   if(r.rows[0]?.lease_owner!==owner||+new Date(r.rows[0]?.lease_until)<=Date.now())throw new Error('CLOUD_LEASE_LOST');
 }
 export async function queueNewCloudSources(pool,sources,owner){
-  const verified=verifiedCloudSources(sources);
+  const directory=socialDirectory(sources),verified=verifiedCloudSources(sources);
   return transaction(pool,async db=>{
     await assertLease(db,owner);
+    // Refresh old keyword shortcuts without changing brand identities, evidence,
+    // verified page IDs, capture state or the provider's spend/creation fences.
+    for(const source of directory.filter(source=>source.ad_library_search_name&&source.ad_library_type==='brand_search')){
+      const patch={ad_library_search_name:source.ad_library_search_name,ad_library_url:source.ad_library_url,ad_library_type:source.ad_library_type};
+      await db.query(`UPDATE ad_cloud_jobs SET source_json=source_json||$2::jsonb
+        WHERE brand=$1 AND COALESCE(source_json->>'page_id','') !~ '^[0-9]{5,30}$'
+        AND (source_json->>'ad_library_url' IS DISTINCT FROM $3 OR source_json->>'ad_library_search_name' IS DISTINCT FROM $4)`,
+      [source.brand,JSON.stringify(patch),source.ad_library_url,source.ad_library_search_name]);
+    }
     const added=[];
     for(const source of verified){
       // Historical unverified jobs do not mean this numeric page has been scanned.

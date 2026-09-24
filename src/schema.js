@@ -194,6 +194,9 @@ CREATE TABLE IF NOT EXISTS app_users (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_app_users_email_lower ON app_users((lower(email)));
 CREATE UNIQUE INDEX IF NOT EXISTS idx_app_users_username_lower ON app_users((lower(username)));
 CREATE INDEX IF NOT EXISTS idx_app_users_active_role ON app_users(active,role);
+ALTER TABLE app_users ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE app_users ADD COLUMN IF NOT EXISTS bootstrap_email TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_app_users_bootstrap_email_lower ON app_users((lower(bootstrap_email))) WHERE bootstrap_email IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS app_sessions (
   token_hash TEXT PRIMARY KEY,

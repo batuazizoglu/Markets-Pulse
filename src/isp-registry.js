@@ -1,3 +1,5 @@
+import {adLibraryUrl} from './ad-library-url.js';
+
 // Scope: BTHK 2026 Q2, printed pp. 67–68. The overview reports 28 respondents;
 // the named ISP appendix contains 29 legal entities. Brands are not legal entities.
 export const ISP_SCOPE = {
@@ -288,12 +290,14 @@ export const ISP_SOCIALS = {
     "research_note": "Facebook sayfasının site, telefon ve e-posta bilgileri resmî siteyle eşleşiyor. Reklam sayfa kimliği henüz doğrulanmadı."
   },
   "KKTCELL": {
+    "ad_library_search_name": "Kuzey Kıbrıs Turkcell",
     "facebook": "https://www.facebook.com/TURKCELLKUZEYKIBRIS",
     "instagram": "https://www.instagram.com/kuzeykibristurkcell/",
     "research_checked_at": "2026-09-21",
     "research_note": "Sosyal hesaplar resmî siteden doğrulandı. Reklam sayfa kimliği henüz doğrulanmadı."
   },
   "Turkcell Ev İnterneti": {
+    "ad_library_search_name": "Kuzey Kıbrıs Turkcell",
     "facebook": "https://www.facebook.com/TURKCELLKUZEYKIBRIS",
     "instagram": "https://www.instagram.com/kuzeykibristurkcell/",
     "research_checked_at": "2026-09-21",
@@ -796,11 +800,8 @@ export function socialDirectory(sources) {
     for(const s of sources.filter(s=>s.provider===b.brand))for(const link of s.meta?.social_links||[]){
       if(!social[link.platform])social[link.platform]=link.url;
     }
-    const query=new URLSearchParams({active_status:'active',ad_type:'all',country:'CY',media_type:'all'});
-    if(social.page_id){query.set('search_type','page');query.set('view_all_page_id',social.page_id)}
-    else {query.set('search_type','keyword_unordered');query.set('q',b.brand)}
-    return {...b,...social,ad_library_url:'https://www.facebook.com/ads/library/?'+query,
-      ad_library_type:social.page_id?'verified_page':'brand_search',
+    return {...b,...social,ad_library_url:adLibraryUrl({...b,...social}),
+      ad_library_type:adLibraryUrl(social,{allowKeyword:false})?'verified_page':'brand_search',
       automatic_status:'connection_required',visual_analysis_url:'/api/ad-visuals'};
   }).sort((a,b)=>a.brand.localeCompare(b.brand,'tr'));
 }
