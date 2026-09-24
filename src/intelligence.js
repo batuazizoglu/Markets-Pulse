@@ -1,7 +1,9 @@
+import {competitiveWindow,loadCompetitiveChanges} from './competitive-changes.js';
+
 const INTENT_LABELS = { Acquire:'Acquire', Steal:'Steal', Defend:'Defend', Upsell:'Upsell', 'Lock-in':'Lock-in', Expand:'Expand' };
 
 function n(v){if(v==null||v==='')return null;const m=String(v).replace(',','.').match(/-?\d+(?:\.\d+)?/);return m?Number(m[0]):null}
-function textOf(move){return [move.product_name,move.identity_base,move.source_name,...(move.changes||[]).flatMap(c=>[c.field_name,c.old_value,c.new_value]),move.extras_json?JSON.stringify(move.extras_json):''].filter(Boolean).join(' ').toLocaleLowerCase('tr-TR')}
+function textOf(move){return [move.product_name,move.event_version_id?null:move.identity_base,move.source_name,...(move.changes||[]).flatMap(c=>[c.field_name,c.old_value,c.new_value]),move.extras_json?JSON.stringify(move.extras_json):''].filter(Boolean).join(' ').toLocaleLowerCase('tr-TR')}
 
 function detectSegment(move){
   const t=textOf(move);
@@ -69,26 +71,28 @@ function recommend(move,x){
   return 'Hareketi izle; en yakın KKTCELL ürünü ve etkilenen segment ile eşleştirerek hedefli aksiyon hazırla.';
 }
 
+function newestFirst(a,b){return new Date(b.detected_at)-new Date(a.detected_at)||String(b.key??b.id).localeCompare(String(a.key??a.id),'en',{numeric:true})}
 function groupRows(rows){
   const m=new Map();
-  for(const r of rows){const key=`${r.scan_id}:${r.product_id||r.id}`;if(!m.has(key))m.set(key,{key,scan_id:r.scan_id,product_id:r.product_id,detected_at:r.detected_at,source_slug:r.source_slug,source_name:r.source_name,source_url:r.source_url,product_name:r.product_name||r.new_value||r.old_value||'Paket',identity_base:r.identity_base,extras_json:r.extras_json,changes:[]});m.get(key).changes.push({id:r.id,change_type:r.change_type,field_name:r.field_name,old_value:r.old_value,new_value:r.new_value,severity:r.severity})}
-  return [...m.values()].sort((a,b)=>new Date(b.detected_at)-new Date(a.detected_at));
+  for(const r of rows){const key=`${r.scan_id}:${r.product_id??'change:'+r.id}`;if(!m.has(key))m.set(key,{key,scan_id:r.scan_id,product_id:r.product_id,detected_at:r.detected_at,source_slug:r.source_slug,source_name:r.source_name,source_url:r.source_url,product_name:r.product_name||r.new_value||r.old_value||'Paket',identity_base:r.identity_base,event_version_id:r.event_version_id,extras_json:r.extras_json,changes:[]});m.get(key).changes.push({id:r.id,change_type:r.change_type,field_name:r.field_name,old_value:r.old_value,new_value:r.new_value,severity:r.severity})}
+  return [...m.values()].sort(newestFirst);
 }
 function distribution(moves,field){const counts={};for(const m of moves)counts[m[field]]=(counts[m[field]]||0)+1;const total=moves.length||1;return Object.entries(counts).sort((a,b)=>b[1]-a[1]).map(([name,count])=>({name,count,pct:Math.round(count/total*100)}))}
 
-export async function buildMarketPulse(pool,days=30){
-  const safeDays=Math.max(1,Math.min(180,Number(days)||30));
-  const {rows}=await pool.query(`SELECT c.*,s.slug source_slug,s.name source_name,s.url source_url,p.current_name product_name,p.identity_base,v.extras_json FROM changes c JOIN sources s ON s.id=c.source_id LEFT JOIN products p ON p.id=c.product_id LEFT JOIN LATERAL (SELECT extras_json FROM product_versions pv WHERE pv.product_id=p.id ORDER BY pv.captured_at DESC,pv.id DESC LIMIT 1) v ON TRUE WHERE c.detected_at >= NOW()-($1::text||' days')::interval ORDER BY c.detected_at DESC,c.id DESC LIMIT 800`,[safeDays]);
-  return marketPulseFromRows(rows,safeDays);
+export async function buildMarketPulse(pool,days=30,now=new Date()){
+  const window=competitiveWindow(days,now);
+  const rows=await loadCompetitiveChanges(pool,{start:window.window_start,end:window.window_end});
+  return marketPulseFromRows(rows,window.window_days,window.window_end);
 }
 
 export function marketPulseFromRows(rows,days=30,now=new Date()){
-  const safeDays=Math.max(1,Math.min(180,Number(days)||30));
-  const moves=groupRows(rows).map(move=>{const segment=detectSegment(move),intent=detectIntent(move,segment),score=scoreMove(move,segment,intent);return {...move,segment,intent:INTENT_LABELS[intent]||intent,...score}});
-  const topThreats=[...moves].sort((a,b)=>b.threat-a.threat).slice(0,8),opportunities=moves.filter(m=>m.decision==='OPPORTUNITY').sort((a,b)=>b.opportunity-a.opportunity).slice(0,5),actionable=moves.filter(m=>m.decision==='THREAT');
+  const window=competitiveWindow(days,now),start=+new Date(window.window_start),end=+new Date(window.window_end);
+  const changes=rows.filter(row=>{const time=+new Date(row.detected_at);return time>=start&&time<end}).sort(newestFirst);
+  const moves=groupRows(changes).map(move=>{const segment=detectSegment(move),intent=detectIntent(move,segment),score=scoreMove(move,segment,intent);return {...move,segment,intent:INTENT_LABELS[intent]||intent,...score}});
+  const topThreats=[...moves].sort((a,b)=>b.threat-a.threat||newestFirst(a,b)).slice(0,8),opportunities=moves.filter(m=>m.decision==='OPPORTUNITY').sort((a,b)=>b.opportunity-a.opportunity||newestFirst(a,b)).slice(0,5),actionable=moves.filter(m=>m.decision==='THREAT');
   const top5=topThreats.slice(0,5),avgTop=top5.length?top5.reduce((s,m)=>s+m.threat,0)/top5.length:0,recent48=moves.filter(m=>new Date(now)-new Date(m.detected_at)>=0&&new Date(now)-new Date(m.detected_at)<=48*3600*1000).length;
   const pressure_index=Math.min(100,Math.round(avgTop*.78+Math.min(recent48,7)*3.1)),pressure_level=pressure_index>=75?'CRITICAL':pressure_index>=55?'HIGH':pressure_index>=30?'MEDIUM':'LOW';
-  return {generated_at:new Date().toISOString(),window_days:safeDays,competitor:'KKTC Telsim',methodology:'Rule-based explainable scoring v2 • 5 segment',pressure_index,pressure_level,move_count:moves.length,threat_count:actionable.length,opportunity_count:moves.filter(m=>m.decision==='OPPORTUNITY').length,no_reaction_count:moves.filter(m=>m.decision==='NO_REACTION').length,intent_mix:distribution(moves,'intent'),segment_mix:distribution(moves,'segment'),top_threats:topThreats,opportunities,moves:moves.slice(0,60),executive_summary:buildExecutiveSummary(pressure_index,pressure_level,topThreats,opportunities,moves)};
+  return {generated_at:window.window_end,...window,competitor:'KKTC Telsim',methodology:'Rule-based explainable scoring v2 • 5 segment',pressure_index,pressure_level,change_count:changes.length,changes,move_count:moves.length,threat_count:actionable.length,opportunity_count:moves.filter(m=>m.decision==='OPPORTUNITY').length,no_reaction_count:moves.filter(m=>m.decision==='NO_REACTION').length,intent_mix:distribution(moves,'intent'),segment_mix:distribution(moves,'segment'),top_threats:topThreats,opportunities,moves,executive_summary:buildExecutiveSummary(pressure_index,pressure_level,topThreats,opportunities,moves)};
 }
 
 function buildExecutiveSummary(index,level,threats,opportunities,moves){if(!moves.length)return 'İzleme penceresinde anlamlı rakip hareketi yok. Baseline veri birikmeye devam ediyor.';const top=threats[0],topIntent=distribution(moves,'intent')[0],topSegment=distribution(moves,'segment')[0],opp=opportunities[0];let s=`Rekabet baskısı ${index}/100 (${level}). Son hareketlerin ana niyeti ${topIntent?.name||'—'} ve en yoğun segment ${topSegment?.name||'—'}.`;if(top)s+=` En yüksek risk: ${top.product_name} (${top.threat}/100).`;if(opp)s+=` Aynı dönemde değerlendirilebilecek fırsat: ${opp.product_name}.`;return s}
