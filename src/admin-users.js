@@ -66,6 +66,22 @@ export async function listAdminUsers(pool,{deleted=false}={}){
   const columns=USER_COLUMNS.split(',').map(x=>'u.'+x).join(',');
   return (await pool.query(`SELECT ${columns},(SELECT count(*)::int FROM app_sessions s WHERE s.user_id=u.id AND s.expires_at>NOW()) AS active_sessions FROM app_users u WHERE u.deleted_at IS ${deleted?'NOT ':''}NULL ORDER BY u.active DESC,u.first_name,u.last_name,u.id`)).rows;
 }
+async function reclaimDeletedUsername(client,actor,req,username,targetId){
+  const owner=(await client.query('SELECT id,username,deleted_at FROM app_users WHERE lower(username)=lower($1) AND id<>$2',[username,targetId])).rows[0];
+  if(!owner)return;
+  if(!owner.deleted_at)fail(409,'USER_EXISTS','Bu kullanıcı adı başka bir kullanıcı tarafından kullanılıyor.');
+  // Called only while app_users is locked, within the target update transaction.
+  // Preserve the deleted account and its email, credentials and bootstrap claim.
+  let archived;
+  for(let attempt=0;attempt<10;attempt++){
+    const candidate='deleted.'+owner.id+'.'+crypto.randomBytes(6).toString('hex');
+    if(!(await client.query('SELECT 1 FROM app_users WHERE lower(username)=lower($1)',[candidate])).rows.length){archived=candidate;break}
+  }
+  if(!archived)throw Object.assign(new Error('Deleted username archive unavailable'),{code:'USERNAME_ARCHIVE_FAILED'});
+  await client.query('UPDATE app_users SET username=$1,updated_at=NOW() WHERE id=$2',[archived,owner.id]);
+  const revoked=await client.query('DELETE FROM app_sessions WHERE user_id=$1 RETURNING token_hash',[owner.id]);
+  await auditUserChange(client,actor,'user_deleted_username_reclaimed',req,{target:owner.id,requested_target:targetId,changes:{username:{before:owner.username,after:archived}},revoked_sessions:revoked.rows.length});
+}
 export async function mutateAdminUser(pool,req,action){
   const id=userId(req.params.id),fields=action==='update'?validateUserFields(req.body):null;
   return withAdminUserTransaction(pool,req,async(client,actor)=>{
@@ -84,6 +100,7 @@ export async function mutateAdminUser(pool,req,action){
     const changes={};
     for(const key of [...FIELDS,'deleted_at'])if(String(before[key]??'')!==String(next[key]??''))changes[key]={before:before[key],after:next[key]};
     if(action==='update'&&!Object.keys(changes).length)fail(400,'NO_CHANGE','Değişiklik yok');
+    if(action==='update'&&Object.hasOwn(changes,'username'))await reclaimDeletedUsername(client,actor,req,next.username,id);
     let user=before;
     if(action!=='revoke-sessions'){
       const keys=Object.keys(changes),values=keys.map(key=>next[key]);values.push(id);
@@ -99,7 +116,7 @@ export async function mutateAdminUser(pool,req,action){
   });
 }
 export function sendUserError(res,error){
-  if(error.code==='23505'||error.code==='USER_EXISTS')return res.status(409).json({error:'Bu e-posta veya kullanıcı adı zaten kullanılıyor (silinen kullanıcılar dahil).',code:'USER_EXISTS'});
+  if(error.code==='23505'||error.code==='USER_EXISTS')return res.status(409).json({error:'Bu e-posta veya kullanıcı adı zaten kullanılıyor. Silinen kullanıcıların e-posta adresleri saklanır.',code:'USER_EXISTS'});
   if(error.status)return res.status(error.status).json({error:error.message,code:error.code,...(error.reauth_required?{reauth_required:true}:{})});
   console.error('[admin-users]',error.code||'UNKNOWN');return res.status(500).json({error:'Kullanıcı işlemi tamamlanamadı',code:'USER_OPERATION_FAILED'});
 }

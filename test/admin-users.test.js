@@ -83,6 +83,65 @@ test('soft deletion, inactive restore and session revocation preserve identity o
   }finally{await f.close()}
 });
 
+test('explicit username update reclaims a deleted identity without restoring or changing its invalid email',async()=>{
+  const f=await fixture();try{
+    await f.add(4,'standard',{username:'former.member',email:'invalid legacy email',active:false});
+    await f.db.query("UPDATE app_users SET deleted_at='2026-09-20T00:00:00Z',bootstrap_email='original.seed@example.com' WHERE id=4");
+    const before=(await f.db.query('SELECT * FROM app_users WHERE id=4')).rows[0];
+    const response=await f.request('PATCH','/api/admin/users/3',{username:'FORMER.MEMBER'});
+    assert.equal(response.status,200);assert.equal(response.body.user.username,'former.member');assert.equal(response.body.revoked_sessions,1);
+    assert.equal(response.body.user.active,true);assert.equal(response.body.user.email,'person3@example.com');assert.equal(response.body.user.active_sessions,0);
+    const after=(await f.db.query('SELECT * FROM app_users WHERE id=4')).rows[0];
+    assert.match(after.username,/^deleted\.4\.[a-f0-9]{12}$/);assert.doesNotThrow(()=>validateUserFields({username:after.username}));
+    assert.deepEqual({...after,username:before.username,updated_at:before.updated_at},before,'deleted account retains all other data, including the invalid email and deletion timestamp');
+    assert.equal((await f.db.query('SELECT count(*)::int n FROM app_sessions WHERE user_id IN (3,4)')).rows[0].n,0);
+    const audit=(await f.db.query("SELECT user_id,event,meta_json FROM auth_audit WHERE event LIKE 'user_%' ORDER BY id")).rows;
+    assert.deepEqual(audit.map(row=>row.event),['user_deleted_username_reclaimed','user_updated']);assert.ok(audit.every(row=>Number(row.user_id)===1));
+    assert.equal(Number(audit[0].meta_json.target),4);assert.equal(audit[0].meta_json.requested_target,3);assert.equal(audit[0].meta_json.revoked_sessions,1);
+    assert.deepEqual(audit[0].meta_json.changes,{username:{before:'former.member',after:after.username}});
+    assert.deepEqual(audit[1].meta_json.changes,{username:{before:'person3',after:'former.member'}});
+    assert.equal((await f.request('GET','/api/auth/me',undefined,4)).status,401);
+    assert.equal((await f.request('POST','/api/auth/login',{identity:after.username,password},null)).status,401);
+    assert.equal((await f.request('POST','/api/auth/login',{identity:'invalid legacy email',password},null)).status,401);
+    const login=await f.request('POST','/api/auth/login',{identity:'FORMER.MEMBER',password},null);assert.equal(login.status,200);assert.equal(Number(login.body.user.id),3);
+  }finally{await f.close()}
+});
+
+test('deleted username reclamation rolls back with target email conflicts and never takes inactive or active identities',async()=>{
+  const f=await fixture();try{
+    await f.add(4,'standard',{username:'former.member',email:'invalid legacy email',active:false});
+    await f.db.query("UPDATE app_users SET deleted_at='2026-09-20T00:00:00Z' WHERE id=4");
+    const before=(await f.db.query('SELECT * FROM app_users ORDER BY id')).rows;
+    const sessions=(await f.db.query('SELECT * FROM app_sessions ORDER BY user_id')).rows;
+    const result=await f.request('PATCH','/api/admin/users/3',{username:'former.member',email:'PERSON2@EXAMPLE.COM'});
+    assert.equal(result.status,409);assert.equal(result.body.code,'USER_EXISTS');
+    assert.deepEqual((await f.db.query('SELECT * FROM app_users ORDER BY id')).rows,before);
+    // Authentication touches the actor's last_used_at outside the mutation transaction.
+    const oldSessions=sessions.filter(row=>Number(row.user_id)!==1);
+    assert.deepEqual((await f.db.query('SELECT * FROM app_sessions WHERE user_id<>1 ORDER BY user_id')).rows,oldSessions);
+    assert.equal((await f.db.query('SELECT count(*)::int n FROM auth_audit')).rows[0].n,0);
+    for(const active of [true,false]){
+      await f.db.query('UPDATE app_users SET active=$1 WHERE id=2',[active]);
+      const blocked=await f.request('PATCH','/api/admin/users/3',{username:'PERSON2'});assert.equal(blocked.status,409);assert.equal(blocked.body.code,'USER_EXISTS');
+      assert.equal((await f.db.query('SELECT username FROM app_users WHERE id=2')).rows[0].username,'person2');
+      assert.equal((await f.db.query('SELECT username FROM app_users WHERE id=3')).rows[0].username,'person3');
+    }
+    assert.equal((await f.db.query('SELECT count(*)::int n FROM auth_audit')).rows[0].n,0);
+  }finally{await f.close()}
+});
+
+test('deleted username archive checks collisions before taking a unique valid replacement',async t=>{
+  const f=await fixture();try{
+    await f.add(4,'standard',{username:'former.member',active:false});await f.db.query('UPDATE app_users SET deleted_at=NOW() WHERE id=4');
+    await f.add(5,'standard',{username:'deleted.4.aaaaaaaaaaaa'});
+    let calls=0;const random=t.mock.method(crypto,'randomBytes',size=>{assert.equal(size,6);return Buffer.from(++calls===1?'aaaaaaaaaaaa':'bbbbbbbbbbbb','hex')});
+    const result=await mutateAdminUser(f.db,req(1,3,{username:'former.member'}),'update');random.mock.restore();
+    assert.equal(result.user.username,'former.member');assert.equal(calls,2);
+    assert.equal((await f.db.query('SELECT username FROM app_users WHERE id=4')).rows[0].username,'deleted.4.bbbbbbbbbbbb');
+    assert.equal((await f.db.query('SELECT username FROM app_users WHERE id=5')).rows[0].username,'deleted.4.aaaaaaaaaaaa');
+  }finally{t.mock.restoreAll();await f.close()}
+});
+
 test('self protections and serialized fresh authorization prevent loss of the last active admin',async()=>{
   const f=await fixture();try{
     for(const [method,path,body] of [['DELETE','/api/admin/users/1'],['PATCH','/api/admin/users/1',{active:false}],['PATCH','/api/admin/users/1',{role:'standard'}]])assert.equal((await f.request(method,path,body)).status,400);
