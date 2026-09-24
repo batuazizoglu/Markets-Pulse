@@ -17,10 +17,10 @@ for(let i=0;i<66;i++){
 const requests=[],app=express();
 app.get('/preview-competitive',async(_,res)=>{
   const html=(await readFile('public/index.html','utf8')).replace(/<script src="[^"]+"><\/script>/g,'');
-  res.type('html').send(html.replace('</body>','<script>localStorage.setItem("marketPulseThemeMode","light")</script><script src="/market-state.js"></script><script src="/app.js"></script><script src="/market-pulse.js"></script><script src="/brand-ui.js"></script></body>'));
+  res.type('html').send(html.replace('</body>','<script>localStorage.setItem("marketPulseThemeMode","light")</script><script src="/access-ui.js"></script><script src="/market-state.js"></script><script src="/app.js"></script><script src="/market-pulse.js"></script><script src="/brand-ui.js"></script></body>'));
 });
 app.use('/api',(req,res,next)=>{requests.push({method:req.method,path:req.path,days:req.query.days});assert.equal(req.method,'GET','preview must never mutate');next()});
-app.get('/api/auth/me',(_,res)=>res.json({user:{id:1,first_name:'Test',last_name:'Yönetici',role:'standard',username:'test'}}));
+app.get('/api/auth/me',(_,res)=>res.json({user:{id:1,first_name:'Test',last_name:'Yönetici',role:'admin',username:'test'}}));
 app.get('/api/market-pulse',(req,res)=>res.json(marketPulseFromRows(rows,Number(req.query.days),now)));
 app.get('/api/summary',(_,res)=>res.json({active_products:64,changes_today:0,changes_24h:0,sources:[]}));
 app.get('/api/packages',(_,res)=>res.json([]));

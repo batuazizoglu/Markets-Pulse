@@ -6,6 +6,7 @@ import { initDb, pool } from './db.js';
 import { scanAll } from './scanner.js';
 import { buildMarketPulse } from './intelligence.js';
 import {competitiveWindow,loadCompetitiveChanges} from './competitive-changes.js';
+import {requireOperationalAdmin,requireAdminForRefresh,reportStatusForUser} from './operational-access.js';
 import { getKktcellCatalog, warmKktcellCatalog } from './kktcell-benchmark.js';
 import { currentBenchmark } from './live-benchmark.js';
 import { ENGINE_VERSION } from './comparable-engine.js';
@@ -100,12 +101,12 @@ app.get('/api/market-pulse', async (req,res,next)=>{try{
   res.json(await buildMarketPulse(pool,days));
 }catch(e){next(e)}});
 
-app.get('/api/home-internet', async (req,res,next)=>{try{
+app.get('/api/home-internet',requireAdminForRefresh, async (req,res,next)=>{try{
   const refresh=req.query.refresh==='1';
   res.json(await getHomeInternetMarket(pool,{refresh}));
 }catch(e){next(e)}});
 
-app.post('/api/home-internet/scan', async (req,res,next)=>{try{
+app.post('/api/home-internet/scan',requireOperationalAdmin, async (req,res,next)=>{try{
   const scan=await scanHomeInternet(pool);
   res.json({scan,market:await getHomeInternetMarket(pool)});
 }catch(e){next(e)}});
@@ -116,13 +117,13 @@ app.get('/api/home-internet/changes', async (req,res,next)=>{try{
   res.json({generated_at:new Date().toISOString(),days,rows:r.rows});
 }catch(e){next(e)}});
 
-app.get('/api/kktcell-catalog', async (req,res,next)=>{try{
+app.get('/api/kktcell-catalog',requireAdminForRefresh, async (req,res,next)=>{try{
   const force=req.query.refresh==='1';
   const catalog=await getKktcellCatalog(force);
   res.json({generated_at:new Date(catalog.at).toISOString(),sources:catalog.sources,error:catalog.error,products:catalog.rows});
 }catch(e){next(e)}});
 
-app.get('/api/benchmark', async (req,res,next)=>{try{
+app.get('/api/benchmark',requireAdminForRefresh, async (req,res,next)=>{try{
   const force=req.query.refresh==='1';
   res.json(await buildCurrentBenchmark(force,{persist:true}));
 }catch(e){next(e)}});
@@ -213,7 +214,7 @@ app.get('/api/changes', async (req,res,next)=>{try{
   res.json(await loadCompetitiveChanges(pool,{start:req.query.days?window.window_start:undefined,end:window.window_end,limit}));
 }catch(e){next(e)}});
 
-app.get('/api/scans', async (req,res,next)=>{try{
+app.get('/api/scans',requireOperationalAdmin, async (req,res,next)=>{try{
   const limit=Math.max(1,Math.min(250,parseInt(req.query.limit||'30',10)||30));
   const r=await pool.query(`SELECT sc.*,s.slug source_slug,s.name source_name,s.url source_url FROM scans sc JOIN sources s ON s.id=sc.source_id ORDER BY sc.id DESC LIMIT $1`,[limit]);
   res.json(r.rows);
@@ -226,8 +227,7 @@ app.get('/api/product/:id/history', async (req,res,next)=>{try{
 registerEvidenceRoutes(app,pool);
 
 app.get('/api/reports/status', async (req,res,next)=>{try{
-  const r=await pool.query('SELECT id,report_type,period_start,period_end,generated_at,trigger_type,delivery_status,recipients,sent_at,file_name,file_size_bytes,error,meta_json FROM report_runs ORDER BY generated_at DESC LIMIT 30');
-  res.json({email:getReportEmailStatus(),recent_runs:r.rows});
+  res.json(await reportStatusForUser(pool,req.appUser,getReportEmailStatus()));
 }catch(e){next(e)}});
 
 app.get('/api/reports/:type/download', async (req,res,next)=>{try{
@@ -250,7 +250,7 @@ app.post('/api/reports/:type/email', async (req,res,next)=>{try{
   res.status(status).json({error:e?.message||String(e),code:e?.code||null});
 }});
 
-app.post('/api/scan', async (req,res,next)=>{try{res.json(await scanAll())}catch(e){next(e)}});
+app.post('/api/scan',requireOperationalAdmin, async (req,res,next)=>{try{res.json(await scanAll())}catch(e){next(e)}});
 
 app.use('/api',(req,res)=>res.status(404).json({error:'Not found'}));
 app.use(express.static(path.join(__dirname,'..','public')));

@@ -9,6 +9,7 @@ import {AD_TAXONOMY_VERSION} from './ad-categories.js';
 import {providerConfig,providerStatus} from './ad-provider-client.js';
 import {runProviderTick,getProviderStatus} from './ad-provider-worker.js';
 import {normalizeProviderJpeg} from './ad-provider-image.js';
+import {requireOperationalAdmin} from './operational-access.js';
 
 export const CLOUD_SCHEDULE={enabled:true,description:'Bulutta her gün 06:00; Telsim ve sayfası doğrulanmış rakipler',timezone:'Asia/Famagusta',daily_at:'06:00'};
 export function localCloudTime(now=new Date()){
@@ -347,7 +348,7 @@ export function createCloudWorker(pool,sources,{capture=captureCloudAds,analyze=
   };
 }
 export function registerCloudRoutes(app,pool,sources){
-  app.post('/api/ad-visuals/analyze',async(req,res,next)=>{
+  app.post('/api/ad-visuals/analyze',requireOperationalAdmin,async(req,res,next)=>{
     if(!req.is('application/json'))return res.status(415).json({error:'JSON gerekli'});
     if(req.get('sec-fetch-site')==='cross-site')return res.status(403).json({error:'Aynı siteden gönderim gerekli'});
     try{const origin=req.get('origin');if(origin&&new URL(origin).host!==req.get('host'))return res.status(403).json({error:'Geçersiz kaynak'})}catch{return res.status(403).json({error:'Geçersiz kaynak'})}
@@ -359,7 +360,7 @@ export function registerCloudRoutes(app,pool,sources){
       res.status(202).json({...result,message:result.queued?result.queued+' kayıt AI inceleme kuyruğuna alındı. Kaydedilmiş görseller bulutta yeniden okunacak.':'Yeni kayıt eklenmedi; mevcut AI incelemeleri kuyrukta olabilir.'});
     }catch(e){next(e)}
   });
-  app.post('/api/ad-visuals/scan',async(req,res,next)=>{
+  app.post('/api/ad-visuals/scan',requireOperationalAdmin,async(req,res,next)=>{
     if(!req.is('application/json'))return res.status(415).json({error:'JSON gerekli'});
     if(req.get('sec-fetch-site')==='cross-site')return res.status(403).json({error:'Aynı siteden gönderim gerekli'});
     try{const origin=req.get('origin');if(origin&&new URL(origin).host!==req.get('host'))return res.status(403).json({error:'Geçersiz kaynak'})}catch{return res.status(403).json({error:'Geçersiz kaynak'})}

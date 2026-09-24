@@ -13,6 +13,7 @@ async function fixture(campaigns=[]){
   data.campaigns=campaigns;
   const dom=new JSDOM('<main class="shell"></main>',{url:'https://marketspulse.cloud/#home',runScripts:'outside-only'});
   dom.window.fetch=async url=>({ok:true,json:async()=>url.includes('social-observations')?{rows:[{id:1,brand:'Telsim',kind:'ad',source_url:'https://www.facebook.com/kktctelsim',note:'<script>alert(1)</script>',created_at:new Date().toISOString()}]}:data});
+  dom.window.MarketPulseAccess={ready:Promise.resolve({role:'admin'}),isAdmin:()=>true};
   dom.window.eval(await readFile(new URL('../public/home-internet.js',import.meta.url),'utf8'));
   await new Promise(r=>setTimeout(r,30));await dom.window.HomeInternetUI.load();
   return dom;
@@ -69,7 +70,7 @@ test('social observation endpoint persists validated notes and blocks cross-site
   const {SCHEMA_SQL}=await import('../src/schema.js');
   const {registerSocialWatchRoutes}=await import('../src/social-watch.js');
   const db=new PGlite();await db.exec(SCHEMA_SQL);
-  const app=express();app.use(express.json());app.use((req,res,next)=>{req.appUser={id:null};next()});
+  const app=express();app.use(express.json());app.use((req,res,next)=>{req.appUser={id:null,role:'admin'};next()});
   registerSocialWatchRoutes(app,db,HOME_INTERNET_SOURCES);
   const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
   const url='http://127.0.0.1:'+server.address().port+'/api/home-internet/social-observations';

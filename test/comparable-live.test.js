@@ -119,10 +119,11 @@ test('monthly baseline and weekly averages exclude older engine scores',async()=
   }finally{await db.close();}
 });
 
-test('live comparison renders Primary and Secondary labels, reasons and escaped names',async()=>{
+test('admin live comparison renders Primary and Secondary labels, reasons and escaped names',async()=>{
   const dom=new JSDOM('<div id="bmTabs"></div><div id="bmBox"></div>',{runScripts:'outside-only'});
   try{
     const src=await readFile(new URL('../public/benchmark.js',import.meta.url),'utf8');
+    dom.window.MarketPulseAccess={ready:Promise.resolve({role:'admin'}),isAdmin:()=>true};
     dom.window.eval(src.replace('installBenchmark();setInterval(()=>loadBenchmark(false),15*60*1000);',''));
     const data=buildBenchmark([telsim(),telsim(2,{current_name:'Super Databol <img src=x onerror=bad()>'})],[kktcell()]);
     dom.window.renderBenchmark(data);

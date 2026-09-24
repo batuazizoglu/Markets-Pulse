@@ -10,36 +10,60 @@ document.head.appendChild(bmStyle);
 function bmEsc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
 function bmNum(v,s=''){return v==null||Number.isNaN(Number(v))?'—':`${Number(v).toLocaleString('tr-TR',{maximumFractionDigits:2})}${s}`}
 function bmGap(v,s=''){if(v==null)return '<span>—</span>';const n=Number(v);return `<span class="bm-gap ${n>=0?'good':'bad'}">${n>0?'+':''}${n.toLocaleString('tr-TR',{maximumFractionDigits:1})}${s}</span>`}
-function bmPos(p){return p==='KKTCELL_ADVANTAGE'?'<span class="bm-pos ours">KKTCELL AVANTAJ</span>':p==='TELSIM_ADVANTAGE'?'<span class="bm-pos theirs">TELSIM AVANTAJ</span>':p==='PARITY'?'<span class="bm-pos parity">PARİTE</span>':'<span class="bm-pos">—</span>'}
+function bmPos(p){return p==='KKTCELL_ADVANTAGE'?'<span class="bm-pos ours">KKTCELL AVANTAJ</span>':p==='TELSIM_ADVANTAGE'?'<span class="bm-pos theirs">TELSIM AVANTAJ</span>':p==='PARITY'?`<span class="bm-pos parity">${bmIsAdmin()?'PARİTE':'DENGELİ'}</span>`:'<span class="bm-pos">—</span>'}
 function bmBadge(v){return v&&v!=='Genel'?`<span class="bm-badge">${bmEsc(v)}</span>`:''}
 function bmScoreClass(x){if(x?.score==null)return'empty';if(x.score>=60)return'strong';if(x.score>=45)return'balanced';return'weak'}
 function bmTrendKey(segment){return segment==='Tümü'?'Toplam':segment}
 function bmTrendFor(segment){return bmHistory?.trends?.[bmTrendKey(segment)]||null}
 function bmTrendDelta(segment,days=7){return bmTrendFor(segment)?.deltas?.[`${days}d`]??null}
-function bmTrendLabel(delta){if(delta==null)return'<span class="bm-score-trend flat">Yeni motor tarihçesi</span>';if(delta>0)return`<span class="bm-score-trend up">↑ +${delta} puan / 7g</span>`;if(delta<0)return`<span class="bm-score-trend down">↓ ${delta} puan / 7g</span>`;return'<span class="bm-score-trend flat">→ 0 puan / 7g</span>'}
+function bmTrendLabel(delta){if(delta==null)return`<span class="bm-score-trend flat">${bmIsAdmin()?'Yeni motor tarihçesi':'Geçmiş veri birikiyor'}</span>`;if(delta>0)return`<span class="bm-score-trend up">↑ +${delta} puan / 7g</span>`;if(delta<0)return`<span class="bm-score-trend down">↓ ${delta} puan / 7g</span>`;return'<span class="bm-score-trend flat">→ 0 puan / 7g</span>'}
 
 let bmData=null,bmHistory=null,bmSegment='Tümü',bmTrendDays=7;
+function bmIsAdmin(){return window.MarketPulseAccess?.isAdmin?.()===true}
+async function bmReady(){try{await window.MarketPulseAccess?.ready}catch{}}
+function bmScoreLevel(score){return !bmIsAdmin()&&score?.score==null?'VERİ YETERSİZ':score?.level||'VERİ YETERSİZ'}
+function bmScoreNote(score){
+  if(bmIsAdmin())return score?.rationale||'Karşılaştırılabilir veri yok.';
+  if(score?.score==null)return 'Skor için yeterli karşılaştırılabilir ürün yok.';
+  return score?.confidence==='DÜŞÜK'?'Bu skor sınırlı sayıda karşılaştırmaya dayanıyor.':'';
+}
+function bmSourceLink(product){
+  const candidate=product?.product_url||product?.source_url;if(!candidate)return '';
+  try{const url=new URL(candidate,product?.source_url||(product?.product_url?'https://www.kktcell.com':window.location.origin));if(!['http:','https:'].includes(url.protocol))return '';return `<a href="${bmEsc(url.href)}" target="_blank" rel="noopener">Resmi sayfa ↗</a>`}catch{return ''}
+}
+function bmAllowances(product){return [bmNum(product?.effective_data_gb,' GB'),product?.minutes!=null?bmNum(product.minutes,' dk'):null,product?.sms!=null?bmNum(product.sms,' SMS'):null,product?.validity_days!=null?bmNum(product.validity_days,' gün'):null].filter(Boolean).join(' • ')}
+function updateBenchmarkHeading(){
+  const admin=bmIsAdmin(),section=document.getElementById('benchmark-section');
+  const nav=document.querySelector('.section-nav a[href="#benchmark-section"]');if(nav)nav.textContent=admin?'Benchmark':'Ürün karşılaştırma';
+  if(!section)return;
+  section.querySelector('.bm-headline h2').textContent=admin?'Comparable Product Engine v2.4':'Ürün karşılaştırma';
+  section.querySelector('.bm-headline p').textContent=admin?'Canlı eşleştirme • Ürün ailesi, segment ve yönetici kararları':'Telsim ve KKTCELL paketlerini karşılaştırın';
+  const refresh=section.querySelector('.bm-refresh');refresh.textContent=admin?"KKTCELL’i Yenile":'Yenile';refresh.onclick=()=>loadBenchmark(bmIsAdmin());
+}
 
-function installBenchmark(){
+async function installBenchmark(){
+  await bmReady();
   const nav=document.querySelector('.section-nav');
   if(nav&&!nav.querySelector('a[href="#benchmark-section"]')) nav.insertAdjacentHTML('beforeend','<a href="#benchmark-section">Benchmark</a>');
-  if(document.getElementById('benchmark-section'))return;
+  if(document.getElementById('benchmark-section')){updateBenchmarkHeading();return}
   const anchor=document.getElementById('overview');
   if(!anchor){setTimeout(installBenchmark,250);return}
-  anchor.insertAdjacentHTML('beforebegin',`<section id="benchmark-section" class="section"><div class="bm-headline"><div><h2>Comparable Product Engine v2.4</h2><p>Canlı eşleştirme • Ürün ailesi, segment ve yönetici kararları</p></div><button class="bm-refresh" onclick="loadBenchmark(true)">KKTCELL'i Yenile</button></div><div id="bmTabs" class="bm-tabs"></div><div id="bmBox" class="empty">Benchmark hazırlanıyor…</div></section>`);
+  anchor.insertAdjacentHTML('beforebegin',`<section id="benchmark-section" class="section"><div class="bm-headline"><div><h2>Ürün karşılaştırma</h2><p>Telsim ve KKTCELL paketlerini karşılaştırın</p></div><button class="bm-refresh">Yenile</button></div><div id="bmTabs" class="bm-tabs"></div><div id="bmBox" class="empty">Karşılaştırma hazırlanıyor…</div></section>`);
+  updateBenchmarkHeading();
   loadBenchmark(false);
 }
 
 async function loadBenchmark(force=false){
+  await bmReady();
   const box=document.getElementById('bmBox');if(!box)return;
   try{
-    const r=await fetch('/api/benchmark'+(force?'?refresh=1':''),{cache:'no-store'});
+    const r=await fetch('/api/benchmark'+(force&&bmIsAdmin()?'?refresh=1':''),{cache:'no-store'});
     if(!r.ok)throw new Error(await r.text());
     bmData=await r.json();
     const h=await fetch('/api/benchmark-history?days=90',{cache:'no-store'});
     bmHistory=h.ok?await h.json():null;
     renderBenchmark(bmData);
-  }catch(e){console.error(e);box.innerHTML='<div class="empty">KKTCELL benchmark verisi şu anda alınamıyor.</div>'}
+  }catch(e){console.error(e);box.innerHTML='<div class="empty">Karşılaştırma bilgileri şu anda alınamıyor. Lütfen daha sonra yeniden deneyin.</div>'}
 }
 
 function setBmSegment(segment){bmSegment=segment;renderBenchmark(bmData)}
@@ -48,7 +72,7 @@ function setBmTrendDays(days){bmTrendDays=Number(days)||7;renderBenchmark(bmData
 function renderScoreCards(d){
   const scores=d.segment_scores||[];
   const overall=d.overall_score;
-  return `<div class="bm-score-title"><b>Competitive Position Score</b><span>Genel pazar: ${overall?.score==null?'—':overall.score+'/100'} • ${bmEsc(overall?.level||'VERİ YETERSİZ')} • Güven ${bmEsc(overall?.confidence||'DÜŞÜK')}</span></div><div class="bm-score-grid">${scores.map(x=>`<button class="bm-score-card ${bmScoreClass(x)} ${bmSegment===x.segment?'active':''}" onclick="setBmSegment('${bmEsc(x.segment)}')" title="${bmEsc(x.rationale||'')}"><span class="seg">${bmEsc(x.segment)}</span><span class="bm-score-main"><strong>${x.score==null?'—':x.score}</strong><small>/100</small></span><span class="bm-score-level">${bmEsc(x.level||'—')}</span><span class="bm-score-meta">${x.match_count||0} eşleşme • Güven ${bmEsc(x.confidence||'DÜŞÜK')}</span>${bmTrendLabel(bmTrendDelta(x.segment,7))}</button>`).join('')}</div>`;
+  return `<div class="bm-score-title"><b>${bmIsAdmin()?'Competitive Position Score':'Rekabet skoru'}</b><span>Genel pazar: ${overall?.score==null?'—':overall.score+'/100'} • ${bmEsc(bmScoreLevel(overall))} • Güven ${bmEsc(overall?.confidence||'DÜŞÜK')}</span></div><div class="bm-score-grid">${scores.map(x=>`<button class="bm-score-card ${bmScoreClass(x)} ${bmSegment===x.segment?'active':''}" onclick="setBmSegment('${bmEsc(x.segment)}')" title="${bmEsc(bmScoreNote(x))}"><span class="seg">${bmEsc(x.segment)}</span><span class="bm-score-main"><strong>${x.score==null?'—':x.score}</strong><small>/100</small></span><span class="bm-score-level">${bmEsc(bmScoreLevel(x))}</span><span class="bm-score-meta">${x.match_count||0} ${bmIsAdmin()?'eşleşme':'karşılaştırma'} • Güven ${bmEsc(x.confidence||'DÜŞÜK')}</span>${bmTrendLabel(bmTrendDelta(x.segment,7))}</button>`).join('')}</div>`;
 }
 
 function renderTrendChart(points){
@@ -60,7 +84,7 @@ function renderTrendChart(points){
   const line=pts.length>1?pts.map((q,i)=>`${i?'L':'M'} ${x(i).toFixed(1)} ${y(q.score).toFixed(1)}`).join(' '):'';
   const dots=pts.map((q,i)=>`<circle cx="${x(i).toFixed(1)}" cy="${y(q.score).toFixed(1)}" r="3.2"><title>${bmEsc(q.day)} • ${q.score}/100</title></circle>`).join('');
   const grid=[25,50,75].map(v=>`<line x1="${p}" y1="${y(v)}" x2="${w-p}" y2="${y(v)}"/><text x="${p+2}" y="${y(v)-3}">${v}</text>`).join('');
-  return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-label="Competitive Position Score trend"><g stroke="currentColor" opacity=".12" stroke-width="1">${grid}</g>${line?`<path d="${line}" fill="none" stroke="var(--navy)" stroke-width="2.5" vector-effect="non-scaling-stroke"/>`:''}<g fill="var(--navy)" stroke="var(--surface)" stroke-width="1.5">${dots}</g></svg>`;
+  return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-label="Rekabet skoru değişimi"><g stroke="currentColor" opacity=".12" stroke-width="1">${grid}</g>${line?`<path d="${line}" fill="none" stroke="var(--navy)" stroke-width="2.5" vector-effect="non-scaling-stroke"/>`:''}<g fill="var(--navy)" stroke="var(--surface)" stroke-width="1.5">${dots}</g></svg>`;
 }
 
 function renderTrendPanel(){
@@ -71,28 +95,42 @@ function renderTrendPanel(){
   const deltaText=delta==null?'—':`${delta>0?'+':''}${delta}`;
   const baseline=trend?.baselines?.[`${bmTrendDays}d`];
   const first=bmHistory?.first_recorded_at?new Date(bmHistory.first_recorded_at).toLocaleString('tr-TR',{dateStyle:'short',timeStyle:'short'}):'—';
-  const note=delta==null?`Baseline ${first} tarihinde başladı; ${bmTrendDays} günlük karşılaştırma için tarihçe birikiyor.`:`${baseline?.score??'—'}/100 → ${trend?.latest?.score??'—'}/100`;
-  return `<div class="bm-trend"><div class="bm-trend-head"><div><b>${bmEsc(key)} • Skor Trendi</b><div class="bm-trend-sub">Saatlik kayıt • grafikte canlı motorun günlük son skoru</div></div><div class="bm-horizons">${[7,30,90].map(d=>`<button class="bm-horizon ${bmTrendDays===d?'active':''}" onclick="setBmTrendDays(${d})">${d} Gün</button>`).join('')}</div></div><div class="bm-trend-body"><div class="bm-chart">${renderTrendChart(pts)}</div><div class="bm-trend-stat"><span>${bmTrendDays} Gün Değişim</span><strong class="${deltaClass}">${deltaText}${delta==null?'':' puan'}</strong><small>${bmEsc(note)}</small></div></div></div>`;
+  const note=delta==null?(bmIsAdmin()?`Baseline ${first} tarihinde başladı; ${bmTrendDays} günlük karşılaştırma için tarihçe birikiyor.`:`${bmTrendDays} günlük değişimi göstermek için geçmiş veri birikiyor.`):`${baseline?.score??'—'}/100 → ${trend?.latest?.score??'—'}/100`;
+  return `<div class="bm-trend"><div class="bm-trend-head"><div><b>${bmEsc(key)} • Skor Trendi</b><div class="bm-trend-sub">${bmIsAdmin()?'Saatlik kayıt • grafikte canlı motorun günlük son skoru':'Rekabet skorunun zaman içindeki değişimi'}</div></div><div class="bm-horizons">${[7,30,90].map(d=>`<button class="bm-horizon ${bmTrendDays===d?'active':''}" onclick="setBmTrendDays(${d})">${d} Gün</button>`).join('')}</div></div><div class="bm-trend-body"><div class="bm-chart">${renderTrendChart(pts)}</div><div class="bm-trend-stat"><span>${bmTrendDays} Gün Değişim</span><strong class="${deltaClass}">${deltaText}${delta==null?'':' puan'}</strong><small>${bmEsc(note)}</small></div></div></div>`;
 }
 
 function renderBenchmark(d){
   if(!d)return;
   const box=document.getElementById('bmBox'),tabs=document.getElementById('bmTabs');if(!box)return;
+  const admin=bmIsAdmin();
   const segments=['Tümü',...(d.segments||['Genel','Asker','Öğrenci / Genç','Turist','Premium / Platinum'])];
   tabs.innerHTML=segments.map(s=>`<button class="bm-tab ${bmSegment===s?'active':''}" onclick="setBmSegment('${bmEsc(s)}')">${bmEsc(s)}</button>`).join('');
   const allRows=[...(d.matches||[]),...(d.secondary_matches||[])];const rows=bmSegment==='Tümü'?allRows:allRows.filter(x=>x.segment===bmSegment);
-  const c=rows.filter(m=>m.match_status==='Primary').reduce((a,m)=>(a[m.position]=(a[m.position]||0)+1,a),{});const sources=d.kktcell_sources||[];
+  const countedRows=admin?rows.filter(m=>m.match_status==='Primary'):rows;
+  const c=countedRows.reduce((a,m)=>(a[m.position]=(a[m.position]||0)+1,a),{});const sources=d.kktcell_sources||[];
   const selectedScore=bmSegment==='Tümü'?d.overall_score:(d.segment_scores||[]).find(x=>x.segment===bmSegment);
+  const headers=admin?['Segment','Telsim','KKTCELL','Etiketler','Data T','Data K','Fiyat T','Fiyat K','Data Gap','Fiyat Gap','Değer','Pozisyon']:['Segment','Telsim paketi','KKTCELL paketi','Telsim fiyatı','KKTCELL fiyatı','Avantaj'];
+  const notice=bmScoreNote(selectedScore);
+  const diagnostics=admin?`<p class="bm-status" data-admin-only>Canlı motor ${bmEsc(d.engine_version)} • ${(d.matches||[]).length} Primary • ${(d.secondary_matches||[]).length} Secondary alternatif • ${d.matching?.effective_counts?.Review||0} inceleme bekliyor • ${d.matching?.effective_counts?.Reject||0} reddedildi</p>`:'';
+  const method=admin?`<div class="bm-method" data-admin-only><b>Skor gerekçesi:</b> ${bmEsc(selectedScore?.rationale||'Karşılaştırılabilir veri yok.')}<br><b>Metodoloji:</b> ${bmEsc(d.score_methodology||'')}<br><b>Tarihçe:</b> ${bmEsc(d.history_note||'')} Kaynak sağlığı bozuksa skor tarihçeye yazılmaz.</div>`:'';
+  const officialLinks=sources.map(s=>bmSourceLink({source_url:s.url})).filter(Boolean);
+  const sourcePanel=admin?`<aside class="bm-panel" data-admin-only><div class="bm-panel-head"><strong>KKTCELL Kaynak Sağlığı</strong><span class="bm-status">Canlı katalog</span></div><div class="bm-source-list">${sources.map(s=>`<div class="bm-source"><div class="bm-source-top"><b>${bmEsc(s.name)}</b><span class="status ${s.ok?'ok':'err'}">${s.ok?'SAĞLIKLI':'HATA'}</span></div><small>${s.parsed_count||0} ürün • ${s.core_count||0} çekirdek • ${s.response_ms||0} ms</small><small>${bmSourceLink({source_url:s.url})}</small></div>`).join('')}</div><div class="bm-actions"><b>Segment:</b> Genel / Asker / Öğrenci-Genç / Turist / Premium-Platinum. <b>MNP, Yeni Hat</b> acquisition etiketi; <b>Ercan, Dijital, Mağaza</b> kanal etiketidir. Faturalı/faturasız, uygunluk ve ürün ailesi eşleşme koşuludur. Avantaj adetleri ve skor yalnız Primary eşleşmeleri kapsar.</div></aside>`:'';
   box.className='';
-  box.innerHTML=`${renderScoreCards(d)}${renderTrendPanel()}<p class="bm-status">Canlı motor ${bmEsc(d.engine_version)} • ${(d.matches||[]).length} Primary • ${(d.secondary_matches||[]).length} Secondary alternatif • ${d.matching?.effective_counts?.Review||0} inceleme bekliyor • ${d.matching?.effective_counts?.Reject||0} reddedildi</p>
-    <div class="bm-kpis"><article class="bm-kpi good"><span>KKTCELL Avantaj</span><strong>${c.KKTCELL_ADVANTAGE||0}</strong></article><article class="bm-kpi bad"><span>Telsim Avantaj</span><strong>${c.TELSIM_ADVANTAGE||0}</strong></article><article class="bm-kpi warn"><span>Parite</span><strong>${c.PARITY||0}</strong></article><article class="bm-kpi"><span>${bmEsc(bmSegment)} Skoru</span><strong>${selectedScore?.score==null?'—':selectedScore.score+'/100'}</strong></article></div>
-    <div class="bm-grid"><article class="bm-panel"><div class="bm-panel-head"><strong>${bmEsc(bmSegment)} • Ürün Bazlı Karşılaştırma</strong><span class="bm-status">${bmEsc(selectedScore?.level||'VERİ YETERSİZ')} • Güven ${bmEsc(selectedScore?.confidence||'DÜŞÜK')} • ${rows.length} eşleşme • ${rows.filter(m=>m.match_status==='Primary').length} Primary</span></div>${renderSegmentSummary(d.segment_summary||[])}<div class="bm-table-wrap"><table class="bm-table"><thead><tr><th>Segment</th><th>Telsim</th><th>KKTCELL</th><th>Etiketler</th><th>Data T</th><th>Data K</th><th>Fiyat T</th><th>Fiyat K</th><th>Data Gap</th><th>Fiyat Gap</th><th>Değer</th><th>Pozisyon</th></tr></thead><tbody>${rows.length?rows.map(renderBenchmarkRow).join(''):'<tr><td colspan="12">Bu segmentte karşılaştırılabilir eşleşme yok.</td></tr>'}</tbody></table></div><div class="bm-mobile">${rows.length?rows.slice(0,40).map(renderBenchmarkCard).join(''):'<div class="empty">Bu segmentte eşleşme yok.</div>'}</div><div class="bm-method"><b>Skor gerekçesi:</b> ${bmEsc(selectedScore?.rationale||'Karşılaştırılabilir veri yok.')}<br><b>Metodoloji:</b> ${bmEsc(d.score_methodology||'')}<br><b>Tarihçe:</b> ${bmEsc(d.history_note||'')} Kaynak sağlığı bozuksa skor tarihçeye yazılmaz.</div></article>
-    <aside class="bm-panel"><div class="bm-panel-head"><strong>KKTCELL Kaynak Sağlığı</strong><span class="bm-status">Canlı katalog</span></div><div class="bm-source-list">${sources.map(s=>`<div class="bm-source"><div class="bm-source-top"><b>${bmEsc(s.name)}</b><span class="status ${s.ok?'ok':'err'}">${s.ok?'SAĞLIKLI':'HATA'}</span></div><small>${s.parsed_count||0} ürün • ${s.core_count||0} çekirdek • ${s.response_ms||0} ms</small><small><a href="${bmEsc(s.url)}" target="_blank" rel="noopener">Resmi sayfa ↗</a></small></div>`).join('')}</div><div class="bm-actions"><b>Segment:</b> Genel / Asker / Öğrenci-Genç / Turist / Premium-Platinum. <b>MNP, Yeni Hat</b> acquisition etiketi; <b>Ercan, Dijital, Mağaza</b> kanal etiketidir. Faturalı/faturasız, uygunluk ve ürün ailesi eşleşme koşuludur. Avantaj adetleri ve skor yalnız Primary eşleşmeleri kapsar.</div></aside></div>`;
+  box.innerHTML=`${renderScoreCards(d)}${renderTrendPanel()}${diagnostics}${!admin&&notice?`<p class="bm-status" role="status">${bmEsc(notice)}</p>`:''}
+    <div class="bm-kpis"><article class="bm-kpi good"><span>KKTCELL Avantaj</span><strong>${c.KKTCELL_ADVANTAGE||0}</strong></article><article class="bm-kpi bad"><span>Telsim Avantaj</span><strong>${c.TELSIM_ADVANTAGE||0}</strong></article><article class="bm-kpi warn"><span>${admin?'Parite':'Dengeli'}</span><strong>${c.PARITY||0}</strong></article><article class="bm-kpi"><span>${bmEsc(bmSegment)} Skoru</span><strong>${selectedScore?.score==null?'—':selectedScore.score+'/100'}</strong></article></div>
+    ${!admin&&rows.some(m=>m.match_status==='Secondary')?'<p class="bm-status">Avantaj sayıları tüm teklifleri kapsar; alternatif teklifler rekabet skoruna dahil edilmez.</p>':''}<div class="bm-grid ${admin?'':'bm-grid-simple'}"><article class="bm-panel"><div class="bm-panel-head"><strong>${bmEsc(bmSegment)} • Ürün ${admin?'Bazlı Karşılaştırma':'karşılaştırma'}</strong><span class="bm-status">${bmEsc(bmScoreLevel(selectedScore))} • Güven ${bmEsc(selectedScore?.confidence||'DÜŞÜK')} • ${rows.length} ${admin?'eşleşme':'karşılaştırma'}${admin?` • ${rows.filter(m=>m.match_status==='Primary').length} Primary`:''}</span></div>${admin?renderSegmentSummary(d.segment_summary||[]):''}<div class="bm-table-wrap"><table class="bm-table ${admin?'':'bm-table-simple'}"><thead><tr>${headers.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.length?rows.map(renderBenchmarkRow).join(''):`<tr><td colspan="${headers.length}">Bu segmentte karşılaştırılabilir ürün yok.</td></tr>`}</tbody></table></div><div class="bm-mobile">${rows.length?rows.slice(0,40).map(renderBenchmarkCard).join(''):'<div class="empty">Bu segmentte karşılaştırılabilir ürün yok.</div>'}</div>${method}${!admin&&officialLinks.length?`<div class="bm-actions"><b>Kaynaklar:</b> ${sources.map(s=>{const link=bmSourceLink({source_url:s.url});return link?`${bmEsc(s.name)}: ${link}`:''}).filter(Boolean).join(' • ')}</div>`:''}</article>${sourcePanel}</div>`;
 }
 
 function renderSegmentSummary(rows){return `<div class="bm-seg-summary">${rows.map(x=>`<div class="bm-seg-mini"><span>${bmEsc(x.segment)}</span><b>${x.score==null?'—':x.score+'/100'}</b><small class="muted">${x.total||0} eşleşme</small></div>`).join('')}</div>`}
-function renderBenchmarkRow(m){const vg=m.gaps?.value_gb_per_100tl;return `<tr><td><b>${bmEsc(m.segment)}</b><div class="bm-badges">${bmBadge(m.match_status)}${bmBadge(m.match_origin==='admin'?'Yönetici kararı':'Otomatik')}</div><small title="${bmEsc((m.reasons||[]).join(' • '))}">Benzerlik ${bmNum(m.match_score)}/100</small></td><td><b>${bmEsc(m.telsim.name)}</b></td><td><b>${bmEsc(m.kktcell.name)}</b></td><td><div class="bm-badges">${bmBadge(m.acquisition)}${bmBadge(m.channel)}${bmBadge(m.kktcell?.acquisition)}${bmBadge(m.kktcell?.channel)}</div></td><td>${bmNum(m.telsim.effective_data_gb,' GB')}</td><td>${bmNum(m.kktcell.effective_data_gb,' GB')}</td><td>${bmNum(m.telsim.price_try,' TL')}</td><td>${bmNum(m.kktcell.price_try,' TL')}</td><td>${bmGap(m.gaps?.data_gb,' GB')}</td><td>${bmGap(m.gaps?.price_try,' TL')}</td><td>${bmGap(vg,' GB/100TL')}</td><td>${bmPos(m.position)}</td></tr>`}
-function renderBenchmarkCard(m){return `<article class="bm-card"><div class="bm-card-top"><div><h3>${bmEsc(m.segment)}</h3><div class="bm-badges">${bmBadge(m.acquisition)}${bmBadge(m.channel)}</div><div class="muted">${bmEsc(m.match_status)} • ${bmEsc(m.match_origin==='admin'?'Yönetici kararı':'Otomatik')} • ${bmNum(m.match_score)}/100</div></div>${bmPos(m.position)}</div><div class="bm-vs"><div class="bm-side"><span>Telsim</span><b>${bmEsc(m.telsim.name)}</b><small>${bmNum(m.telsim.effective_data_gb,' GB')} • ${bmNum(m.telsim.price_try,' TL')}</small></div><div class="bm-versus">VS</div><div class="bm-side"><span>KKTCELL</span><b>${bmEsc(m.kktcell.name)}</b><small>${bmNum(m.kktcell.effective_data_gb,' GB')} • ${bmNum(m.kktcell.price_try,' TL')}</small><div class="bm-badges">${bmBadge(m.kktcell?.acquisition)}${bmBadge(m.kktcell?.channel)}</div></div></div><div class="bm-rec"><b>Öneri:</b> ${bmEsc(m.recommendation)}</div></article>`}
+function renderBenchmarkRow(m){
+  if(!bmIsAdmin())return `<tr><td><b>${bmEsc(m.segment)}</b>${m.match_status==='Secondary'?'<div class="bm-badges">'+bmBadge('Alternatif teklif')+'</div>':''}</td><td><b>${bmEsc(m.telsim.name)}</b><br><small>${bmAllowances(m.telsim)}</small><div class="bm-badges">${bmBadge(m.telsim.acquisition)}${bmBadge(m.telsim.channel)}</div><small>${bmSourceLink(m.telsim)}</small></td><td><b>${bmEsc(m.kktcell.name)}</b><br><small>${bmAllowances(m.kktcell)}</small><div class="bm-badges">${bmBadge(m.kktcell.acquisition)}${bmBadge(m.kktcell.channel)}</div><small>${bmSourceLink(m.kktcell)}</small></td><td>${bmNum(m.telsim.price_try,' TL')}</td><td>${bmNum(m.kktcell.price_try,' TL')}</td><td>${bmPos(m.position)}</td></tr>`;
+  const vg=m.gaps?.value_gb_per_100tl;return `<tr><td><b>${bmEsc(m.segment)}</b><div class="bm-badges">${bmBadge(m.match_status)}${bmBadge(m.match_origin==='admin'?'Yönetici kararı':'Otomatik')}</div><small title="${bmEsc((m.reasons||[]).join(' • '))}">Benzerlik ${bmNum(m.match_score)}/100</small></td><td><b>${bmEsc(m.telsim.name)}</b></td><td><b>${bmEsc(m.kktcell.name)}</b></td><td><div class="bm-badges">${bmBadge(m.acquisition)}${bmBadge(m.channel)}${bmBadge(m.kktcell?.acquisition)}${bmBadge(m.kktcell?.channel)}</div></td><td>${bmNum(m.telsim.effective_data_gb,' GB')}</td><td>${bmNum(m.kktcell.effective_data_gb,' GB')}</td><td>${bmNum(m.telsim.price_try,' TL')}</td><td>${bmNum(m.kktcell.price_try,' TL')}</td><td>${bmGap(m.gaps?.data_gb,' GB')}</td><td>${bmGap(m.gaps?.price_try,' TL')}</td><td>${bmGap(vg,' GB/100TL')}</td><td>${bmPos(m.position)}</td></tr>`
+}
+function renderBenchmarkCard(m){
+  const admin=bmIsAdmin();
+  return `<article class="bm-card"><div class="bm-card-top"><div><h3>${bmEsc(m.segment)}</h3><div class="bm-badges">${!admin&&m.match_status==='Secondary'?bmBadge('Alternatif teklif'):''}${bmBadge(m.acquisition)}${bmBadge(m.channel)}</div>${admin?`<div class="muted">${bmEsc(m.match_status)} • ${bmEsc(m.match_origin==='admin'?'Yönetici kararı':'Otomatik')} • ${bmNum(m.match_score)}/100</div>`:''}</div>${bmPos(m.position)}</div><div class="bm-vs"><div class="bm-side"><span>Telsim</span><b>${bmEsc(m.telsim.name)}</b><small>${admin?bmNum(m.telsim.effective_data_gb,' GB'):bmAllowances(m.telsim)} • ${bmNum(m.telsim.price_try,' TL')}</small>${admin?'':`<br><small>${bmSourceLink(m.telsim)}</small>`}</div><div class="bm-versus">VS</div><div class="bm-side"><span>KKTCELL</span><b>${bmEsc(m.kktcell.name)}</b><small>${admin?bmNum(m.kktcell.effective_data_gb,' GB'):bmAllowances(m.kktcell)} • ${bmNum(m.kktcell.price_try,' TL')}</small><div class="bm-badges">${bmBadge(m.kktcell?.acquisition)}${bmBadge(m.kktcell?.channel)}</div>${admin?'':`<small>${bmSourceLink(m.kktcell)}</small>`}</div></div>${admin?`<div class="bm-rec"><b>Öneri:</b> ${bmEsc(m.recommendation)}</div>`:''}</article>`
+}
 
+window.MarketPulseAccess?.subscribe?.(()=>{updateBenchmarkHeading();if(bmData)renderBenchmark(bmData)});
 window.loadBenchmark=loadBenchmark;window.setBmSegment=setBmSegment;window.setBmTrendDays=setBmTrendDays;
 installBenchmark();setInterval(()=>loadBenchmark(false),15*60*1000);

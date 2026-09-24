@@ -15,6 +15,7 @@ const pending=(key,brand='KKTCELL')=>({key,brand,ad_id:key,variant_id:'1',images
 async function dashboard(getData){
   const dom=new JSDOM('<main class="shell"><div id="hiAdVisualMount"></div></main>',{url:'https://www.marketspulse.cloud/#ads',runScripts:'outside-only'}),requests=[];
   dom.window.fetch=async raw=>{const url=new URL(raw,'https://www.marketspulse.cloud');requests.push(url);return {ok:true,json:async()=>getData(url)}};
+  dom.window.MarketPulseAccess={ready:Promise.resolve({role:'admin'}),isAdmin:()=>true};
   dom.window.eval(script);await dom.window.AdVisualUI.load();
   const settled=async()=>{await new Promise(r=>setTimeout(r,0));await dom.window.AdVisualUI.load()};
   const select=async brand=>{const input=dom.window.document.querySelector('#ad-visual-section [data-av-brand]');input.value=brand;input.dispatchEvent(new dom.window.Event('change',{bubbles:true}));await settled()};

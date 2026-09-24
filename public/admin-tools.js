@@ -1,6 +1,7 @@
 (()=>{
 let user=null,inserted=false;
 async function getUser(){
+  if(window.MarketPulseAccess)return window.MarketPulseAccess.ready;
   try{const r=await fetch('/api/auth/me',{cache:'no-store'});if(!r.ok)return null;const d=await r.json();return d.user||null}catch{return null}
 }
 function cardHtml(){return `<article id="matchReviewSettingsCard" class="setting-card">

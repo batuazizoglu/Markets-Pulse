@@ -1,5 +1,6 @@
 import {createHash} from 'node:crypto';
 import {socialDirectory} from './isp-registry.js';
+import {requireOperationalAdmin,standardAdVisuals,publishedAdRow} from './operational-access.js';
 import {AD_CATEGORIES,AD_TAXONOMY_VERSION,AD_CAPTION_MAX_LENGTH,isDynamicCategory,resolveCategoryProposal} from './ad-categories.js';
 
 export const AD_FEED_ROOT='https://raw.githubusercontent.com/batuazizoglu/Markets-Pulse/ad-visual-data/';
@@ -238,7 +239,7 @@ export async function getAdReport(pool,start,end,{category}={}){
 }
 export function registerAdVisualRoutes(app,pool,sources,{sync=syncAdVisuals,now=Date.now,cloudStatus=null}={}){
   let lastManualSync=-Infinity;
-  app.post('/api/ad-visuals/sync',async(req,res,next)=>{
+  app.post('/api/ad-visuals/sync',requireOperationalAdmin,async(req,res,next)=>{
     if(cloudStatus)return res.status(409).json({error:'Tarama artık bulutta çalışıyor. Bulutta tara düğmesini kullanın.'});
     // Existing authentication applies; never accept a caller-controlled source URL.
     if(!req.is('application/json'))return res.status(415).json({error:'JSON gerekli'});
@@ -255,14 +256,16 @@ export function registerAdVisualRoutes(app,pool,sources,{sync=syncAdVisuals,now=
     // Source identity is independent of successful capture or AI publication.
     data.source_directory=socialDirectory(sources).map(({brand,page_id,capture_brand,ad_library_url,ad_library_type,facebook,instagram,additional_social_links,research_note,research_checked_at})=>({brand,page_id:page_id||null,capture_brand,ad_library_url,ad_library_type,country:'CY',facebook,instagram,additional_social_links,research_note,research_checked_at}));
     if(cloudStatus){data.cloud=await cloudStatus();data.monitoring.schedule=data.cloud.schedule}
-    res.json(data);
+    res.json(req.appUser?.role==='admin'?data:standardAdVisuals(data));
   }catch(e){if(e.status===400)return res.status(400).json({error:e.message});next(e)}});
-  app.get('/api/ad-visuals/pending',async(req,res,next)=>{
+  app.get('/api/ad-visuals/pending',requireOperationalAdmin,async(req,res,next)=>{
     try{res.json(await getPendingAdVisuals(pool,{limit:req.query.limit,brand:req.query.brand,cursor:req.query.cursor}))}
     catch(e){if(e.status===400)return res.status(400).json({error:e.message});next(e)}
   });
   app.get('/api/ad-visuals/history',async(req,res,next)=>{
-    try{const r=await pool.query('SELECT id,observed_at,event_type,analysis_json FROM ad_visual_versions WHERE ad_key=$1 ORDER BY observed_at DESC,id DESC LIMIT 30',[clean(req.query.key,100)]);res.json({rows:r.rows})}catch(e){next(e)}
+    try{const r=await pool.query('SELECT id,observed_at,event_type,analysis_json FROM ad_visual_versions WHERE ad_key=$1 ORDER BY observed_at DESC,id DESC LIMIT 30',[clean(req.query.key,100)]);
+      res.json({rows:req.appUser?.role==='admin'?r.rows:r.rows.map(row=>({...row,analysis_json:publishedAdRow(row.analysis_json||{})}))});
+    }catch(e){next(e)}
   });
   app.get('/api/ad-visuals/evidence/:hash.jpg',async(req,res,next)=>{
     if(!/^[a-f0-9]{64}$/.test(req.params.hash))return res.status(400).end();
