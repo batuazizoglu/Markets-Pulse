@@ -142,12 +142,18 @@ export async function buildCompetitiveTrends(pool,{days=30,now=new Date()}={}){
       WHERE status='ok' AND started_at >= $1::timestamptz AND started_at < $2::timestamptz
       GROUP BY source_id,(started_at AT TIME ZONE 'Asia/Famagusta')::date,started_at >= $3::timestamptz`,[window.previous_start,window.window_end,window.window_start]),
     pool.query("SELECT MIN(started_at) first_observed_at,MAX(started_at) last_observed_at FROM scans WHERE status='ok' AND started_at < $1::timestamptz",[window.window_end]),
-    pool.query(`SELECT p.id,p.source_id,p.active,p.current_name,p.first_seen_at,p.last_seen_at,s.url source_url,
+    pool.query(`SELECT p.id,p.source_id,p.current_name,p.first_seen_at,p.last_seen_at,s.url source_url,
+      (lifecycle.last_removed_at IS NULL OR GREATEST(p.first_seen_at,after.captured_at,lifecycle.last_present_at,
+        CASE WHEN p.last_seen_at < $2::timestamptz THEN p.last_seen_at END)>lifecycle.last_removed_at) active,
       before.id from_id,before.captured_at from_at,before.name from_name,before.data_gb from_data_gb,before.price_try from_price_try,before.validity_days from_validity_days,
       after.id to_id,after.captured_at to_at,after.name to_name,after.data_gb to_data_gb,after.price_try to_price_try,after.validity_days to_validity_days
       FROM products p JOIN sources s ON s.id=p.source_id
       LEFT JOIN LATERAL (SELECT id,captured_at,name,data_gb,price_try,validity_days FROM product_versions WHERE product_id=p.id AND captured_at < $1::timestamptz ORDER BY captured_at DESC,id DESC LIMIT 1) before ON TRUE
       LEFT JOIN LATERAL (SELECT id,captured_at,name,data_gb,price_try,validity_days FROM product_versions WHERE product_id=p.id AND captured_at < $2::timestamptz ORDER BY captured_at DESC,id DESC LIMIT 1) after ON TRUE
+      LEFT JOIN (SELECT product_id,
+        MAX(detected_at) FILTER(WHERE change_type='removed') last_removed_at,
+        MAX(detected_at) FILTER(WHERE change_type IN ('added','field_changed')) last_present_at
+        FROM changes WHERE detected_at < $2::timestamptz GROUP BY product_id) lifecycle ON lifecycle.product_id=p.id
       WHERE p.first_seen_at < $2::timestamptz AND p.last_seen_at >= $1::timestamptz ORDER BY p.id`,[window.window_start,window.window_end])
   ]);
   return competitiveTrendsFromRows({changes,sources:sources.rows,scans:scans.rows,products:products.rows,...observations.rows[0]}, {days:window.window_days,now:window.window_end});

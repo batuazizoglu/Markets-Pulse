@@ -104,6 +104,49 @@ test('same-package values use strict baselines, latest tied versions, base data 
   assert.equal(result.values.rows.find(row=>row.product_id===toZero).change_pct,-100);
 });
 
+test('frozen value eligibility survives removal after end and ignores reactivation after end',async()=>{
+  const removedLater=await product({name:'Dönemden sonra kaldırılan'});
+  await version(removedLater,'2026-09-20T09:00:00Z',{data:10});
+  await version(removedLater,'2026-09-24T09:00:00Z',{data:20});
+  const reactivatedLater=await product({name:'Dönemde kaldırılan',active:false,last:'2026-09-24T09:00:00Z'});
+  await version(reactivatedLater,'2026-09-20T09:00:00Z',{data:10});
+  await version(reactivatedLater,'2026-09-24T09:00:00Z',{data:20});
+  await change(reactivatedLater,'2026-09-25T09:00:00Z',{type:'removed',field:null,old:'Dönemde kaldırılan',next:null});
+  const before=await build();
+  assert.deepEqual(before.values.rows.map(row=>row.product_id),[removedLater]);
+  assert.equal(before.values.excluded_count,1);
+
+  await change(removedLater,'2026-09-26T09:00:00Z',{type:'removed',field:null,old:'Dönemden sonra kaldırılan',next:null});
+  await db.query('UPDATE products SET active=false WHERE id=$1',[removedLater]);
+  await version(reactivatedLater,'2026-09-26T10:00:00Z',{data:50});
+  await change(reactivatedLater,'2026-09-26T10:00:00Z',{type:'added',field:null,old:null,next:'Yeniden görülen paket'});
+  await db.query('UPDATE products SET active=true,last_seen_at=$2 WHERE id=$1',[reactivatedLater,'2026-09-26T10:00:00Z']);
+  const after=await build();
+  assert.deepEqual(after.values,before.values,'Current flags, future sightings and future lifecycle events cannot change the frozen result');
+});
+
+test('endpoint lifecycle reads all prior removals, bounds sightings, and lets removal win timestamp ties',async()=>{
+  const atEnd=await product({name:'Tam dönem sonunda kaldırılan',active:false});
+  await version(atEnd,'2026-09-20T09:00:00Z',{data:10});
+  await version(atEnd,'2026-09-24T09:00:00Z',{data:20});
+  await change(atEnd,now,{type:'removed',field:null,old:'Tam dönem sonunda kaldırılan',next:null});
+  const tied=await product({name:'Eşzamanlı kaldırılan',last:'2026-09-24T09:00:00Z'});
+  await version(tied,'2026-09-20T09:00:00Z',{data:10});
+  await version(tied,'2026-09-24T09:00:00Z',{data:20});
+  await change(tied,'2026-09-24T09:00:00Z',{type:'removed',field:null,old:'Eşzamanlı kaldırılan',next:null});
+  const oldRemoval=await product({name:'Eski kaldırma',last:'2026-09-26T09:00:00Z'});
+  await version(oldRemoval,'2026-09-01T09:00:00Z',{data:10});
+  await change(oldRemoval,'2026-09-18T09:00:00Z',{type:'removed',field:null,old:'Eski kaldırma',next:null});
+  await version(oldRemoval,'2026-09-26T09:00:00Z',{data:20});
+  const observedAgain=await product({name:'Dönemde yeniden görülen',last:'2026-09-25T18:00:00Z'});
+  await version(observedAgain,'2026-09-20T09:00:00Z',{data:10});
+  await version(observedAgain,'2026-09-24T08:00:00Z',{data:20});
+  await change(observedAgain,'2026-09-24T09:00:00Z',{type:'removed',field:null,old:'Dönemde yeniden görülen',next:null});
+  const result=await build();
+  assert.deepEqual(result.values.rows.map(row=>row.product_id),[atEnd,observedAgain]);
+  assert.equal(result.values.eligible_count,2);assert.equal(result.values.excluded_count,2);
+});
+
 test('new, removed, stale and invalid value pairs are excluded without assumed durations or unlimited values',async()=>{
   const cases=[
     {name:'Yeni',first:start,baseline:false},
@@ -121,6 +164,7 @@ test('new, removed, stale and invalid value pairs are excluded without assumed d
     const id=await product(entry);
     if(entry.baseline!==false)await version(id,'2026-09-20T09:00:00Z',entry.before);
     await version(id,'2026-09-24T09:00:00Z',{data:20,...entry.after});
+    if(entry.active===false)await change(id,'2026-09-25T20:00:00Z',{type:'removed',field:null,old:entry.name,next:null});
   }
   const stale=await product({name:'Eski gözlem',last:'2026-09-20T09:00:00Z'});await version(stale,'2026-09-19T09:00:00Z');await version(stale,'2026-09-20T09:00:00Z',{data:20});
   const result=await build();
