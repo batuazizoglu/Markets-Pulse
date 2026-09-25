@@ -142,9 +142,25 @@ test('endpoint lifecycle reads all prior removals, bounds sightings, and lets re
   await version(observedAgain,'2026-09-20T09:00:00Z',{data:10});
   await version(observedAgain,'2026-09-24T08:00:00Z',{data:20});
   await change(observedAgain,'2026-09-24T09:00:00Z',{type:'removed',field:null,old:'Dönemde yeniden görülen',next:null});
+  await change(observedAgain,'2026-09-25T18:00:00Z',{type:'added',field:null,old:null,next:'Dönemde yeniden görülen'});
   const result=await build();
   assert.deepEqual(result.values.rows.map(row=>row.product_id),[atEnd,observedAgain]);
   assert.equal(result.values.eligible_count,2);assert.equal(result.values.excluded_count,2);
+});
+
+test('future unchanged sightings cannot add stale pairs or erase previously observed unchanged pairs',async()=>{
+  const stale=await product({name:'Dönemde gözlenmeyen',source:3,last:'2026-09-20T09:00:00Z'});
+  await version(stale,'2026-09-20T09:00:00Z',{source:3});
+  const observed=await product({name:'Dönemde gözlenen değişmeyen',last:'2026-09-24T09:00:00Z'});
+  await version(observed,'2026-09-20T09:00:00Z');
+  await scan(1,'2026-09-24T09:00:00Z');
+  const before=await build();
+  assert.equal(before.values.eligible_count,1);assert.equal(before.values.unchanged_count,1);
+  assert.equal(before.values.excluded_count,0);
+  await scan(1,'2026-09-26T09:00:00Z');await scan(3,'2026-09-26T09:00:00Z');
+  await db.query('UPDATE products SET last_seen_at=$1 WHERE id IN ($2,$3)',['2026-09-26T09:00:00Z',stale,observed]);
+  const after=await build();
+  assert.deepEqual(after.values,before.values,'Future-only source scans and overwritten product timestamps leave the frozen population unchanged');
 });
 
 test('new, removed, stale and invalid value pairs are excluded without assumed durations or unlimited values',async()=>{
@@ -166,7 +182,7 @@ test('new, removed, stale and invalid value pairs are excluded without assumed d
     await version(id,'2026-09-24T09:00:00Z',{data:20,...entry.after});
     if(entry.active===false)await change(id,'2026-09-25T20:00:00Z',{type:'removed',field:null,old:entry.name,next:null});
   }
-  const stale=await product({name:'Eski gözlem',last:'2026-09-20T09:00:00Z'});await version(stale,'2026-09-19T09:00:00Z');await version(stale,'2026-09-20T09:00:00Z',{data:20});
+  const stale=await product({name:'Eski gözlem',source:3,last:'2026-09-20T09:00:00Z'});await version(stale,'2026-09-19T09:00:00Z',{source:3});await version(stale,'2026-09-20T09:00:00Z',{data:20,source:3});
   const result=await build();
   assert.deepEqual(result.values,{rows:[],eligible_count:0,excluded_count:cases.length,unchanged_count:0,changed_count:0});
 });
