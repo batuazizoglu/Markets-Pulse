@@ -15,8 +15,9 @@ async function fixture(role='standard',hash='#dashboard'){
   // Enable the application's inline navigation handlers; external resources are not loaded.
   const dom=new JSDOM(html,{url:'https://www.marketspulse.cloud/?keep=1'+hash,runScripts:'dangerously'}),w=dom.window,d=w.document,requests=[];
   w.scrollTo=()=>{};w.setInterval=()=>0;w.alert=()=>{};
-  d.querySelector('main.shell').insertAdjacentHTML('beforeend','<section id="benchmark-section"></section><section id="home-internet-section"></section><section id="ad-visual-section"></section>');
+  d.querySelector('main.shell').insertAdjacentHTML('beforeend','<section id="benchmark-section"></section><section id="home-internet-section"></section><section id="ad-visual-section"></section><section id="trend-analysis-section"></section>');
   const benchmarkSegments=[];w.setBmSegment=segment=>benchmarkSegments.push(segment);
+  const trendActivations=[];w.MarketPulseTrends={activate:()=>{trendActivations.push(w.location.hash);return Promise.resolve()}};
   w.fetch=async raw=>{
     const url=new URL(raw,w.location.href);requests.push(url);
     const data={
@@ -30,7 +31,7 @@ async function fixture(role='standard',hash='#dashboard'){
   };
   for(const script of scripts)w.eval(script);
   await w.loadAll();await tick();await tick();
-  return {dom,w,d,requests,benchmarkSegments};
+  return {dom,w,d,requests,benchmarkSegments,trendActivations};
 }
 function assertHeader(f,title){
   const header=f.d.querySelector('.topbar .brand.page-brand #viewTitle');
@@ -43,6 +44,7 @@ function assertHeader(f,title){
   assert.equal(f.d.getElementById('marketPulseTopLogo'),null);
   assert.ok(f.d.querySelector('.app-side-brand img'),'Sidebar keeps its brand identity');
   assert.equal(f.d.getElementById('competitorViews').classList.contains('route-visible'),['competitor','trends'].includes(f.d.body.dataset.view));
+  assert.equal(f.d.getElementById('trend-analysis-section').classList.contains('route-visible'),f.d.body.dataset.view==='trends');
   return header;
 }
 function assertCompetitorView(f,view){
@@ -55,8 +57,10 @@ function assertCompetitorView(f,view){
   assert.ok(tab.classList.contains('active'));
   assert.equal(tab.getAttribute('aria-pressed'),'true');
   assert.equal(f.d.querySelectorAll('#competitorViews .active').length,1);
-  assert.ok(f.d.getElementById('changes-section').classList.contains('route-visible'));
-  assert.equal(f.d.getElementById('benchmark-section').classList.contains('route-visible'),view==='trends');
+  assert.equal(f.d.querySelector('#competitorViews [data-competitor-view="trends"]').textContent.trim(),'Trend Analizi');
+  assert.equal(f.d.getElementById('changes-section').classList.contains('route-visible'),view==='competitor');
+  assert.equal(f.d.getElementById('benchmark-section').classList.contains('route-visible'),false);
+  if(view==='trends')assert.deepEqual([...f.d.querySelectorAll('[data-route-section].route-visible')].map(el=>el.id).sort(),['competitorViews','trend-analysis-section'],'Trend analysis has isolated content');
 }
 
 for(const role of ['standard','admin'])test(role+' navigation nests trends and keeps one current-page heading across routes',async()=>{
@@ -67,12 +71,14 @@ for(const role of ['standard','admin'])test(role+' navigation nests trends and k
     d.querySelector('.app-nav-btn[data-route="competitor"]').click();await tick();
     assertCompetitorView(f,'competitor');
     const competitorDescription=d.querySelector('#viewTitle p').textContent;
+    const activationsBefore=f.trendActivations.length;
     d.querySelector('#competitorViews [data-competitor-view="trends"]').click();await tick();
     assert.equal(w.location.hash,'#competitor/trends');
     assert.equal(w.location.search,'?keep=1');
     assertCompetitorView(f,'trends');
     assert.notEqual(d.querySelector('#viewTitle p').textContent,competitorDescription);
-    assert.ok(f.benchmarkSegments.includes('Tümü'));
+    assert.ok(f.trendActivations.length>activationsBefore,'Entering trend analysis activates its own module');
+    assert.ok(!f.benchmarkSegments.includes('Tümü'),'Trend analysis must not change the product comparison segment');
     d.querySelector('#competitorViews [data-competitor-view="competitor"]').click();await tick();
     assert.equal(w.location.hash,'#competitor');assertCompetitorView(f,'competitor');
     const routes=[['dashboard','Dashboard'],['home','Ev İnterneti'],['ads','Reklam Analizi'],['compare','Ürün Karşılaştırma'],['segment','Segment Analizi'],['evidence','Kanıt Arşivi'],['reports','Raporlar']];
@@ -120,6 +126,7 @@ test('the shared 7/30/90-day selection survives Dashboard and nested trend navig
       const before=f.requests.filter(url=>url.pathname==='/api/market-pulse').length;
       for(const route of ['competitor','trends','dashboard']){
         w.MarketPulseUI.go(route);await tick();
+        if(route!=='dashboard')assertCompetitorView(f,route);
         assert.equal(w.MarketPulseData.getState().days,days);
         assert.equal(w.MarketPulseData.getState().snapshot,selected);
         assert.equal(d.querySelector('#timelineTabs [aria-pressed="true"]').dataset.marketDays,String(days));
@@ -129,5 +136,6 @@ test('the shared 7/30/90-day selection survives Dashboard and nested trend navig
       assertHeader(f,'Dashboard');
       assert.ok(d.getElementById('market-pulse-section').classList.contains('route-visible'));
     }
+    assert.ok(!f.benchmarkSegments.includes('Tümü'),'Shared market navigation does not mutate the independent benchmark');
   }finally{f.dom.window.close()}
 });

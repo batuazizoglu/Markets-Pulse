@@ -6,6 +6,7 @@ import express from 'express';
 import puppeteer from 'puppeteer';
 import sharp from 'sharp';
 import {marketPulseFromRows} from '../src/intelligence.js';
+import {competitiveTrendsFromRows} from '../src/competitive-trends.js';
 import {buildBenchmark} from '../src/kktcell-benchmark.js';
 import {HOME_INTERNET_SOURCES,marketPayload} from '../src/home-internet.js';
 import {normalizeOffer} from '../src/isp-economics.js';
@@ -14,6 +15,7 @@ const now=new Date(),at=now.toISOString(),hash='a'.repeat(64),output='test-outpu
 const source={id:1,name:'Telsim Faturasız',slug:'faturasiz',url:'https://www.kktctelsim.com/paketler',last_status:'ok',last_checked_at:at,parsed_count:3,active_products:3,http_status:200,response_ms:142};
 const packages=['Super Databol Medium','Super Databol Large','Super Databol Extra'].map((name,i)=>({id:i+1,name,current_name:name,source_id:1,source_name:source.name,source_slug:source.slug,source_url:source.url,active:true,data_gb:20+i*10,bonus_data_gb:5,local_tr_minutes:1000,international_minutes:0,sms:1000,validity_days:30,price_try:500+i*100,captured_at:at}));
 const changes=packages.map((p,i)=>({id:i+1,scan_id:1,product_id:p.id,detected_at:new Date(+now-60000).toISOString(),source_name:source.name,source_slug:source.slug,source_url:source.url,product_name:p.name,identity_base:p.name,severity:'high',change_type:'field_changed',field_name:'Fiyat',old_value:String(p.price_try+100),new_value:String(p.price_try),extras_json:{}}));
+const trendInput={changes,sources:[{id:1,enabled:true}],scans:Array.from({length:181},(_,i)=>({source_id:1,status:'ok',started_at:new Date(+now-i*86400000-60000).toISOString()})),products:packages.map(p=>({id:p.id,source_id:1,active:true,first_seen_at:new Date(+now-181*86400000).toISOString(),last_seen_at:new Date(+now-60000).toISOString(),current_name:p.name,source_url:p.source_url,from_id:p.id,from_at:new Date(+now-91*86400000).toISOString(),from_name:p.name,from_data_gb:p.data_gb,from_price_try:p.price_try+100,from_validity_days:30,to_id:p.id+10,to_at:new Date(+now-60000).toISOString(),to_name:p.name,to_data_gb:p.data_gb,to_price_try:p.price_try,to_validity_days:30})),first_observed_at:new Date(+now-181*86400000).toISOString(),last_observed_at:new Date(+now-60000).toISOString()};
 const kSource={name:'KKTCELL Faturasız',slug:'kktcell-faturasiz',type:'prepaid',url:'https://www.kktcell.com/faturasiz',ok:true,parsed_count:3,core_count:3,response_ms:97};
 const benchmark={...buildBenchmark(packages,packages.map((p,i)=>({name:['Yeni GO M','Yeni GO L','Yeni GO XL'][i],source_slug:kSource.slug,source_url:kSource.url,product_url:'/go-'+i,type:'prepaid',is_core:true,data_gb:p.data_gb,bonus_data_gb:5,local_tr_minutes:1000,sms:1000,validity_days:30,price_try:p.price_try-20})),[],{sources:[kSource]}),kktcell_sources:[kSource]};
 const trend={series:Array.from({length:90},(_,i)=>({day:new Date(+now-(89-i)*86400000).toISOString().slice(0,10),score:40+i/2})),deltas:{'7d':3.5,'30d':15,'90d':45},latest:{score:84.5},baselines:{'7d':{score:81},'30d':{score:69.5},'90d':{score:39.5}}};
@@ -39,6 +41,7 @@ app.get('/api/packages',(_,res)=>res.json(packages));
 app.get('/api/comparison',(_,res)=>res.json({rows:packages.map(p=>({...p,current_name_version:p.name,current_data_gb:p.data_gb,previous_data_gb:p.data_gb,current_price_try:p.price_try,previous_price_try:p.price_try+100,previous_version_id:1,changed:true}))}));
 app.get('/api/value-index',(_,res)=>res.json(packages.map((p,i)=>({...p,rank:i+1,gb_per_100tl:p.data_gb/p.price_try*100}))));
 app.get('/api/market-pulse',(req,res)=>res.json(marketPulseFromRows(changes,Number(req.query.days)||30,now)));
+app.get('/api/competitive-trends',(req,res)=>res.json(competitiveTrendsFromRows(trendInput,{days:Number(req.query.days)||30,now:new Date(req.query.end||at)})));
 app.get('/api/product/:id/history',(req,res)=>res.json([packages.find(p=>p.id===Number(req.params.id))]));
 app.get('/api/benchmark',(_,res)=>res.json(benchmark));
 app.get('/api/benchmark-history',(_,res)=>res.json({trends:{Toplam:trend,Genel:trend},first_recorded_at:at}));
@@ -85,7 +88,7 @@ async function go(page,route){
 }
 async function screenshot(page,role,width,route){
   await page.evaluate(()=>window.scrollTo(0,0));
-  await page.screenshot({path:`${output}/${role}-${route}-${width}.jpg`,type:'jpeg',quality:75,fullPage:false});
+  await page.screenshot({path:`${output}/${role}-${route}-${width}.jpg`,type:'jpeg',quality:75,fullPage:route==='trends'||route==='trends-dark'});
 }
 try{
   const executablePath=['/usr/bin/google-chrome','/usr/bin/chromium','/usr/bin/chromium-browser'].find(existsSync);
@@ -156,17 +159,26 @@ try{
       await page.waitForFunction(()=>window.MarketPulseData.getState().snapshot?.window_days===90&&!window.MarketPulseData.getState().loading);
       await page.locator('#competitorViews [data-competitor-view="trends"]').click();
       await page.waitForFunction(()=>document.body.dataset.view==='trends'&&location.hash==='#competitor/trends');
-      for(const days of [30,90]){
-        await page.locator('.bm-horizon[onclick="setBmTrendDays('+days+')"]').click();
-        assert.equal(await page.$eval('.bm-horizon.active',el=>el.textContent),days+' Gün');
-        assert.equal(await page.$eval('.bm-trend-stat span',el=>el.textContent),days+' Gün Değişim');
-        assert.equal(await page.$$eval('.bm-chart svg circle',els=>els.length),days,'graph displays the selected history window');
-        assert.equal(await page.$eval('#timelineTabs [aria-pressed="true"]',el=>el.dataset.marketDays),'90');
-        assert.equal(await page.evaluate(()=>window.MarketPulseData.getState().days),90,'graph period must not change the shared change window');
+      for(const days of [7,30,90]){
+        await page.locator('#trend-analysis-section [data-market-days="'+days+'"]').click();
+        await page.waitForFunction(days=>document.querySelector('#trendContent')?.dataset.windowDays===String(days)&&document.querySelector('#trendContent')?.getAttribute('aria-busy')==='false',{},days);
+        assert.match(await page.$eval('#trendPeriod',el=>el.textContent),new RegExp('Son '+days+' gün'));
+        for(const selector of ['#timelineTabs','.mp-window','#trend-analysis-section'])assert.equal(await page.$eval(selector+' [data-market-days][aria-pressed="true"]',el=>el.dataset.marketDays),String(days));
+        assert.equal(await page.evaluate(()=>window.MarketPulseData.getState().snapshot.window_days),days);
       }
+      assert.ok(await page.$eval('#trendCoverage',el=>el.textContent.trim().length>0));
+      assert.equal(await page.$$eval('#trend-analysis-section [data-trend-chart]',els=>els.length),4);
+      for(const key of ['activity','value'])assert.ok(await page.$eval('[data-trend-chart="'+key+'"] svg',el=>el.checkVisibility({checkVisibilityCSS:true})),key+' chart is visible');
+      for(const selector of ['#changes-section','#benchmark-section'])assert.equal(await page.$eval(selector,el=>el.checkVisibility({checkVisibilityCSS:true})),false,'Trend Analizi has its own content');
       assert.ok(await page.$eval('#competitorViews [data-competitor-view="trends"]',el=>el.classList.contains('active')));
       assert.equal(await page.$eval('#competitorViews [data-competitor-view="trends"]',el=>el.getAttribute('aria-pressed')),'true');
+      assert.equal(await page.$eval('#competitorViews [data-competitor-view="trends"]',el=>el.textContent),'Trend Analizi');
       await check(page,role,id+' trends');await screenshot(page,role,width,'trends');
+      if(width===1440){
+        await page.locator('#themeMini').click();await page.waitForFunction(()=>document.documentElement.dataset.theme==='dark');
+        await check(page,role,id+' trends dark');await screenshot(page,role,width,'trends-dark');
+        await page.locator('#themeMini').click();await page.waitForFunction(()=>document.documentElement.dataset.theme==='light');
+      }
       await page.evaluate(()=>{location.hash='#trends'});
       await page.waitForFunction(()=>location.hash==='#competitor/trends'&&document.body.dataset.view==='trends');
       await checkHeader(page,'trends');
@@ -205,8 +217,8 @@ try{
   }
   assert.deepEqual(unknown,[],'all production API requests need explicit fixtures');
   const files=(await readdir(output)).filter(name=>name.endsWith('.jpg'));
-  assert.equal(files.length,34);
+  assert.equal(files.length,36);
   const bytes=(await Promise.all(files.map(file=>stat(output+'/'+file)))).reduce((total,file)=>total+file.size,0);
-  assert.ok(bytes<5*1024*1024,'viewport JPEG artifact should stay below 5 MiB');
+  assert.ok(bytes<5*1024*1024,'36 JPEG artifacts, including full trend pages, should stay below 5 MiB');
   console.log('ROLE_UX_SCREENSHOTS '+files.length+' JPEGs, '+bytes+' bytes');
 }finally{if(browser)await browser.close();await new Promise(resolve=>server.close(resolve))}

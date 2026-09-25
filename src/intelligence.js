@@ -9,7 +9,7 @@ function detectSegment(move){
   const t=textOf(move);
   if(/turist|tourist|ercan|airport|havaalan|e[- ]?sim/.test(t))return 'Turist';
   if(/asker|askerfone|askere özel/.test(t))return 'Asker';
-  if(/freezone|genç|young|öğrenci|student|gnç/.test(t))return 'Öğrenci / Genç';
+  if(/freezone|genç|genc|young|öğrenci|ogrenci|student|gnç|gnc|super cool|ünivers|universit|uni[- ]?pack|(?:^|[^\p{L}\p{N}])(?:uni|üni)(?=$|[^\p{L}\p{N}])/u.test(t))return 'Öğrenci / Genç';
   if(/super red|\bred\b|premium|platinum|vip/.test(t))return 'Premium / Platinum';
   return 'Genel';
 }

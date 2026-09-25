@@ -6,7 +6,7 @@ const routes={
   ads:{label:'Reklam Analizi',desc:'AI tarafından kategorilere ayrılan rakip reklamları, görsel teklifler ve değişimler.',ids:['ad-visual-section']},
   compare:{label:'Ürün Karşılaştırma',desc:'Telsim ve KKTCELL ürünlerini segment bazında karşılaştırın.',ids:['benchmark-section']},
   segment:{label:'Segment Analizi',desc:'Genel, Asker, Öğrenci/Genç, Turist ve Premium/Platinum pozisyonu.',ids:['benchmark-section']},
-  trends:{label:'Trendler',desc:'Rekabet pozisyonu ve rakip hareketlerinin 7/30/90 günlük seyri.',ids:['competitorViews','benchmark-section','changes-section']},
+  trends:{label:'Trend Analizi',desc:'Rakip hareketlerinin ritmi, fiyat ve fayda yönü, paket değerindeki değişim.',ids:['competitorViews','trend-analysis-section']},
   evidence:{label:'Kanıt Arşivi',desc:'Telsim tarife sayfalarının tarihli kayıtlarını bulun, karşılaştırın ve indirin.',ids:['evidence-section']},
   reports:{label:'Raporlar',desc:'Raporları indirin veya kendi e-posta adresinize gönderin.',ids:['reports-section']},
   settings:{label:'Ayarlar',desc:'Kullanıcı yönetimi, tema ve tarama tercihleri.',ids:['settings-section']}
@@ -26,7 +26,7 @@ settings:'<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" str
 let themeMode=localStorage.getItem('marketPulseThemeMode')||'auto';
 let currentUser=null;
 const isAdmin=()=>currentUser?.role==='admin';
-const standardDescriptions={dashboard:'Önemli rakip hamleleri ve pazar özeti.',competitor:'Paketlerde neler değişti?',home:'Ev interneti tekliflerini ve rakiplerini karşılaştırın.',ads:'Rakip kampanyaları ve görsellerdeki teklifler.',compare:'Size en yakın rakip teklifleri karşılaştırın.',segment:'Müşteri gruplarına göre rekabet durumu.',trends:'Rekabetin zaman içindeki değişimi.',evidence:'Tarihli paket görüntüleri ve değişiklik kanıtları.',reports:'Raporları indirin veya kendi e-posta adresinize gönderin.'};
+const standardDescriptions={dashboard:'Önemli rakip hamleleri ve pazar özeti.',competitor:'Paketlerde neler değişti?',home:'Ev interneti tekliflerini ve rakiplerini karşılaştırın.',ads:'Rakip kampanyaları ve görsellerdeki teklifler.',compare:'Size en yakın rakip teklifleri karşılaştırın.',segment:'Müşteri gruplarına göre rekabet durumu.',trends:'Rakip hareketlerinin ritmi, fiyat ve fayda yönü, paket değerindeki değişim.',evidence:'Tarihli paket görüntüleri ve değişiklik kanıtları.',reports:'Raporları indirin veya kendi e-posta adresinize gönderin.'};
 let executiveBenchmark=null,executiveBenchmarkError='',executiveBenchmarkRequest=null;
 const userEsc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
@@ -65,7 +65,7 @@ function ensureViews(){
   const shell=document.querySelector('main.shell');if(!shell)return;
   if(!document.getElementById('competitorViews')){
     const nav=document.createElement('nav');nav.id='competitorViews';nav.className='competitor-views';nav.setAttribute('aria-label','Rakip Takip görünümleri');nav.dataset.routeSection='1';
-    nav.innerHTML='<button type="button" data-competitor-view="competitor" aria-pressed="true">Değişiklikler</button><button type="button" data-competitor-view="trends" aria-pressed="false">Trendler</button>';
+    nav.innerHTML='<button type="button" data-competitor-view="competitor" aria-pressed="true">Değişiklikler</button><button type="button" data-competitor-view="trends" aria-pressed="false">Trend Analizi</button>';
     nav.addEventListener('click',event=>{const button=event.target.closest('[data-competitor-view]');if(button)go(button.dataset.competitorView)});
     const header=shell.querySelector('.topbar');if(header)header.insertAdjacentElement('afterend',nav);else shell.prepend(nav);
   }
@@ -129,10 +129,10 @@ function applyRoute(route=currentRoute()){
   });
   document.querySelectorAll('[data-competitor-view]').forEach(button=>{const active=button.dataset.competitorView===route;button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active))});
   const vt=document.getElementById('viewTitle');if(vt)vt.innerHTML='<div><h1 id="pageTitle">'+userEsc(routes[parentRoute].label)+'</h1><p>'+userEsc(isAdmin()?routes[route].desc:standardDescriptions[route]||routes[route].desc)+'</p></div>';
-  const competitorViews=document.getElementById('competitorViews'),benchmark=document.getElementById('benchmark-section');
-  if(route==='trends'&&competitorViews&&benchmark&&competitorViews.nextElementSibling!==benchmark)competitorViews.insertAdjacentElement('afterend',benchmark);
+  const competitorViews=document.getElementById('competitorViews'),trends=document.getElementById('trend-analysis-section');
+  if(route==='trends'&&competitorViews&&trends&&competitorViews.nextElementSibling!==trends)competitorViews.insertAdjacentElement('afterend',trends);
   if(route==='segment'&&window.setBmSegment)window.setBmSegment('Genel');
-  if(route==='trends'&&window.setBmSegment)window.setBmSegment('Tümü');
+  if(route==='trends')window.MarketPulseTrends?.activate();
   if(route==='evidence'&&window.EvidenceArchive)window.EvidenceArchive.activate();
   if(route==='reports')loadReportStatus();
   if(route==='ads'&&window.AdVisualUI)window.AdVisualUI.load();
