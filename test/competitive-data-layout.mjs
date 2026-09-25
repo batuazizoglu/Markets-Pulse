@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import express from 'express';
 import puppeteer from 'puppeteer';
 import {marketPulseFromRows} from '../src/intelligence.js';
+import {competitiveTrendsFromRows} from '../src/competitive-trends.js';
 
 const now=new Date('2026-09-24T12:00:00Z'),rows=[];
 const trend={series:Array.from({length:90},(_,i)=>({day:new Date(+now-(89-i)*86400000).toISOString().slice(0,10),score:40+i/2})),deltas:{'7d':3.5,'30d':15,'90d':45},latest:{score:84.5},baselines:{'7d':{score:81},'30d':{score:69.5},'90d':{score:39.5}}};
@@ -16,13 +17,15 @@ for(let i=0;i<66;i++){
   if(i>=2)rows.push({...base,id:i*2+2,change_type:'field_changed',field_name:'Ek Fayda / Koşul',old_value:'Eski koşul',new_value:'Yeni koşul '+i});
 }
 const requests=[],app=express();
+const trendInput={changes:rows,sources:[{id:1,enabled:true}],scans:Array.from({length:181},(_,i)=>({source_id:1,status:'ok',started_at:new Date(+now-i*86400000-60000).toISOString()})),products:[{id:2,source_id:1,active:true,first_seen_at:'2026-01-01T00:00:00Z',last_seen_at:'2026-09-23T12:00:00Z',current_name:'Yeni fiyat artışı',source_url:'https://example.com/packages',from_id:1,from_at:'2026-01-01T00:00:00Z',from_name:'Yeni fiyat artışı',from_data_gb:20,from_price_try:100,from_validity_days:30,to_id:2,to_at:'2026-09-23T12:00:00Z',to_name:'Yeni fiyat artışı',to_data_gb:20,to_price_try:120,to_validity_days:30}],first_observed_at:'2026-01-01T00:00:00Z',last_observed_at:'2026-09-24T11:59:00Z'};
 app.get('/preview-competitive',async(_,res)=>{
   const html=(await readFile('public/index.html','utf8')).replace(/<script src="[^"]+"><\/script>/g,'');
-  res.type('html').send(html.replace('</body>','<script>localStorage.setItem("marketPulseThemeMode","light")</script><script src="/access-ui.js"></script><script src="/market-state.js"></script><script src="/app.js"></script><script src="/market-pulse.js"></script><script src="/benchmark.js"></script><script src="/brand-ui.js"></script></body>'));
+  res.type('html').send(html.replace('</body>','<script>localStorage.setItem("marketPulseThemeMode","light")</script><script src="/access-ui.js"></script><script src="/market-state.js"></script><script src="/app.js"></script><script src="/market-pulse.js"></script><script src="/benchmark.js"></script><script src="/trends.js"></script><script src="/brand-ui.js"></script></body>'));
 });
 app.use('/api',(req,res,next)=>{requests.push({method:req.method,path:req.path,days:req.query.days});assert.equal(req.method,'GET','preview must never mutate');next()});
 app.get('/api/auth/me',(_,res)=>res.json({user:{id:1,first_name:'Test',last_name:'Yönetici',role:'admin',username:'test'}}));
 app.get('/api/market-pulse',(req,res)=>res.json(marketPulseFromRows(rows,Number(req.query.days),now)));
+app.get('/api/competitive-trends',(req,res)=>res.json(competitiveTrendsFromRows(trendInput,{days:Number(req.query.days)||30,now:new Date(req.query.end||now)})));
 app.get('/api/summary',(_,res)=>res.json({active_products:64,changes_today:0,changes_24h:0,sources:[]}));
 app.get('/api/packages',(_,res)=>res.json([]));
 app.get('/api/comparison',(_,res)=>res.json({rows:[]}));
@@ -81,28 +84,32 @@ try{
     assert.equal(await page.$eval('.app-nav .active',el=>el.dataset.route),'competitor');
     assert.equal(await page.$eval('.topbar .brand.page-brand #viewTitle h1',el=>el.textContent),'Rakip Takip');
     assert.equal(await page.$eval('#competitorViews [aria-pressed="true"]',el=>el.dataset.competitorView),'trends');
-    await page.waitForSelector('.bm-chart svg');
-    for(const days of [30,90]){
-      await click(page,'.bm-horizon[onclick="setBmTrendDays('+days+')"]');
-      assert.equal(await page.$eval('.bm-horizon.active',el=>el.textContent),days+' Gün');
-      assert.equal(await page.$eval('.bm-trend-stat span',el=>el.textContent),days+' Gün Değişim');
-      assert.equal(await page.$$eval('.bm-chart svg circle',els=>els.length),days);
-      assert.equal(await page.evaluate(()=>window.MarketPulseData.getState().snapshot.window_days),90);
+    assert.equal(await page.$eval('#competitorViews [aria-pressed="true"]',el=>el.textContent),'Trend Analizi');
+    for(const days of [7,30,90]){
+      await click(page,'#trend-analysis-section [data-market-days="'+days+'"]');
+      await page.waitForFunction(days=>document.querySelector('#trendContent')?.dataset.windowDays===String(days)&&document.querySelector('#trendContent')?.getAttribute('aria-busy')==='false',{},days);
+      assert.match(await page.$eval('#trendPeriod',el=>el.textContent),new RegExp('Son '+days+' gün'));
+      assert.equal(await page.evaluate(()=>window.MarketPulseData.getState().snapshot.window_days),days);
+      for(const selector of ['#timelineTabs','.mp-window','#trend-analysis-section'])assert.equal(await page.$eval(selector+' [data-market-days][aria-pressed="true"]',el=>el.dataset.marketDays),String(days));
     }
+    for(const key of ['activity','value'])assert.ok(await page.$eval('[data-trend-chart="'+key+'"] svg',el=>el.checkVisibility({checkVisibilityCSS:true})));
+    for(const selector of ['#changes-section','#benchmark-section'])assert.equal(await page.$eval(selector,el=>el.checkVisibility({checkVisibilityCSS:true})),false);
     assert.equal(await page.$eval('#timelineTabs [aria-pressed="true"]',el=>el.dataset.marketDays),'90');
-    assert.equal(await page.$$eval('.tl',els=>els.length),130);
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'Trend overflow at '+width);
     await click(page,'#competitorViews [data-competitor-view="competitor"]');
     await page.waitForFunction(()=>document.body.dataset.view==='competitor'&&location.hash==='#competitor');
+    // Changing the selected period starts its pagination again; route navigation then preserves it.
+    assert.equal(await page.$$eval('.tl',els=>els.length),40);
+    for(let count=40;count<130;count+=40){await click(page,'[data-market-more="timeline"]');await click(page,'[data-market-more="changes"]')}
     await page.goBack();
     await page.waitForFunction(()=>document.body.dataset.view==='trends'&&location.hash==='#competitor/trends');
-    assert.equal(await page.$eval('.bm-horizon.active',el=>el.textContent),'90 Gün');
+    assert.equal(await page.$eval('#trendContent',el=>el.dataset.windowDays),'90');
     await page.goForward();
     await page.waitForFunction(()=>document.body.dataset.view==='competitor'&&location.hash==='#competitor');
     assert.equal(await page.$$eval('.tl',els=>els.length),130);
     assert.equal(await page.$eval('#timelineTabs [aria-pressed="true"]',el=>el.dataset.marketDays),'90');
     await click(page,'[data-route="dashboard"]');
-    assert.equal(await page.$$eval('.mp-move',els=>els.length),66);
+    assert.equal(await page.$$eval('.mp-move',els=>els.length),6);
     assert.equal(await page.$eval('#mpMoveOrder',el=>el.value),'priority');
     assert.equal(await page.$eval('[data-executive-move]',el=>el.dataset.executiveMove),leader);
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'Dashboard overflow at '+width);

@@ -79,15 +79,7 @@ body.branded-app #home-internet-section>.hi-title>.hi-actions{justify-content:fl
 body[data-view="segment"] #benchmark-section .bm-grid,
 body[data-view="segment"] #benchmark-section .bm-kpis{display:none!important}
 body[data-view="segment"] #benchmark-section .bm-score-grid{margin-bottom:8px}
-body[data-view="trends"] #benchmark-section .bm-headline,
-body[data-view="trends"] #benchmark-section #bmTabs,
-body[data-view="trends"] #benchmark-section .bm-score-title,
-body[data-view="trends"] #benchmark-section .bm-score-grid,
-body[data-view="trends"] #benchmark-section .bm-kpis,
-body[data-view="trends"] #benchmark-section .bm-grid{display:none!important}
-body[data-view="trends"] #changes-section .change-feed{display:none}
-body[data-view="trends"] #changes-section .grid2{grid-template-columns:1fr}
-body[data-view="trends"] #changes-section .grid2>article:nth-child(2){display:none}
+body.branded-app:not([data-view="segment"]) #benchmark-section .bm-trend{display:none}
 
 .report-grid,.settings-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
 .report-card,.setting-card{background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);padding:16px}

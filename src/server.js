@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import { initDb, pool } from './db.js';
 import { scanAll } from './scanner.js';
 import { buildMarketPulse } from './intelligence.js';
+import {buildCompetitiveTrends} from './competitive-trends.js';
 import {competitiveWindow,loadCompetitiveChanges} from './competitive-changes.js';
 import {requireOperationalAdmin,requireAdminForRefresh,reportStatusForUser} from './operational-access.js';
 import { getKktcellCatalog, warmKktcellCatalog } from './kktcell-benchmark.js';
@@ -99,6 +100,16 @@ app.get('/api/health', async (req,res)=>{
 app.get('/api/market-pulse', async (req,res,next)=>{try{
   const days=Math.max(1,Math.min(180,parseInt(req.query.days||'30',10)||30));
   res.json(await buildMarketPulse(pool,days));
+}catch(e){next(e)}});
+
+app.get('/api/competitive-trends', async (req,res,next)=>{try{
+  const days=Number(req.query.days||30),now=new Date();
+  const end=req.query.end?new Date(String(req.query.end)):now;
+  if(![7,30,90].includes(days)||!Number.isFinite(+end)||+end>+now){
+    return res.status(400).json({error:'Geçerli bir dönem seçin.'});
+  }
+  res.set('Cache-Control','private, no-store');
+  res.json(await buildCompetitiveTrends(pool,{days,now:end}));
 }catch(e){next(e)}});
 
 app.get('/api/home-internet',requireAdminForRefresh, async (req,res,next)=>{try{
