@@ -94,7 +94,7 @@ function parseCard(lines, position) {
   if (local == null) local = firstInt(raw, /(\d[\d.]*)\s*DK\b/i);
 
   const intl = firstInt(raw, /(\d[\d.]*)\s*DK\s*(?:Uluslararası|23\s*VF\s*Ülke)/i);
-  const extras = lines.filter(x => /Özgür Pass|Sınırsız|Aşım|Happy|Red Pasaport|yeni faturasız|Taahhüt|yaş|Grup İçi|FreeZone|sonlanmıştır|Havaliman|e-SİM|e-SIM/i.test(x));
+  const extras = withCommercialTerms(lines.filter(x => /Özgür Pass|Sınırsız|Aşım|Happy|Red Pasaport|yeni faturasız|Taahhüt|yaş|Grup İçi|FreeZone|sonlanmıştır|Havaliman|e-SİM|e-SIM/i.test(x)), lines);
 
   const canonical = {
     name,
@@ -125,6 +125,39 @@ function parseCard(lines, position) {
     raw_text: raw,
     product_hash: sha256(JSON.stringify(canonical))
   };
+}
+
+function commercialTerms(lines) {
+  const prices = lines.filter(line => {
+    const lower = line.toLocaleLowerCase('tr-TR');
+    return /(?:ilk|ikinci|sonraki|son)\s+\d+\s*ay\b/.test(lower)
+      && /(?:₺\s*\d|\d[\d.,]*\s*tl\b)/.test(lower);
+  });
+  // The allowance itself is tracked as Data; retain the Non-Stop promise
+  // separately so changing GB does not duplicate the same numeric change.
+  const nonStop = lines.some(line => /\bnon[\s-]*stop\b/i.test(line)) ? ['Non-Stop internet'] : [];
+  return [...prices, ...nonStop];
+}
+
+function withCommercialTerms(extras, lines) {
+  const additions = [...new Set(commercialTerms(lines))].filter(term => !extras.includes(term));
+  return [...extras, ...additions];
+}
+
+// Compare the old observation using the newly tracked commercial terms. This
+// never edits historical versions, and preserves stored fields/identity/hash.
+// The scanner can save an enriched current version without calling that parser
+// enrichment a market change. Null legacy raw text cannot prove a new term.
+export function rebaseCommercialTerms(previous, current) {
+  const extras = Array.isArray(previous.extras_json) ? previous.extras_json : [];
+  const raw = typeof previous.raw_text === 'string' ? previous.raw_text.trim() : '';
+  if (raw) return {...previous, extras_json: withCommercialTerms(extras, raw.split(/\s*\|\s*|\r?\n/).filter(Boolean))};
+  const normalizedExtras = withCommercialTerms(extras, extras);
+  const known = commercialTerms(normalizedExtras);
+  const currentTerms = [...new Set(commercialTerms(Array.isArray(current.extras_json) ? current.extras_json : []))];
+  const isNonStop = term => term === 'Non-Stop internet';
+  const unknown = currentTerms.filter(term => !known.some(old => isNonStop(old) === isNonStop(term)));
+  return {...previous, extras_json: [...normalizedExtras, ...unknown.filter(term => !normalizedExtras.includes(term))]};
 }
 
 function findPrice(lines) {
