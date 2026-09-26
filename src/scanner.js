@@ -1,7 +1,7 @@
 import zlib from 'zlib';
 import { pool } from './db.js';
 import { TRACKED_FIELDS } from './config.js';
-import { extractRelevantText, parseCards, sha256 } from './parser.js';
+import { extractRelevantText, parseCards, rebaseCommercialTerms, sha256 } from './parser.js';
 import { matchCardsToProducts } from './matcher.js';
 import { captureEvidenceScreenshots } from './screenshot.js';
 
@@ -115,11 +115,11 @@ function dedupeCards(cards) {
   return unique;
 }
 
-async function processCards(source, scanId, cards, baseline, capturedAt) {
-  const { rows: current } = await pool.query(`
+export async function processCards(source, scanId, cards, baseline, capturedAt, db = pool) {
+  const { rows: current } = await db.query(`
     SELECT p.*,
       v.data_gb, v.bonus_data_gb, v.local_tr_minutes, v.international_minutes, v.sms,
-      v.validity_days, v.red_passport_days, v.price_try, v.extras_json, v.product_hash
+      v.validity_days, v.red_passport_days, v.price_try, v.extras_json, v.product_hash, v.raw_text
     FROM products p
     LEFT JOIN LATERAL (
       SELECT * FROM product_versions pv WHERE pv.product_id=p.id ORDER BY pv.captured_at DESC,pv.id DESC LIMIT 1
@@ -137,24 +137,27 @@ async function processCards(source, scanId, cards, baseline, capturedAt) {
     let prev = null;
 
     if (!product) {
-      const r = await pool.query(`INSERT INTO products(source_id,identity_base,current_name,first_seen_at,last_seen_at,active,missing_count,last_position)
+      const r = await db.query(`INSERT INTO products(source_id,identity_base,current_name,first_seen_at,last_seen_at,active,missing_count,last_position)
                                   VALUES($1,$2,$3,$4,$4,TRUE,0,$5) RETURNING *`,
         [source.id, card.identity_base, card.name, capturedAt, card.position]);
       product = r.rows[0];
       if (!baseline) {
-        await addChange(source.id, product.id, scanId, capturedAt, 'added', null, null, card.name, 'critical');
+        await addChange(source.id, product.id, scanId, capturedAt, 'added', null, null, card.name, 'critical', db);
         changes++;
       }
     } else {
-      prev = product;
-      await pool.query(`UPDATE products SET identity_base=$1,current_name=$2,last_seen_at=$3,active=TRUE,missing_count=0,last_position=$4 WHERE id=$5`,
+      prev = rebaseCommercialTerms(product, card);
+      await db.query(`UPDATE products SET identity_base=$1,current_name=$2,last_seen_at=$3,active=TRUE,missing_count=0,last_position=$4 WHERE id=$5`,
         [card.identity_base,card.name,capturedAt,card.position,product.id]);
     }
 
     seenProductIds.add(String(product.id));
 
-    if (!prev || prev.product_hash !== card.product_hash) {
-      await pool.query(`INSERT INTO product_versions(product_id,scan_id,captured_at,name,card_position,data_gb,bonus_data_gb,local_tr_minutes,
+    // Removed terms can restore the old, pre-enrichment hash. Compare the
+    // reconstructed observation too, otherwise that real removal is missed.
+    const fieldsChanged = prev && TRACKED_FIELDS.some(([field]) => !same(prev[field], card[field]));
+    if (!prev || prev.product_hash !== card.product_hash || fieldsChanged || prev.current_name !== card.name) {
+      await db.query(`INSERT INTO product_versions(product_id,scan_id,captured_at,name,card_position,data_gb,bonus_data_gb,local_tr_minutes,
         international_minutes,sms,validity_days,red_passport_days,price_try,extras_json,raw_text,product_hash)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,$16)`,
         [product.id,scanId,capturedAt,card.name,card.position,card.data_gb,card.bonus_data_gb,card.local_tr_minutes,
@@ -166,12 +169,12 @@ async function processCards(source, scanId, cards, baseline, capturedAt) {
           const before = prev[field];
           const after = card[field];
           if (!same(before,after)) {
-            await addChange(source.id,product.id,scanId,capturedAt,'field_changed',label,before,after,severity);
+            await addChange(source.id,product.id,scanId,capturedAt,'field_changed',label,before,after,severity,db);
             changes++;
           }
         }
         if (prev.current_name !== card.name) {
-          await addChange(source.id,product.id,scanId,capturedAt,'field_changed','Paket Adı',prev.current_name,card.name,'medium');
+          await addChange(source.id,product.id,scanId,capturedAt,'field_changed','Paket Adı',prev.current_name,card.name,'medium',db);
           changes++;
         }
       }
@@ -201,8 +204,8 @@ async function processMissing(source, scanId, cards, baseline, detectedAt) {
   return changes;
 }
 
-async function addChange(sourceId,productId,scanId,when,type,field,oldValue,newValue,severity){
-  await pool.query(`INSERT INTO changes(source_id,product_id,detected_at,change_type,field_name,old_value,new_value,severity,scan_id)
+async function addChange(sourceId,productId,scanId,when,type,field,oldValue,newValue,severity,db=pool){
+  await db.query(`INSERT INTO changes(source_id,product_id,detected_at,change_type,field_name,old_value,new_value,severity,scan_id)
                     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
     [sourceId,productId,when,type,field,stringify(oldValue),stringify(newValue),severity,scanId]);
 }

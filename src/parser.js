@@ -94,7 +94,7 @@ function parseCard(lines, position) {
   if (local == null) local = firstInt(raw, /(\d[\d.]*)\s*DK\b/i);
 
   const intl = firstInt(raw, /(\d[\d.]*)\s*DK\s*(?:Uluslararası|23\s*VF\s*Ülke)/i);
-  const extras = lines.filter(x => /Özgür Pass|Sınırsız|Aşım|Happy|Red Pasaport|yeni faturasız|Taahhüt|yaş|Grup İçi|FreeZone|sonlanmıştır|Havaliman|e-SİM|e-SIM/i.test(x));
+  const extras = withCommercialTerms(lines.filter(x => /Özgür Pass|Sınırsız|Aşım|Happy|Red Pasaport|yeni faturasız|Taahhüt|yaş|Grup İçi|FreeZone|sonlanmıştır|Havaliman|e-SİM|e-SIM/i.test(x)), lines);
 
   const canonical = {
     name,
@@ -127,8 +127,85 @@ function parseCard(lines, position) {
   };
 }
 
+function pricePhases(text) {
+  const labels = {ilk:'İlk',ikinci:'İkinci',sonraki:'Sonraki',son:'Son'};
+  const pattern = /\b(ilk|ikinci|sonraki|son)\s+(\d+)\s*ay\s*:?\s*(?:₺\s*(\d+(?:[.,]\d+)*(?:\s+\d{3})*(?:,\d{1,2})?)|(\d+(?:[.,]\d+)*(?:\s+\d{3})*(?:,\d{1,2})?)\s*(?:tl\b|₺))/g;
+  const phases = [];
+  for (const match of text.toLocaleLowerCase('tr-TR').matchAll(pattern)) {
+    let amount = (match[3] || match[4]).replace(/\s/g, '');
+    if (/^\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?$/.test(amount)) amount = amount.replace(/\./g, '');
+    if (!/^\d+(?:[.,]\d{1,2})?$/.test(amount)) continue;
+    const value = Number(amount.replace(',', '.'));
+    if (!Number.isFinite(value)) continue;
+    const months = Number(match[2]);
+    phases.push({start:match.index,end:match.index+match[0].length,phase:match[1],months,value,
+      text:`${labels[match[1]]} ${months} ay: ${String(value).replace('.', ',')} TL`});
+  }
+  return phases;
+}
+
+function withoutPricePhases(line) {
+  const phases = pricePhases(line);
+  if (!phases.length) return line;
+  let remainder = line;
+  for (const phase of phases.reverse()) remainder = remainder.slice(0,phase.start)+' '+remainder.slice(phase.end);
+  remainder = remainder.replace(/\s+/g,' ').replace(/^[\s,;:|.]+|[\s,;:|.]+$/g,'').trim();
+  return /^(?:ve|ile)$/i.test(remainder) ? '' : remainder;
+}
+
+function commercialTerms(lines) {
+  // A phase may share a DOM row with another phase, or be split across rows.
+  // Currency grouping/decimals are presentation, not a price change.
+  const order = {ilk:0,ikinci:1,sonraki:2,son:3};
+  const phases = pricePhases(lines.join(' ')).sort((a,b)=>order[a.phase]-order[b.phase]||a.months-b.months||a.value-b.value);
+  const prices = [...new Set(phases.map(phase=>phase.text))];
+  // The allowance itself is tracked as Data; retain the Non-Stop promise
+  // separately so changing GB does not duplicate the same numeric change.
+  const nonStop = lines.some(line => /\bnon[\s-]*stop\b/i.test(line)) ? ['Non-Stop internet'] : [];
+  return [...prices, ...nonStop];
+}
+
+function withCommercialTerms(extras, lines) {
+  // Existing versions may already contain the formerly verbatim price rows.
+  // Remove only their price clauses, retaining unrelated conditions on the row.
+  const preserved = extras.filter(line=>line!=='Non-Stop internet').map(withoutPricePhases).filter(Boolean);
+  const additions = [...new Set(commercialTerms(lines))].filter(term => !preserved.includes(term));
+  return [...preserved, ...additions];
+}
+
+// Compare the old observation using the newly tracked commercial terms. This
+// never edits historical versions, and preserves identity/hash. The sole price
+// correction below requires raw evidence of the old phase-currency misread.
+// The scanner can save an enriched current version without calling that parser
+// enrichment a market change. Null legacy raw text cannot prove a new term.
+export function rebaseCommercialTerms(previous, current) {
+  const extras = Array.isArray(previous.extras_json) ? previous.extras_json : [];
+  const raw = typeof previous.raw_text === 'string' ? previous.raw_text.trim() : '';
+  if (raw) {
+    const lines = raw.split(/\s*\|\s*|\r?\n/).filter(Boolean), text = lines.join(' ');
+    const rebased = {...previous, extras_json: withCommercialTerms(extras, lines)};
+    const oldCurrency = text.match(/₺\s*(\d+(?:[.,]\d+)?)/)
+      || text.match(/(?:^|\s)(\d+(?:[.,]\d+)?)\s*TL\b/i);
+    if (oldCurrency && previous.price_try != null && Number(previous.price_try) === Number(oldCurrency[1].replace(',', '.'))
+      && pricePhases(text).some(phase=>oldCurrency.index>=phase.start && oldCurrency.index<phase.end)) {
+      const headline = findPrice(lines);
+      if (headline != null) rebased.price_try = headline;
+    }
+    return rebased;
+  }
+  const normalizedExtras = withCommercialTerms(extras, extras);
+  const known = commercialTerms(normalizedExtras);
+  const currentTerms = [...new Set(commercialTerms(Array.isArray(current.extras_json) ? current.extras_json : []))];
+  const isNonStop = term => term === 'Non-Stop internet';
+  const unknown = currentTerms.filter(term => !known.some(old => isNonStop(old) === isNonStop(term)));
+  return {...previous, extras_json: withCommercialTerms(normalizedExtras,[...normalizedExtras,...unknown])};
+}
+
 function findPrice(lines) {
-  const raw = lines.join(' ');
+  const text = lines.join(' ');
+  // Phase clauses can also use a prefixed ₺. They must not displace the
+  // separate headline price just because they appear earlier in the card.
+  const raw = withoutPricePhases(text);
 
   // Handles both separate nodes (₺ / 3359) and compact renderings
   // such as "₺3359 / ay" or "₺ 449".
@@ -138,7 +215,8 @@ function findPrice(lines) {
   // Fallback for text-only campaign cards that spell the currency out.
   m = raw.match(/(?:^|\s)(\d+(?:[.,]\d+)?)\s*TL\b/i);
   if (m) return Number(m[1].replace(',', '.'));
-  return null;
+  const phases = pricePhases(text);
+  return (phases.find(phase=>phase.phase==='ilk') || phases[0])?.value ?? null;
 }
 
 function firstNumber(text, re) {
