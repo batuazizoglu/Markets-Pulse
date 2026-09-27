@@ -7,6 +7,7 @@ import { scanAll } from './scanner.js';
 import { buildMarketPulse } from './intelligence.js';
 import {buildCompetitiveTrends} from './competitive-trends.js';
 import {competitiveWindow,loadCompetitiveChanges} from './competitive-changes.js';
+import {dailyComparisonRow} from './daily-comparison.js';
 import {requireOperationalAdmin,requireAdminForRefresh,reportStatusForUser} from './operational-access.js';
 import { getKktcellCatalog, warmKktcellCatalog } from './kktcell-benchmark.js';
 import { currentBenchmark } from './live-benchmark.js';
@@ -183,24 +184,15 @@ app.get('/api/comparison', async (req,res,next)=>{try{
     cur.international_minutes current_international_minutes,cur.sms current_sms,cur.validity_days current_validity_days,cur.price_try current_price_try,
     prev.id previous_version_id,prev.captured_at previous_captured_at,prev.name previous_name,
     prev.data_gb previous_data_gb,prev.bonus_data_gb previous_bonus_data_gb,prev.local_tr_minutes previous_local_tr_minutes,
-    prev.international_minutes previous_international_minutes,prev.sms previous_sms,prev.validity_days previous_validity_days,prev.price_try previous_price_try
+    prev.international_minutes previous_international_minutes,prev.sms previous_sms,prev.validity_days previous_validity_days,prev.price_try previous_price_try,
+    to_jsonb(cur) _current_observation,to_jsonb(prev) _previous_observation
     FROM products p
     JOIN sources s ON s.id=p.source_id
     JOIN LATERAL (SELECT * FROM product_versions v WHERE v.product_id=p.id ORDER BY v.captured_at DESC,v.id DESC LIMIT 1) cur ON TRUE
     LEFT JOIN LATERAL (SELECT * FROM product_versions v WHERE v.product_id=p.id AND v.captured_at < ${localMidnightSql} ORDER BY v.captured_at DESC,v.id DESC LIMIT 1) prev ON TRUE
     WHERE p.active=TRUE OR p.last_seen_at >= ${localMidnightSql}
     ORDER BY s.id,cur.price_try ASC NULLS LAST,cur.name`);
-  const numeric=['data_gb','bonus_data_gb','local_tr_minutes','international_minutes','sms','validity_days','price_try'];
-  const rows=r.rows.map(x=>{
-    const diffs={};
-    for(const f of numeric){
-      const a=x[`previous_${f}`], b=x[`current_${f}`];
-      const an=a==null?null:Number(a), bn=b==null?null:Number(b);
-      diffs[f]={old:an,new:bn,delta:(an==null||bn==null)?null:bn-an,pct:(an&&bn!=null)?((bn-an)/an)*100:null};
-    }
-    const changed=Object.values(diffs).some(d=>d.old!==d.new) || (x.previous_name!=null && x.previous_name!==x.current_name_version);
-    return {...x,diffs,changed};
-  });
+  const rows=r.rows.map(dailyComparisonRow);
   res.json({generated_at:new Date().toISOString(),cutoff:'local-midnight-Asia/Famagusta',rows});
 }catch(e){next(e)}});
 
