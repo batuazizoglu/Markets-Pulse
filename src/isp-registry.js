@@ -215,25 +215,30 @@ export const ISP_COMPANIES = [
 ];
 export const ISP_SOCIALS = {
   "Nethouse": {
+    "advertiser_scope": "fixed_internet",
     "facebook": "https://www.facebook.com/nethousenetworks/",
     "page_id": "159064954156749"
   },
   "Kıbrıs Online": {
+    "advertiser_scope": "fixed_internet",
     "facebook": "https://www.facebook.com/kibrisonlineofficial/",
     "instagram": "https://www.instagram.com/kibrisonlineofficial/",
     "page_id": "107418628779416"
   },
   "Multimax": {
+    "advertiser_scope": "fixed_internet",
     "facebook": "https://www.facebook.com/mmcyp",
     "instagram": "https://www.instagram.com/multimaxiletisimltd/",
     "page_id": "159594837428220"
   },
   "Broadmax": {
+    "advertiser_scope": "fixed_internet",
     "facebook": "https://www.facebook.com/broadmaxinternet/",
     "instagram": "https://www.instagram.com/broadmaxcyprus/",
     "page_id": "546525498748970"
   },
   "FixNet": {
+    "advertiser_scope": "fixed_internet",
     "page_id": "1435421553398998"
   },
   "Haypem": {
@@ -815,4 +820,12 @@ export function socialDirectory(sources) {
       ad_library_type:adLibraryUrl(social,{allowKeyword:false})?'verified_page':'brand_search',
       automatic_status:'connection_required',visual_analysis_url:'/api/ad-visuals'};
   }).sort((a,b)=>a.brand.localeCompare(b.brand,'tr'));
+}
+
+// A shared mobile/ISP brand or a caption cannot declare its own advertiser scope.
+// Only the reviewed registry page can supply context for an otherwise explicit
+// Mbps + subscription-price offer. Device and service ads still need their own proof.
+export function verifiedFixedIspPageId(ad,sources=[]) {
+  const source=socialDirectory(sources).find(source=>source.brand===ad.brand);
+  return source?.advertiser_scope==='fixed_internet'&&source.page_id===ad.page_id?source.page_id:undefined;
 }

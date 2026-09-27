@@ -51,12 +51,14 @@ test('AI can classify a clear custom category and reuse the persisted catalog',(
   assert.equal(device.category,'auto-cihazlar');assert.equal(device.category_label,'Cihazlar');
 });
 
-test('new categories require direct evidence and high confidence without caption-based guessing',()=>{
-  for(const patch of [{category_evidence:'Dijital güvenlik hizmeti öneriyor'},{category_evidence:'antivirüs ile cihazlarınızı koruyun'},{category_confidence:0.79},{category_confidence:null},{category_confidence:1.5},{category_label:'<script>danger</script>'}]){
+test('new categories require source evidence and high confidence without paraphrase-based guessing',()=>{
+  for(const patch of [{category_evidence:'Dijital güvenlik hizmeti öneriyor'},{category_confidence:0.79},{category_confidence:null},{category_confidence:1.5},{category_label:'<script>danger</script>'}]){
     const result=normalizeVision(reading(patch),{ad_text:''});
     assert.equal(result.category,'review');assert.equal(result.category_label,AD_CATEGORIES.review);assert.equal(result.review_required,true);
     assert.equal(result.visual_summary,reading().visual_summary);
   }
+  const typographySupported=normalizeVision(reading({category_evidence:'antivirüs ile cihazlarınızı koruyun'}),{ad_text:''});
+  assert.equal(typographySupported.category,'auto-dijital-guvenlik');assert.equal(typographySupported.category_evidence,'Antivirüs ile cihazlarınızı koruyun');
   const captionSupported=normalizeVision(reading({visible_text:'Güvenli yarınlar',category_evidence:'Antivirüs hizmeti'}),{ad_text:'Antivirüs hizmeti ile tanışın'});
   assert.equal(captionSupported.category,'auto-dijital-guvenlik');
   const notSelected=normalizeVision(reading({category:'review',category_label:AD_CATEGORIES.review}),{ad_text:'Antivirüs hizmeti ve tablet'});

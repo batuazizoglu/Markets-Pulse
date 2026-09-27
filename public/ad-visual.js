@@ -117,7 +117,7 @@ function card(a,labels){
     '<p class="av-offer">'+esc(offerText(a.offer))+'</p>'+(a.offer?.previous_price_try==null?'':'<p class="av-help">Görselde üstü çizili fiyat: '+esc(money(a.offer.previous_price_try))+'</p>')+
     '<p>'+esc(a.visual_summary)+'</p><details><summary>Teklif koşulları</summary>'+(admin?'<p><b>Sınıflandırma dayanağı:</b> '+esc(a.category_evidence)+'</p>':'')+
     '<ul>'+(a.conditions||[]).map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul>'+((a.uncertainties||[]).length?'<p><b>Doğrulanamayan / okunamayan:</b></p><ul>'+a.uncertainties.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul>':'')+
-    '<p>'+esc(a.ad_text)+'</p></details><p class="av-help">Görsel tarihi: '+stamp(a.observed_at)+(admin?((a.ai_analysis?'<br>AI incelemesi: '+stamp(a.ai_analysis.analyzed_at)+' • '+Number(a.ai_analysis.pass||1)+'. okuma':'')+'<br>İlk kayıt: '+stamp(a.first_seen_at)+'<br>Reklam kimliği: '+esc(a.ad_id)):'')+'</p>'+
+    '<p>'+esc(a.ad_text)+'</p></details><p class="av-help">Görsel tarihi: '+stamp(a.observed_at)+(admin?((a.ai_analysis?'<br>AI incelemesi: '+stamp(a.ai_analysis.analyzed_at)+' • '+Number(a.ai_analysis.pass||1)+'. okuma':'')+(a.category_assignment?'<br>Kategori doğrulaması: '+stamp(a.category_assignment.reviewed_at)+' • Kaydedilmiş görsel metni ve açıklama':'')+'<br>İlk kayıt: '+stamp(a.first_seen_at)+'<br>Reklam kimliği: '+esc(a.ad_id)):'')+'</p>'+
     '<div class="av-links"><a href="'+esc(safeLink(a.source_url))+'" target="_blank" rel="noopener noreferrer">Ad Library kaynağı ↗</a>'+
     (admin?(a.images||[]).map((x,i)=>'<a href="'+imageUrl(x.sha256)+'" target="_blank" rel="noopener">Kanıt '+(i+1)+' • '+stamp(x.captured_at)+'</a>').join('')+'<button class="btn" data-admin-only data-av-analyze="'+esc(a.key)+'"'+(aiPending?' disabled':'')+'>AI ile yeniden incele</button>':'')+'<button class="btn" data-av-history="'+esc(a.key)+'">Teklif geçmişi</button></div><div class="av-history"></div></div></article>';
 }
@@ -179,7 +179,7 @@ async function history(button){
   try{
     const r=await fetch('/api/ad-visuals/history?key='+encodeURIComponent(button.dataset.avHistory),{cache:'no-store'});if(!r.ok)throw new Error('Teklif geçmişi alınamadı');
     const data=await r.json();
-    box.innerHTML=(data.rows||[]).map(x=>'<div><b>'+stamp(x.observed_at)+' • '+(x.event_type==='first_seen'?'İlk gözlem':x.event_type==='analysis_updated'?(isAdmin()?'AI yeniden inceledi':'Teklif güncellendi'):'Değişiklik')+'</b><p>'+esc(offerText(x.analysis_json?.offer))+'</p><p>'+esc((x.analysis_json?.conditions||[]).join(' · '))+'</p></div>').join('')||'<p>Geçmiş kayıt yok.</p>';
+    box.innerHTML=(data.rows||[]).map(x=>'<div><b>'+stamp(x.observed_at)+' • '+(x.event_type==='first_seen'?'İlk gözlem':x.event_type==='category_updated'?'Kategori düzeltildi':x.event_type==='analysis_updated'?(isAdmin()?'AI yeniden inceledi':'Teklif güncellendi'):'Değişiklik')+'</b><p>'+esc(offerText(x.analysis_json?.offer))+'</p><p>'+esc((x.analysis_json?.conditions||[]).join(' · '))+'</p></div>').join('')||'<p>Geçmiş kayıt yok.</p>';
   }catch(e){box.textContent=isAdmin()?e.message:'Teklif geçmişi alınamadı. Tekrar deneyin.'}finally{button.disabled=false}
 }
 const viewKey=(category,brand)=>JSON.stringify([category,captureBrand(brand)]);
