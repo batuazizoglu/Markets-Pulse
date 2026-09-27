@@ -161,10 +161,12 @@ app.get('/api/summary', async (req,res,next)=>{try{
     (SELECT detected_at FROM changes c WHERE c.source_id=s.id ORDER BY c.id DESC LIMIT 1) last_change_at,
     (SELECT COUNT(*)::int FROM products p WHERE p.source_id=s.id AND p.active=TRUE) active_products
     FROM sources s ORDER BY s.id`);
-  const ch=await pool.query("SELECT COUNT(*)::int c FROM changes WHERE detected_at >= NOW()-INTERVAL '24 hours'");
-  const today=await pool.query(`SELECT COUNT(*)::int c FROM changes WHERE detected_at >= ${localMidnightSql}`);
+  const {rows:[bounds]}=await pool.query(`SELECT NOW() window_end,NOW()-INTERVAL '24 hours' day_start,${localMidnightSql} today_start`);
+  const recent=await loadCompetitiveChanges(pool,{start:new Date(Math.min(+new Date(bounds.day_start),+new Date(bounds.today_start))),end:bounds.window_end});
+  const changes24h=recent.filter(change=>+new Date(change.detected_at)>=+new Date(bounds.day_start)).length;
+  const changesToday=recent.filter(change=>+new Date(change.detected_at)>=+new Date(bounds.today_start)).length;
   const ap=await pool.query('SELECT COUNT(*)::int c FROM products WHERE active=TRUE');
-  res.json({generated_at:new Date().toISOString(),sources:src.rows,active_products:ap.rows[0].c,changes_24h:ch.rows[0].c,changes_today:today.rows[0].c});
+  res.json({generated_at:new Date().toISOString(),sources:src.rows,active_products:ap.rows[0].c,changes_24h:changes24h,changes_today:changesToday});
 }catch(e){next(e)}});
 
 app.get('/api/packages', async (req,res,next)=>{try{

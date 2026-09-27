@@ -47,7 +47,10 @@ export function parseCards(text) {
       // Normally the product name is immediately above the main allowance.
       // Walk back a few logical rows to survive harmless wrapper text.
       for (let j = i - 1; j >= Math.max(0, i - 4); j--) {
-        if (isLikelyName(lines[j])) {
+        // Red Junior is both a navigation category and an actual tariff name.
+        // Only accept the category label when its allowance is directly below
+        // it, otherwise its benefits can spill into the preceding Uni card.
+        if (isLikelyName(lines[j]) || (j === i - 1 && isRedJuniorName(lines[j]))) {
           starts.push(j);
           break;
         }
@@ -74,6 +77,10 @@ function isLikelyName(s) {
   if (/^(Detayları Göster|Hemen Başvur|Satın Al|₺|\/ ay)$/i.test(s)) return false;
   if (/^(Aşım Yok|Fatura Aşımı Yok|Sınırsız|Happy Avantajlar)$/i.test(s)) return false;
   return /[A-Za-zÇĞİÖŞÜçğıöşü]/.test(s);
+}
+
+function isRedJuniorName(name) {
+  return /^Red Junior$/i.test(name || '');
 }
 
 function parseCard(lines, position) {
@@ -171,6 +178,37 @@ function withCommercialTerms(extras, lines) {
   const preserved = extras.filter(line=>line!=='Non-Stop internet').map(withoutPricePhases).filter(Boolean);
   const additions = [...new Set(commercialTerms(lines))].filter(term => !preserved.includes(term));
   return [...preserved, ...additions];
+}
+
+function embeddedCardObservation(previous) {
+  const raw = typeof previous.raw_text === 'string' ? previous.raw_text.trim() : '';
+  if (!raw) return null;
+  const identity = previous.identity_base || normalizeIdentity(previous.current_name || previous.name || '');
+  if (!identity) return null;
+  const cards = parseCards(raw.split(/\s*\|\s*|\r?\n/).join('\n'));
+  if (cards.length < 2 || cards[0].identity_base !== identity) return null;
+  const embedded = cards.slice(1).filter(card => isRedJuniorName(card.name));
+  return embedded.length ? {first:cards[0],embedded} : null;
+}
+
+// Historical raw text proves which benefits belonged to the following Red
+// Junior card. Correct only the comparison observation; keep row metadata and
+// the persisted hash so the scanner can append a clean current version.
+export function rebaseCardBoundaries(previous) {
+  const observation = embeddedCardObservation(previous);
+  if (!observation) return previous;
+  const rebased = {...previous};
+  for (const field of ['data_gb','bonus_data_gb','local_tr_minutes','international_minutes',
+    'sms','validity_days','red_passport_days','price_try','extras_json','raw_text']) {
+    rebased[field] = observation.first[field];
+  }
+  return rebased;
+}
+
+// This is evidence of an already observed card, not a newly launched tariff.
+// Do not recover other cards opportunistically from legacy parsing changes.
+export function recoverEmbeddedCards(previous) {
+  return embeddedCardObservation(previous)?.embedded || [];
 }
 
 // Compare the old observation using the newly tracked commercial terms. This

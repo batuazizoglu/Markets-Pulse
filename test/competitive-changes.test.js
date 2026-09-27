@@ -6,6 +6,7 @@ import {competitiveWindow,loadCompetitiveChanges} from '../src/competitive-chang
 import {buildMarketPulse,marketPulseFromRows} from '../src/intelligence.js';
 import {buildReportContext} from '../src/report-data.js';
 import {collectMonthlyData} from '../src/monthly-report-data.js';
+import {parseCards} from '../src/parser.js';
 
 const end=new Date('2030-07-02T09:00:00.000Z'),window=competitiveWindow(7,end);
 const eventAt=new Date(+end-3600000),latestAt=new Date(+end-60000);
@@ -113,4 +114,105 @@ test('daily, weekly and monthly reports derive analysis and statistics from one 
     const dashboard=await buildMarketPulse(db,ctx.days,end);
     assert.deepEqual(ctx.market,dashboard,type);
   }
+});
+
+const boundaryBefore=new Date('2030-07-01T08:00:00Z'),boundaryEvent=new Date('2030-07-01T09:00:00Z');
+const megaText=`Super Cool Uni Mega
+30 GB
++ 30 GB Özgür Pass
+500 DK Ada İçi & TR
+1000 SMS
++ Happy Avantajlar
+₺1799
+Hemen Başvur`;
+const juniorText=`Red Junior
+10 GB
++ 5 GB Özgür Pass
+500 DK Ada İçi & TR
+1000 SMS
+6-17 yaş için
+₺569
+Hemen Başvur`;
+
+async function boundaryFixture(){
+  const database=new PGlite();await database.exec(SCHEMA_SQL);
+  await database.query("INSERT INTO sources(id,slug,name,url) VALUES(1,'faturali','Faturalı','https://synthetic.example/')");
+  await database.query("INSERT INTO scans(id,source_id,started_at,status) VALUES(1,1,$1,'ok'),(2,1,$2,'ok'),(3,1,$2,'ok')",[boundaryBefore,boundaryEvent]);
+  return database;
+}
+
+async function boundaryProduct(database,{oldRaw=megaText+'\n'+juniorText,newText=megaText,field='Ek Fayda / Koşul',oldValue,newValue,eventScan=2,changeScan=2}={}){
+  const before=parseCards(megaText)[0],after=parseCards(newText)[0],junior=parseCards(juniorText)[0];
+  const oldExtras=[...before.extras_json,...junior.extras_json];
+  const p=(await database.query(`INSERT INTO products(source_id,identity_base,current_name,first_seen_at,last_seen_at)
+    VALUES(1,$1,$2,$3,$4) RETURNING id`,[before.identity_base,before.name,boundaryBefore,boundaryEvent])).rows[0];
+  for(const [scan,at,card,extras,raw] of [[1,boundaryBefore,before,oldExtras,oldRaw],[eventScan,boundaryEvent,after,after.extras_json,after.raw_text]]){
+    await database.query(`INSERT INTO product_versions(product_id,scan_id,captured_at,name,data_gb,bonus_data_gb,local_tr_minutes,sms,price_try,extras_json,raw_text,product_hash)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12)`,[p.id,scan,at,card.name,card.data_gb,card.bonus_data_gb,card.local_tr_minutes,card.sms,card.price_try,JSON.stringify(extras),raw,card.product_hash]);
+  }
+  const key=field==='Fiyat'?'price_try':'extras_json';
+  const serialize=value=>typeof value==='string'?value:JSON.stringify(value);
+  const c=(await database.query(`INSERT INTO changes(source_id,product_id,scan_id,detected_at,change_type,field_name,old_value,new_value,severity)
+    VALUES(1,$1,$2,$3,'field_changed',$4,$5,$6,'medium') RETURNING *`,[p.id,changeScan,boundaryEvent,field,
+      serialize(oldValue??(key==='extras_json'?oldExtras:before[key])),serialize(newValue??after[key])])).rows[0];
+  return {productId:p.id,change:c};
+}
+
+test('canonical views omit only proven historical boundary noise and preserve original rows and evidence',async()=>{
+  const database=await boundaryFixture();
+  try{
+    const noise=await boundaryProduct(database);
+    const price=await boundaryProduct(database,{newText:megaText.replace('₺1799','₺1899'),field:'Fiyat'});
+    const benefit=await boundaryProduct(database,{newText:megaText+'\nFatura Aşımı Yok'});
+    const noEvidence=await boundaryProduct(database,{oldRaw:null});
+    const mismatch=await boundaryProduct(database,{oldValue:['Unverified historical benefit']});
+    const wrongScan=await boundaryProduct(database,{eventScan:3});
+    const unknownField=await boundaryProduct(database,{field:'Unknown field'});
+    const versionsBefore=(await database.query('SELECT * FROM product_versions ORDER BY id')).rows;
+    const changesBefore=(await database.query('SELECT * FROM changes ORDER BY id')).rows;
+    const rows=await loadCompetitiveChanges(database,{start:boundaryBefore,end});
+    assert.ok(!rows.some(row=>row.id===noise.change.id));
+    assert.deepEqual(rows.map(row=>row.id).sort(),[price,benefit,noEvidence,mismatch,wrongScan,unknownField].map(x=>x.change.id).sort());
+    assert.ok(rows.every(row=>!('_boundary_event_version' in row)&&!('_boundary_previous_version' in row)));
+    const market=await buildMarketPulse(database,7,end);
+    assert.deepEqual(market.changes,rows);assert.equal(market.change_count,6);
+    const monthly=await collectMonthlyData(database,boundaryBefore,end);
+    assert.deepEqual(monthly.changes,rows);
+    assert.deepEqual((await database.query('SELECT * FROM product_versions ORDER BY id')).rows,versionsBefore);
+    assert.deepEqual((await database.query('SELECT * FROM changes ORDER BY id')).rows,changesBefore);
+  }finally{await database.close()}
+});
+
+test('historical noise filtering prefers the event scan and fills the requested limit across filtered batches',async()=>{
+  const database=await boundaryFixture();
+  try{
+    const real=await boundaryProduct(database,{field:'Fiyat',newText:megaText.replace('₺1799','₺1899')});
+    const noise=await boundaryProduct(database);
+    // A later version at the same instant must not replace this event's evidence.
+    await database.query(`INSERT INTO product_versions(product_id,scan_id,captured_at,name,extras_json,raw_text,product_hash)
+      VALUES($1,3,$2,'Later parser observation','["Different benefits"]'::jsonb,NULL,'later')`,[noise.productId,boundaryEvent]);
+    // Fill an entire read batch with the same proven event; the older real row
+    // must still fill limit=1, rather than producing an empty changes panel.
+    await database.query(`INSERT INTO changes(source_id,product_id,scan_id,detected_at,change_type,field_name,old_value,new_value,severity)
+      SELECT source_id,product_id,scan_id,detected_at,change_type,field_name,old_value,new_value,severity
+      FROM changes CROSS JOIN generate_series(1,81) n WHERE id=$1`,[noise.change.id]);
+    let reads=0;
+    const tracked={query(sql,args){reads++;return database.query(sql,args)}};
+    const rows=await loadCompetitiveChanges(tracked,{end,limit:1});
+    assert.equal(reads,2);assert.equal(rows.length,1);assert.equal(rows[0].id,real.change.id);
+  }finally{await database.close()}
+});
+
+test('boundary classification normalizes historical phase terms while retaining real phase changes and missing prior evidence',async()=>{
+  const database=await boundaryFixture();
+  try{
+    const phased=megaText.replace('₺1799','İlk 3 ay 1.499 TL\n₺1799');
+    const noise=await boundaryProduct(database,{oldRaw:phased+'\n'+juniorText,newText:phased});
+    const real=await boundaryProduct(database,{oldRaw:phased+'\n'+juniorText,newText:phased.replace('1.499','1.599')});
+    const missing=await boundaryProduct(database);
+    await database.query('DELETE FROM product_versions WHERE product_id=$1 AND scan_id=1',[missing.productId]);
+    const rows=await loadCompetitiveChanges(database,{end});
+    assert.ok(!rows.some(row=>row.id===noise.change.id));
+    assert.deepEqual(rows.map(row=>row.id).sort(),[real.change.id,missing.change.id].sort());
+  }finally{await database.close()}
 });

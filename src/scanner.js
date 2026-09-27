@@ -1,7 +1,7 @@
 import zlib from 'zlib';
 import { pool } from './db.js';
 import { TRACKED_FIELDS } from './config.js';
-import { extractRelevantText, parseCards, rebaseCommercialTerms, sha256 } from './parser.js';
+import { extractRelevantText, parseCards, rebaseCardBoundaries, recoverEmbeddedCards, rebaseCommercialTerms, sha256 } from './parser.js';
 import { matchCardsToProducts } from './matcher.js';
 import { captureEvidenceScreenshots } from './screenshot.js';
 
@@ -119,7 +119,8 @@ export async function processCards(source, scanId, cards, baseline, capturedAt, 
   const { rows: current } = await db.query(`
     SELECT p.*,
       v.data_gb, v.bonus_data_gb, v.local_tr_minutes, v.international_minutes, v.sms,
-      v.validity_days, v.red_passport_days, v.price_try, v.extras_json, v.product_hash, v.raw_text
+      v.validity_days, v.red_passport_days, v.price_try, v.extras_json, v.product_hash, v.raw_text,
+      v.captured_at AS version_captured_at, v.scan_id AS version_scan_id
     FROM products p
     LEFT JOIN LATERAL (
       SELECT * FROM product_versions pv WHERE pv.product_id=p.id ORDER BY pv.captured_at DESC,pv.id DESC LIMIT 1
@@ -128,6 +129,34 @@ export async function processCards(source, scanId, cards, baseline, capturedAt, 
   `,[source.id]);
 
   const matches = matchCardsToProducts(cards, current);
+  // Red Junior was previously swallowed by the preceding card. Its dated raw
+  // evidence is a baseline, not a newly launched tariff. Use the latest such
+  // observation so a genuine concurrent Junior change remains detectable.
+  const embeddedBaselines = new Map();
+  let donors = [];
+  if (cards.some((card,index) => card.identity_base === 'red-junior' && !matches.has(index))) {
+    // Search durable versions as well: a previous interrupted scan may already
+    // have cleaned the donor's latest version before reaching Junior.
+    const result = await db.query(`SELECT v.name AS current_name,v.card_position AS last_position,v.raw_text,
+      v.captured_at AS version_captured_at,v.scan_id AS version_scan_id
+      FROM product_versions v JOIN products p ON p.id=v.product_id
+      WHERE p.source_id=$1 AND v.raw_text LIKE '%Red Junior%'
+      AND NOT EXISTS (SELECT 1 FROM products existing WHERE existing.source_id=$1 AND existing.identity_base='red-junior')
+      ORDER BY v.captured_at DESC,v.id DESC`,[source.id]);
+    donors = result.rows;
+  }
+  for (const previous of donors) {
+    if (!previous.version_captured_at || !previous.version_scan_id) continue;
+    for (const recovered of recoverEmbeddedCards(previous)) {
+      const existing = embeddedBaselines.get(recovered.identity_base);
+      if (!existing || new Date(previous.version_captured_at) > new Date(existing.at)) {
+        embeddedBaselines.set(recovered.identity_base, {
+          card: {...recovered, position:Number(previous.last_position || 0) + recovered.position},
+          at:previous.version_captured_at, scanId:previous.version_scan_id
+        });
+      }
+    }
+  }
   const seenProductIds = new Set();
   let changes = 0;
 
@@ -135,18 +164,28 @@ export async function processCards(source, scanId, cards, baseline, capturedAt, 
     const card = cards[i];
     let product = matches.get(i);
     let prev = null;
+    const created = !product;
 
     if (!product) {
-      const r = await db.query(`INSERT INTO products(source_id,identity_base,current_name,first_seen_at,last_seen_at,active,missing_count,last_position)
-                                  VALUES($1,$2,$3,$4,$4,TRUE,0,$5) RETURNING *`,
-        [source.id, card.identity_base, card.name, capturedAt, card.position]);
-      product = r.rows[0];
-      if (!baseline) {
-        await addChange(source.id, product.id, scanId, capturedAt, 'added', null, null, card.name, 'critical', db);
-        changes++;
+      const recovered = embeddedBaselines.get(card.identity_base);
+      if (recovered) {
+        // Append the separately recovered observation; never rewrite the
+        // original combined version or claim it was observed at today's scan.
+        // Product + recovered baseline are atomic, even if the scan is cut off.
+        product = await addRecoveredProduct(source, card, recovered, capturedAt, db);
+        prev = {...recovered.card, current_name:recovered.card.name};
+      } else {
+        const r = await db.query(`INSERT INTO products(source_id,identity_base,current_name,first_seen_at,last_seen_at,active,missing_count,last_position)
+          VALUES($1,$2,$3,$4,$4,TRUE,0,$5) RETURNING *`,
+          [source.id,card.identity_base,card.name,capturedAt,card.position]);
+        product = r.rows[0];
+        if (!baseline) {
+          await addChange(source.id, product.id, scanId, capturedAt, 'added', null, null, card.name, 'critical', db);
+          changes++;
+        }
       }
     } else {
-      prev = rebaseCommercialTerms(product, card);
+      prev = rebaseCommercialTerms(rebaseCardBoundaries(product), card);
       await db.query(`UPDATE products SET identity_base=$1,current_name=$2,last_seen_at=$3,active=TRUE,missing_count=0,last_position=$4 WHERE id=$5`,
         [card.identity_base,card.name,capturedAt,card.position,product.id]);
     }
@@ -156,13 +195,8 @@ export async function processCards(source, scanId, cards, baseline, capturedAt, 
     // Removed terms can restore the old, pre-enrichment hash. Compare the
     // reconstructed observation too, otherwise that real removal is missed.
     const fieldsChanged = prev && TRACKED_FIELDS.some(([field]) => !same(prev[field], card[field]));
-    if (!prev || prev.product_hash !== card.product_hash || fieldsChanged || prev.current_name !== card.name) {
-      await db.query(`INSERT INTO product_versions(product_id,scan_id,captured_at,name,card_position,data_gb,bonus_data_gb,local_tr_minutes,
-        international_minutes,sms,validity_days,red_passport_days,price_try,extras_json,raw_text,product_hash)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,$16)`,
-        [product.id,scanId,capturedAt,card.name,card.position,card.data_gb,card.bonus_data_gb,card.local_tr_minutes,
-         card.international_minutes,card.sms,card.validity_days,card.red_passport_days,card.price_try,
-         JSON.stringify(card.extras_json),card.raw_text,card.product_hash]);
+    if (created || !prev || prev.product_hash !== card.product_hash || fieldsChanged || prev.current_name !== card.name) {
+      await addVersion(product.id, scanId, capturedAt, card, db);
 
       if (prev && !baseline) {
         for (const [field,label,severity] of TRACKED_FIELDS) {
@@ -182,6 +216,33 @@ export async function processCards(source, scanId, cards, baseline, capturedAt, 
   }
   cards._seenProductIds = seenProductIds;
   return changes;
+}
+
+async function addRecoveredProduct(source,current,recovered,capturedAt,db) {
+  const old = recovered.card;
+  const result = await db.query(`WITH recovered_product AS (
+    INSERT INTO products(source_id,identity_base,current_name,first_seen_at,last_seen_at,active,missing_count,last_position)
+    VALUES($1,$2,$3,$4,$5,TRUE,0,$6) RETURNING *
+  ), recovered_version AS (
+    INSERT INTO product_versions(product_id,scan_id,captured_at,name,card_position,data_gb,bonus_data_gb,local_tr_minutes,
+      international_minutes,sms,validity_days,red_passport_days,price_try,extras_json,raw_text,product_hash)
+    SELECT p.id,$7,$4,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb,$19,$20 FROM recovered_product p
+    RETURNING product_id
+  ) SELECT p.* FROM recovered_product p JOIN recovered_version v ON v.product_id=p.id`,
+    [source.id,current.identity_base,current.name,recovered.at,capturedAt,current.position,
+     recovered.scanId,old.name,old.position,old.data_gb,old.bonus_data_gb,old.local_tr_minutes,
+     old.international_minutes,old.sms,old.validity_days,old.red_passport_days,old.price_try,
+     JSON.stringify(old.extras_json),old.raw_text,old.product_hash]);
+  return result.rows[0];
+}
+
+async function addVersion(productId,scanId,capturedAt,card,db) {
+  await db.query(`INSERT INTO product_versions(product_id,scan_id,captured_at,name,card_position,data_gb,bonus_data_gb,local_tr_minutes,
+    international_minutes,sms,validity_days,red_passport_days,price_try,extras_json,raw_text,product_hash)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,$16)`,
+    [productId,scanId,capturedAt,card.name,card.position,card.data_gb,card.bonus_data_gb,card.local_tr_minutes,
+     card.international_minutes,card.sms,card.validity_days,card.red_passport_days,card.price_try,
+     JSON.stringify(card.extras_json),card.raw_text,card.product_hash]);
 }
 
 async function processMissing(source, scanId, cards, baseline, detectedAt) {
