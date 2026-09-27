@@ -152,16 +152,22 @@ export async function queueStoredAdReviews(pool,sources,{manual=false,key=null,n
 export async function repairReviewCategories(pool,sources,owner,{now=new Date()}={}){
   return transaction(pool,async db=>{
     await assertLease(db,owner);
+    const after=(await db.query('SELECT category_repair_after FROM ad_cloud_control WHERE id=1')).rows[0]?.category_repair_after||null;
     // Match the feed importer's lock order so a concurrent publication cannot
     // hold the sync row while waiting for one of these archived items.
     const sync=(await db.query('SELECT * FROM ad_visual_sync WHERE id=1 FOR UPDATE')).rows[0]||{};
     const rows=(await db.query(`SELECT ad_key,observed_at,analysis_json FROM ad_visual_items
       WHERE category='review' AND analysis_json->'ai_analysis'->>'status'='completed'
-      ORDER BY observed_at,ad_key LIMIT 400 FOR UPDATE`)).rows;
-    if(!rows.length)return {reclassified:0,categories:{}};
-    const categories=await getAdCategories(db),repairs=[];
+      AND ($1::text IS NULL OR ad_key>$1)
+      ORDER BY ad_key LIMIT 400 FOR UPDATE`,[after])).rows;
+    if(!rows.length){
+      if(after)await db.query('UPDATE ad_cloud_control SET category_repair_after=NULL WHERE id=1');
+      return {reclassified:0,categories:{}};
+    }
+    const categories=await getAdCategories(db),repairs=[];let processed=0,lastKey=after;
     for(const row of rows){
       if(repairs.length>=100)break;
+      processed++;lastKey=row.ad_key;
       const ad=row.analysis_json;
       // Older formats use the existing bounded AI migration queue; they cannot
       // claim the current format's preserved visual transcription.
@@ -187,6 +193,11 @@ export async function repairReviewCategories(pool,sources,owner,{now=new Date()}
         category_evidence:proposal.category_evidence,category_assignment};
       repairs.push({row,candidate,updated});
     }
+    // Advance even when this page is entirely ambiguous, so older unresolved
+    // cards cannot hide later evidence. The cursor survives process restarts,
+    // and commits or rolls back together with the corresponding corrections.
+    const nextAfter=processed===rows.length&&rows.length<400?null:lastKey;
+    await db.query('UPDATE ad_cloud_control SET category_repair_after=$1 WHERE id=1 AND category_repair_after IS DISTINCT FROM $1',[nextAfter]);
     if(!repairs.length)return {reclassified:0,categories:{}};
     const feed=validateAdFeed({schema_version:1,producer:'cloud-vision',schedule:sync.schedule_json||CLOUD_SCHEDULE,
       run:{id:'category-'+randomUUID(),checked_at:now.toISOString(),status:['ok','partial','blocked','error'].includes(sync.status)?sync.status:'partial',coverage:sync.coverage_json||[]},

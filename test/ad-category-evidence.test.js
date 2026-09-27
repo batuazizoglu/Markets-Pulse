@@ -45,6 +45,8 @@ test('digital services classify explicit app, streaming and online payment actio
   }
   assert.equal(proposeStoredCategory(row('My Vodafone')),null);
   assert.equal(proposeStoredCategory(row('Online fırsatlar sizi bekliyor')),null);
+  for(const text of ['İnternet faturanız 600 TL','İnternet faturalarında %20 indirim'])assert.equal(proposeStoredCategory(row(text)),null);
+  for(const text of ['Faturanızı internetten ödeyin','İnternet üzerinden fatura ödeme'])assert.equal(proposeStoredCategory(row(text)).category,'auto-dijital-hizmetler');
 });
 test('device retail and corporate notices require actual content, not branding or prior summaries',()=>{
   for(const text of ['Online mağaza: Cep Telefonu, TV & Ses Sistemleri, Bilgisayar','Elektronik ürünler için e-ticaret mağazamızı ziyaret edin'])assert.equal(proposeStoredCategory(row(text)).category,'auto-cihazlar');

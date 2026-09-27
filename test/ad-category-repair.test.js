@@ -144,3 +144,34 @@ test('fresh AI reading of a repaired archive card does not inherit the old categ
     assert.deepEqual((await db.query('SELECT event_type FROM ad_visual_versions ORDER BY id')).rows.map(x=>x.event_type),['first_seen','category_updated','analysis_updated']);
   }finally{await db.close()}
 });
+
+test('durable repair cursor passes 400 ambiguous cards and resumes after the 100-correction cap without gaps',async()=>{
+  const db=await fixture();
+  try{
+    const ads=Array.from({length:501},(_,index)=>advertisement(String(70000000+index),index<400?
+      {ad_text:'Marka duyurusu',visible_text:'Marka duyurusu'}:{}));
+    for(let start=0;start<ads.length;start+=400){
+      const feed=validateAdFeed({schema_version:1,producer:'cloud-vision',schedule:{enabled:true,description:'Günlük bulut taraması',timezone:'Asia/Famagusta'},
+        run:{id:'seed-cursor-page-'+start,checked_at:observed,status:'partial',coverage:[]},ads:ads.slice(start,start+400)},HOME_INTERNET_SOURCES);
+      await importAdFeed(db,feed,{fetcher:async()=>new Response(jpeg)});
+    }
+    const controlBefore=(await db.query('SELECT * FROM ad_cloud_control')).rows[0];
+    const first=await repairReviewCategories(db,HOME_INTERNET_SOURCES,owner);
+    assert.equal(first.reclassified,0);
+    assert.equal((await db.query('SELECT category_repair_after FROM ad_cloud_control')).rows[0].category_repair_after,'164143610515:70000399:1');
+    await db.exec(SCHEMA_SQL);
+    assert.equal((await db.query('SELECT category_repair_after FROM ad_cloud_control')).rows[0].category_repair_after,'164143610515:70000399:1','restart migration retains progress');
+    const second=await repairReviewCategories(db,HOME_INTERNET_SOURCES,owner);
+    assert.equal(second.reclassified,100);
+    assert.equal((await db.query('SELECT category_repair_after FROM ad_cloud_control')).rows[0].category_repair_after,'164143610515:70000499:1','cursor ends at the last processed item, not the fetched page end');
+    assert.equal((await db.query("SELECT category FROM ad_visual_items WHERE ad_key='164143610515:70000500:1'")).rows[0].category,'review');
+    assert.equal((await repairReviewCategories(db,HOME_INTERNET_SOURCES,owner)).reclassified,1);
+    assert.equal((await db.query('SELECT category_repair_after FROM ad_cloud_control')).rows[0].category_repair_after,null);
+    assert.equal((await db.query("SELECT COUNT(*)::int n FROM ad_visual_items WHERE category='mnp'")).rows[0].n,101);
+    assert.equal((await db.query("SELECT COUNT(*)::int n FROM ad_visual_versions WHERE event_type='category_updated'")).rows[0].n,101);
+    assert.deepEqual((await db.query('SELECT * FROM ad_cloud_control')).rows[0],controlBefore,'a completed pass leaves budgets and schedule unchanged');
+    await db.query("UPDATE ad_cloud_control SET category_repair_after='999999999999999999999999999999:999999999999999999999999999999:zz'");
+    assert.equal((await repairReviewCategories(db,HOME_INTERNET_SOURCES,owner)).reclassified,0);
+    assert.deepEqual((await db.query('SELECT * FROM ad_cloud_control')).rows[0],controlBefore,'an empty end resets only the scan cursor');
+  }finally{await db.close()}
+});

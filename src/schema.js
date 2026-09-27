@@ -296,6 +296,7 @@ CREATE TABLE IF NOT EXISTS ad_cloud_control (
   vision_calls INTEGER NOT NULL DEFAULT 0
 );
 INSERT INTO ad_cloud_control(id) VALUES(1) ON CONFLICT DO NOTHING;
+ALTER TABLE ad_cloud_control ADD COLUMN IF NOT EXISTS category_repair_after TEXT;
 CREATE TABLE IF NOT EXISTS ad_cloud_jobs (
   id BIGSERIAL PRIMARY KEY,
   batch_key TEXT NOT NULL,
