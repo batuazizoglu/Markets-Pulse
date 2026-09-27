@@ -1,7 +1,8 @@
 import {AD_CATEGORIES,AD_CAPTION_MAX_LENGTH,resolveCategoryProposal} from './ad-categories.js';
 
 // These rules repair categorisation only. They never extract offers, manufacture
-// model confidence, or treat previous prose summaries as observed evidence.
+// model confidence, or treat prose summaries as OCR. One explicitly marked
+// visual-retail rule cross-checks a model's object descriptions with retail copy.
 export const AD_STORED_CLASSIFICATION_VERSION=1;
 const MAX_QUOTE=2000;
 const sourceTexts=ad=>[
@@ -83,6 +84,41 @@ function ruleQuote(rule,{source,raw,mapped}){
   }
   return null;
 }
+const explicitRetail=/online\s+alisveris\s+magaza|alisveris\s+merkezi|(?:elektronik(?:\s+urun)?|cihaz).{0,20}(?:magaza|satis)|online\s+shopping\s+store|(?:electronics|device)\s+(?:store|sales)/;
+const deviceObjects=[
+  /(?:cep|akilli)\s*telefon|smartphone|mobile\s+phone/,
+  /bilgisayar|laptop|notebook/,
+  /\btablet\b/,
+  /kulaklik|hoparlor|headphone|earbud|speaker/,
+  /kamera|camera/,
+  /akilli\s+saat|smart\s*watch/,
+  /oyun\s*(?:konsolu|kontrol\s*(?:cihazi|kolu))|game\s*(?:controller|console)/,
+  /televizyon|television|smart\s*tv/
+];
+function visualRetailProposal(ad,sources,categories){
+  const confidence=ad.category_confidence;
+  if(confidence!=null&&(typeof confidence!=='number'||!Number.isFinite(confidence)||confidence<0.8||confidence>1))return null;
+  if(!sources.some(source=>explicitRetail.test(source.mapped.text)))return null;
+  const quote=typeof ad.visual_summary==='string'?ad.visual_summary.trim():'';
+  if(!quote||quote.length>MAX_QUOTE)return null;
+  const text=mappedText(quote,{ascii:true}).text;
+  // The caller supplies a completed or fresh AI visual analysis. Reject a
+  // description that itself says the objects are hypothetical or not visible.
+  const uncertain=/belirsiz|net degil|secil(?:em|m)|tahmin|olabilir|muhtemel|varsay|hipotetik|sanki|gorunm(?:uyor|eyen|ez)|gorulem|gosterilm(?:iyor|emis|ez|edi)|sergilenm(?:iyor|emis|ez|edi)|bulunmuyor|yer almiyor|\b(?:yok|degil|no|not)\b|unclear|hypothetical|maybe|possibly|may be|could be|cannot see/;
+  const displayed=/sergilen|gosteril|goruluyor|gorunuyor|yer aliyor|resmedil|displayed|depicted|shown/;
+  const mentionsOnly=/bahsedil|sozu gec|isimleri|kategorileri|kategorilerinden|\bmentioned\b|\bcategories\b/;
+  const clauses=text.split(/[.;!?](?:\s|$)|\s+(?:ancak|ama|fakat|but|however)\s+/).filter(Boolean);
+  const objectCount=clause=>deviceObjects.filter(pattern=>pattern.test(clause)).length;
+  // The visible predicate must describe the devices in its own clause. A logo
+  // displayed elsewhere cannot turn a list of device names into visual proof.
+  // Missing price text is separate from uncertainty about the objects themselves.
+  if(clauses.some(clause=>uncertain.test(clause)&&(objectCount(clause)>0||/cihaz|urun|nesne|\bdevices?\b|\bobjects?\b/.test(clause))))return null;
+  if(!clauses.some(clause=>objectCount(clause)>=2&&displayed.test(clause)&&!uncertain.test(clause)&&!mentionsOnly.test(clause)))return null;
+  if(!/magaza|alisveris|online.{0,30}satis|satisi|satisa|retail|shopping|store/.test(text))return null;
+  const resolved=resolveCategoryProposal('new','Cihazlar',categories);if(!resolved)return null;
+  return {...resolved,category_evidence:quote,classification_method:'stored_evidence',
+    classification_rule:'devices_visual_retail',classification_version:AD_STORED_CLASSIFICATION_VERSION,evidence_source:'visual_summary'};
+}
 export function proposeStoredCategory(ad,{categories=AD_CATEGORIES,verifiedFixedIspPageId=null}={}){
   if(ad?.category!=='review')return null;
   const verifiedFixedPage=typeof verifiedFixedIspPageId==='string'&&/^\d{5,30}$/.test(verifiedFixedIspPageId)&&ad.page_id===verifiedFixedIspPageId;
@@ -95,5 +131,5 @@ export function proposeStoredCategory(ad,{categories=AD_CATEGORIES,verifiedFixed
         classification_rule:rule.id,classification_version:AD_STORED_CLASSIFICATION_VERSION,evidence_source:evidence.source};
     }
   }
-  return null;
+  return visualRetailProposal(ad,sources,categories);
 }

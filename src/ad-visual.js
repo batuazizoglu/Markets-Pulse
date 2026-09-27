@@ -60,7 +60,9 @@ export function validateAdFeed(input,sources,now=new Date()){
     }
     if(dynamic){
       const resolved=resolveCategoryProposal(a.category,a.category_label);
-      if(input.producer!=='cloud-vision'||a.taxonomy_version!==AD_TAXONOMY_VERSION||!resolved||resolved.category!==a.category||resolved.category_label!==a.category_label||!category_assignment&&(typeof a.category_confidence!=='number'||!Number.isFinite(a.category_confidence)||a.category_confidence<0.8||a.category_confidence>1)||!evidence||![clean(a.visible_text,12000),clean(a.ad_text,AD_CAPTION_MAX_LENGTH)].some(text=>text.includes(evidence)))throw new Error('Yeni kategori için doğrulanmış AI görsel analizi gerekli');
+      const evidenceSources=category_assignment?.rule==='devices_visual_retail'&&category_assignment.evidence_source==='visual_summary'
+        ?[clean(a.visual_summary)]:[clean(a.visible_text,12000),clean(a.ad_text,AD_CAPTION_MAX_LENGTH)];
+      if(input.producer!=='cloud-vision'||a.taxonomy_version!==AD_TAXONOMY_VERSION||!resolved||resolved.category!==a.category||resolved.category_label!==a.category_label||!category_assignment&&(typeof a.category_confidence!=='number'||!Number.isFinite(a.category_confidence)||a.category_confidence<0.8||a.category_confidence>1)||!evidence||!evidenceSources.some(text=>text.includes(evidence)))throw new Error('Yeni kategori için doğrulanmış AI görsel analizi gerekli');
     }
     if(a.category==='mnp'&&!category_assignment&&!/numara.{0,40}(tasi|degis)|mnp|operator.{0,30}(gecis|degis)/.test(fold))throw new Error('MNP için numara taşıma koşulu gerekli');
     if(a.category==='home'&&!category_assignment&&!/ev(de)?\s*internet|fiber|vdsl|wdsl|adsl|superbox|red\s*box|sabit\s*internet|apartman/.test(fold))throw new Error('Ev interneti sınıfı için kanıt gerekli');
