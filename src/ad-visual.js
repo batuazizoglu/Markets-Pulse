@@ -1,5 +1,7 @@
 import {createHash} from 'node:crypto';
-import {socialDirectory} from './isp-registry.js';
+import {isDeepStrictEqual} from 'node:util';
+import {socialDirectory,verifiedFixedIspPageId} from './isp-registry.js';
+import {proposeStoredCategory} from './ad-category-evidence.js';
 import {requireOperationalAdmin,standardAdVisuals,publishedAdRow} from './operational-access.js';
 import {AD_CATEGORIES,AD_TAXONOMY_VERSION,AD_CAPTION_MAX_LENGTH,isDynamicCategory,resolveCategoryProposal} from './ad-categories.js';
 
@@ -45,13 +47,24 @@ export function validateAdFeed(input,sources,now=new Date()){
     const variant=clean(a.variant_id||'1',40);if(!/^[a-zA-Z0-9_-]+$/.test(variant))throw new Error('Geçersiz varyant');
     const key=[a.page_id,a.ad_id,variant].join(':');if(keys.has(key))throw new Error('Tekrarlanan reklam kimliği');keys.add(key);
     const evidence=clean(a.category_evidence),fold=evidence.toLocaleLowerCase('tr').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').replace(/ı/g,'i');
+    let category_assignment;
+    if(a.category_assignment){
+      const assignment=a.category_assignment,reviewed_at=observed(assignment.reviewed_at,now);
+      // Stable dynamic keys are checked below. Reuse the registered spelling of
+      // the same label when independently recomputing its evidence rule.
+      const proposal=proposeStoredCategory({...a,category:'review'},{categories:dynamic?{[a.category]:a.category_label}:undefined,verifiedFixedIspPageId:verifiedFixedIspPageId(a,sources)});
+      if(input.producer!=='cloud-vision'||a.taxonomy_version!==AD_TAXONOMY_VERSION||assignment.method!=='stored_evidence'||assignment.previous_category!=='review'||!proposal||
+        assignment.version!==proposal.classification_version||assignment.rule!==proposal.classification_rule||assignment.evidence_source!==proposal.evidence_source||
+        a.category!==proposal.category||evidence!==proposal.category_evidence||dynamic&&a.category_label!==proposal.category_label||reviewed_at>at||!a.ai_analysis)throw new Error('Kategori düzeltmesi saklanan kanıtla doğrulanamadı');
+      category_assignment={method:'stored_evidence',version:assignment.version,rule:assignment.rule,evidence_source:assignment.evidence_source,previous_category:'review',reviewed_at};
+    }
     if(dynamic){
       const resolved=resolveCategoryProposal(a.category,a.category_label);
-      if(input.producer!=='cloud-vision'||a.taxonomy_version!==AD_TAXONOMY_VERSION||!resolved||resolved.category!==a.category||resolved.category_label!==a.category_label||typeof a.category_confidence!=='number'||!Number.isFinite(a.category_confidence)||a.category_confidence<0.8||a.category_confidence>1||!evidence||![clean(a.visible_text,12000),clean(a.ad_text,AD_CAPTION_MAX_LENGTH)].some(text=>text.includes(evidence)))throw new Error('Yeni kategori için doğrulanmış AI görsel analizi gerekli');
+      if(input.producer!=='cloud-vision'||a.taxonomy_version!==AD_TAXONOMY_VERSION||!resolved||resolved.category!==a.category||resolved.category_label!==a.category_label||!category_assignment&&(typeof a.category_confidence!=='number'||!Number.isFinite(a.category_confidence)||a.category_confidence<0.8||a.category_confidence>1)||!evidence||![clean(a.visible_text,12000),clean(a.ad_text,AD_CAPTION_MAX_LENGTH)].some(text=>text.includes(evidence)))throw new Error('Yeni kategori için doğrulanmış AI görsel analizi gerekli');
     }
-    if(a.category==='mnp'&&!/numara.{0,40}(tasi|degis)|mnp|operator.{0,30}(gecis|degis)/.test(fold))throw new Error('MNP için numara taşıma koşulu gerekli');
-    if(a.category==='home'&&!/ev(de)?\s*internet|fiber|vdsl|wdsl|adsl|superbox|red\s*box|sabit\s*internet|apartman/.test(fold))throw new Error('Ev interneti sınıfı için kanıt gerekli');
-    if(a.category==='gsm'&&!/tarife|mobil|gsm|\bgb\b/.test(fold))throw new Error('GSM sınıfı için kanıt gerekli');
+    if(a.category==='mnp'&&!category_assignment&&!/numara.{0,40}(tasi|degis)|mnp|operator.{0,30}(gecis|degis)/.test(fold))throw new Error('MNP için numara taşıma koşulu gerekli');
+    if(a.category==='home'&&!category_assignment&&!/ev(de)?\s*internet|fiber|vdsl|wdsl|adsl|superbox|red\s*box|sabit\s*internet|apartman/.test(fold))throw new Error('Ev interneti sınıfı için kanıt gerekli');
+    if(a.category==='gsm'&&!category_assignment&&!/tarife|mobil|gsm|\bgb\b/.test(fold))throw new Error('GSM sınıfı için kanıt gerekli');
     if(!clean(a.title)||!evidence||!clean(a.visual_summary))throw new Error('Görsel analiz eksik');
     if(!Array.isArray(a.images)||!a.images.length||a.images.length>3)throw new Error('Görsel kanıt gerekli');
     const images=a.images.map(img=>{
@@ -73,7 +86,9 @@ export function validateAdFeed(input,sources,now=new Date()){
       source_url:socialUrl(a.source_url),ad_status:a.ad_status,observed_at:seen,started_on:a.started_on&&/^\d{4}-\d{2}-\d{2}$/.test(a.started_on)?a.started_on:null,
       ad_text:clean(a.ad_text,AD_CAPTION_MAX_LENGTH),offer,conditions:list(a.conditions),uncertainties:list(a.uncertainties),visual_summary:clean(a.visual_summary),
       ...(input.producer==='cloud-vision'&&a.taxonomy_version===AD_TAXONOMY_VERSION?{taxonomy_version:AD_TAXONOMY_VERSION,visible_text:clean(a.visible_text,12000)}:{}),
-      ...(dynamic?{category_label:a.category_label,category_confidence:a.category_confidence}:{}),
+      ...(dynamic?{category_label:a.category_label}:{}),
+      ...(typeof a.category_confidence==='number'&&Number.isFinite(a.category_confidence)&&a.category_confidence>=0&&a.category_confidence<=1?{category_confidence:a.category_confidence}:{}),
+      ...(category_assignment?{category_assignment}:{}),
       review_required:a.review_required===true||a.category==='review',images,...(input.producer==='cloud-vision'&&['image','video_preview'].includes(a.media_kind)?{media_kind:a.media_kind}:{}),...(ai_analysis?{ai_analysis}:{})};
   });
   const schedule=input.schedule;
@@ -93,7 +108,7 @@ async function boundedFetch(path,maxBytes,fetcher){
   for await(const chunk of res.body){size+=chunk.length;if(size>maxBytes)throw new Error('Analiz dosyası çok büyük');chunks.push(Buffer.from(chunk))}
   return Buffer.concat(chunks);
 }
-export async function importAdFeed(pool,feed,{fetcher=fetch,reanalysis=false}={}){
+export async function importAdFeed(pool,feed,{fetcher=fetch,reanalysis=false,existingTransaction=false,preserveSync=false}={}){
   const current=(await pool.query('SELECT checked_at,run_id FROM ad_visual_sync WHERE id=1')).rows[0];
   if(current?.run_id===feed.run.id)return {duplicate:true,imported:0};
   if(current?.checked_at&&+new Date(current.checked_at)>+new Date(feed.run.checked_at))return {older:true,imported:0};
@@ -109,22 +124,29 @@ export async function importAdFeed(pool,feed,{fetcher=fetch,reanalysis=false}={}
     if(sha(bytes)!==hash||bytes[0]!==0xff||bytes[1]!==0xd8||bytes[2]!==0xff)throw new Error('Görsel kanıt doğrulanamadı');
     assets.set(hash,bytes);
   }
-  const client=pool.connect?await pool.connect():pool;
+  const client=!existingTransaction&&pool.connect?await pool.connect():pool;
   let imported=0,changed=0;
   try{
-    await client.query('BEGIN');
+    if(!existingTransaction)await client.query('BEGIN');
     await client.query('INSERT INTO ad_visual_sync(id) VALUES(1) ON CONFLICT DO NOTHING');
     const lock=(await client.query('SELECT checked_at,run_id FROM ad_visual_sync WHERE id=1 FOR UPDATE')).rows[0];
-    if(lock.run_id===feed.run.id||lock.checked_at&&+new Date(lock.checked_at)>+new Date(feed.run.checked_at)){await client.query('ROLLBACK');return {duplicate:true,imported:0}}
+    if(lock.run_id===feed.run.id||lock.checked_at&&+new Date(lock.checked_at)>+new Date(feed.run.checked_at)){if(!existingTransaction)await client.query('ROLLBACK');return {duplicate:true,imported:0}}
     for(const [hash,bytes] of assets)await client.query('INSERT INTO ad_visual_evidence(sha256,jpeg) VALUES($1,$2) ON CONFLICT DO NOTHING',[hash,bytes]);
     for(const supplied of feed.ads){
       const ad={...supplied};
-      const prior=(await client.query('SELECT meaning_hash,observed_at,analysis_json FROM ad_visual_items WHERE ad_key=$1',[ad.key])).rows[0];
+      const prior=(await client.query('SELECT meaning_hash,observed_at,analysis_json FROM ad_visual_items WHERE ad_key=$1 FOR UPDATE',[ad.key])).rows[0];
       const sameObservation=prior&&+new Date(prior.observed_at)===+new Date(ad.observed_at);
+      const categoryRevision=sameObservation&&reanalysis&&ad.category_assignment&&prior.analysis_json.category==='review'&&
+        +new Date(ad.category_assignment.reviewed_at)>+new Date(prior.analysis_json.category_assignment?.reviewed_at||0)&&
+        isDeepStrictEqual(ad.ai_analysis,prior.analysis_json.ai_analysis);
+      if(categoryRevision){
+        const content=({category,category_label,category_evidence,category_assignment,...rest})=>rest;
+        if(!isDeepStrictEqual(content(ad),content(prior.analysis_json)))throw new Error('Kategori düzeltmesi teklif, gözlem veya AI analizini değiştiremez');
+      }
       const revised=sameObservation&&reanalysis&&ad.ai_analysis&&
         +new Date(ad.ai_analysis.analyzed_at)>+new Date(prior.analysis_json.ai_analysis?.analyzed_at||0)&&
         JSON.stringify((ad.images||[]).map(x=>x.sha256).sort())===JSON.stringify((prior.analysis_json.images||[]).map(x=>x.sha256).sort());
-      if(prior&&(+new Date(prior.observed_at)>+new Date(ad.observed_at)||sameObservation&&!revised))continue;
+      if(prior&&(+new Date(prior.observed_at)>+new Date(ad.observed_at)||sameObservation&&!revised&&!categoryRevision))continue;
       if(isDynamicCategory(ad.category)){
         await client.query('INSERT INTO ad_visual_categories(category_key,label,first_ad_key) VALUES($1,$2,$3) ON CONFLICT(category_key) DO NOTHING',[ad.category,ad.category_label,ad.key]);
         const registered=(await client.query('SELECT label FROM ad_visual_categories WHERE category_key=$1',[ad.category])).rows[0];
@@ -133,7 +155,9 @@ export async function importAdFeed(pool,feed,{fetcher=fetch,reanalysis=false}={}
       }
       const meaning=adMeaningHash(ad);
       await client.query('INSERT INTO ad_visual_items(ad_key,brand,category,first_seen_at,observed_at,meaning_hash,analysis_json) VALUES($1,$2,$3,$4,$4,$5,$6::jsonb) ON CONFLICT(ad_key) DO UPDATE SET brand=EXCLUDED.brand,category=EXCLUDED.category,observed_at=EXCLUDED.observed_at,meaning_hash=EXCLUDED.meaning_hash,analysis_json=EXCLUDED.analysis_json',[ad.key,ad.brand,ad.category,ad.observed_at,meaning,JSON.stringify(ad)]);
-      if(revised){
+      if(categoryRevision){
+        await client.query('INSERT INTO ad_visual_versions(ad_key,observed_at,event_type,analysis_json) VALUES($1,$2,$3,$4::jsonb)',[ad.key,ad.category_assignment.reviewed_at,'category_updated',JSON.stringify(ad)]);
+      }else if(revised){
         await client.query('INSERT INTO ad_visual_versions(ad_key,observed_at,event_type,analysis_json) VALUES($1,$2,$3,$4::jsonb)',[ad.key,ad.ai_analysis.analyzed_at,'analysis_updated',JSON.stringify(ad)]);
       }else if(!prior||prior.meaning_hash!==meaning){
         await client.query('INSERT INTO ad_visual_versions(ad_key,observed_at,event_type,analysis_json) VALUES($1,$2,$3,$4::jsonb)',[ad.key,ad.observed_at,prior?'changed':'first_seen',JSON.stringify(ad)]);
@@ -141,11 +165,11 @@ export async function importAdFeed(pool,feed,{fetcher=fetch,reanalysis=false}={}
       }
       imported++;
     }
-    await client.query('UPDATE ad_visual_sync SET run_id=$1,checked_at=$2,imported_at=NOW(),status=$3,coverage_json=$4::jsonb,schedule_json=$5::jsonb,last_error=NULL,last_attempt_at=NOW() WHERE id=1',
+    if(!preserveSync)await client.query('UPDATE ad_visual_sync SET run_id=$1,checked_at=$2,imported_at=NOW(),status=$3,coverage_json=$4::jsonb,schedule_json=$5::jsonb,last_error=NULL,last_attempt_at=NOW() WHERE id=1',
       [feed.run.id,feed.run.checked_at,feed.run.status,JSON.stringify(feed.run.coverage),JSON.stringify(feed.schedule)]);
-    await client.query('COMMIT');
+    if(!existingTransaction)await client.query('COMMIT');
     return {imported,changed,evidence:assets.size,run_id:feed.run.id,status:feed.run.status};
-  }catch(e){await client.query('ROLLBACK');throw e}finally{client.release?.()}
+  }catch(e){if(!existingTransaction)await client.query('ROLLBACK');throw e}finally{if(!existingTransaction)client.release?.()}
 }
 let inFlight=null;
 export function syncAdVisuals(pool,sources,{fetcher=fetch}={}){

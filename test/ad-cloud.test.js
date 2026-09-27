@@ -14,6 +14,7 @@ const env={OPENAI_API_KEY:'synthetic-test-only',AD_VISION_DAILY_LIMIT:'1'};
 async function dbFixture(){const db=new PGlite();await db.exec(SCHEMA_SQL);return db}
 function observation(source){const at=new Date().toISOString();return {brand:source.brand,page_id:source.page_id,ad_id:'99999999',variant_id:'1',source_url:adLibrarySource(source),ad_status:'active',started_on:null,observed_at:at,ad_text:'Numaranızı taşıyın 25 GB 799 TL',has_video:false,evidence:[{sha256:hash,bytes:jpeg,captured_at:at}]}}
 function vision(){return {category:'mnp',category_evidence:'Numaranızı taşıyın',title:'Numara taşıma 25 GB',visible_text:'25 GB 799 TL',visual_summary:'Kırmızı fiyat kutusu',conditions:[],uncertainties:[],offer:{price_try:799,previous_price_try:null,data_gb:25,bonus_data_gb:null,minutes:null,speed_mbps:null,commitment_months:null,billing_period:'unknown'},field_evidence:{price_try:'799 TL',previous_price_try:'',data_gb:'25 GB',bonus_data_gb:'',minutes:'',speed_mbps:'',commitment_months:'',billing_period:''}}}
+const ambiguousCapture=async(source,save)=>{await save({...observation(source),ad_text:'Marka tanıtımı'});return {status:'partial',captured:1,note:'Saklanan belirsiz kare'}};
 const capture=async(source,save)=>{if(!source.page_id)return {status:'unverified',captured:0,note:'Sayfa kimliği yok'};await save(observation(source));return {status:'partial',captured:1,note:'Gerçek tarayıcı yerine izole test görüntüsü'}};
 
 test('cloud scheduling persists daily deduplication, rotates competitors and throttles manual scans',async()=>{
@@ -88,8 +89,8 @@ test('missing primary proxy preserves queued attempts while stored images are an
 });
 test('ambiguous images receive a second AI pass without recapture or false market changes',async()=>{
   const db=await dbFixture();let calls=0;
-  const analyze=async candidate=>{calls++;const result=vision();if(calls===1){result.category='review';result.category_evidence='İlk okuma belirsiz'}else{assert.equal(candidate.previous_analysis.category,'review');result.title='AI ile düzeltilen numara taşıma teklifi'}return normalizeVision(result,candidate)};
-  const worker=createCloudWorker(db,HOME_INTERNET_SOURCES,{capture,analyze,env:{...env,AD_VISION_DAILY_LIMIT:'10'},log:()=>{}});
+  const analyze=async candidate=>{calls++;const result=vision();if(calls===1){result.category='review';result.category_evidence='İlk okuma belirsiz';result.visible_text='Marka logosu'}else{assert.equal(candidate.previous_analysis.category,'review');result.title='AI ile düzeltilen numara taşıma teklifi';result.visible_text+=' Numaranızı taşıyın'}return normalizeVision(result,candidate)};
+  const worker=createCloudWorker(db,HOME_INTERNET_SOURCES,{capture:ambiguousCapture,analyze,env:{...env,AD_VISION_DAILY_LIMIT:'10'},log:()=>{}});
   try{
     await queueCloudReview(db,HOME_INTERNET_SOURCES,{manual:true});await worker();
     const first=(await getAdVisuals(db)).rows[0];assert.equal(first.category,'review');assert.equal(first.ai_analysis.status,'completed');
@@ -104,8 +105,8 @@ test('ambiguous images receive a second AI pass without recapture or false marke
 });
 test('AI also reads historical review cards and does not endlessly retry a completed ambiguous category',async()=>{
   const db=await dbFixture();let calls=0;
-  const analyze=async candidate=>{calls++;const v=vision();v.category='review';v.category_evidence='Cihaz tanıtımı';return normalizeVision(v,candidate)};
-  const worker=createCloudWorker(db,HOME_INTERNET_SOURCES,{capture,analyze,env:{...env,AD_VISION_DAILY_LIMIT:'10'},log:()=>{}});
+  const analyze=async candidate=>{calls++;const v=vision();v.category='review';v.category_evidence='Cihaz tanıtımı';v.visible_text='Marka logosu';return normalizeVision(v,candidate)};
+  const worker=createCloudWorker(db,HOME_INTERNET_SOURCES,{capture:ambiguousCapture,analyze,env:{...env,AD_VISION_DAILY_LIMIT:'10'},log:()=>{}});
   try{
     await queueCloudReview(db,HOME_INTERNET_SOURCES,{manual:true});await worker();
     await db.query("UPDATE ad_cloud_jobs SET status='unverified' WHERE status='queued'");
@@ -119,8 +120,8 @@ test('AI also reads historical review cards and does not endlessly retry a compl
 });
 test('older missing-quote classifications receive one bounded corrective pass',async()=>{
   const db=await dbFixture();let calls=0;
-  const analyze=async candidate=>{calls++;const v=vision();v.category='review';v.category_evidence='Kategori için açık ve doğrulanabilir ifade bulunamadı.';return normalizeVision(v,candidate)};
-  const worker=createCloudWorker(db,HOME_INTERNET_SOURCES,{capture,analyze,env:{...env,AD_VISION_DAILY_LIMIT:'10'},log:()=>{}});
+  const analyze=async candidate=>{calls++;const v=vision();v.category='review';v.category_evidence='Kategori için açık ve doğrulanabilir ifade bulunamadı.';v.visible_text='Marka logosu';return normalizeVision(v,candidate)};
+  const worker=createCloudWorker(db,HOME_INTERNET_SOURCES,{capture:ambiguousCapture,analyze,env:{...env,AD_VISION_DAILY_LIMIT:'10'},log:()=>{}});
   try{
     await queueCloudReview(db,HOME_INTERNET_SOURCES,{manual:true});await worker();
     await db.query("UPDATE ad_cloud_jobs SET status='unverified' WHERE status='queued'");
@@ -196,7 +197,8 @@ test('vision normalizer refuses invented totals, unsupported commitments and cat
   const a=normalizeVision(v,candidate);assert.equal(a.offer.data_gb,null);assert.equal(a.offer.bonus_data_gb,null);assert.equal(a.offer.commitment_months,null);assert.equal(a.offer.billing_period,'unknown');assert.match(a.uncertainties.join(' '),/yalnız yakalanan karesi/);
   v.category_evidence='MNP yeni müşteriler';assert.equal(normalizeVision(v,{...candidate,ad_text:'Ürün tanıtımı'}).category,'review');
   const supported=normalizeVision(v,candidate);assert.equal(supported.category,'mnp');assert.ok((v.visible_text+' '+candidate.ad_text).includes(supported.category_evidence));
-  v.category='review';assert.equal(normalizeVision(v,candidate).category,'review');
+  v.category='review';const repaired=normalizeVision(v,candidate);assert.equal(repaired.category,'mnp');assert.equal(repaired.category_assignment.method,'stored_evidence');
+  assert.equal(normalizeVision(v,{ad_text:'Marka tanıtımı'}).category,'review');
 });
 test('vision request uses actual image bytes, strict schema, no storage and handles provider refusal',async()=>{
   let body;

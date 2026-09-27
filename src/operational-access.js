@@ -17,7 +17,7 @@ export async function reportStatusForUser(pool,user,email){
   return {email,recent_runs:result.rows};
 }
 
-export function publishedAdRow({ai_queue_status,ai_analysis,taxonomy_version,...published}){return published}
+export function publishedAdRow({ai_queue_status,ai_analysis,taxonomy_version,category_assignment,...published}){return published}
 
 export function standardAdVisuals(data){
   const monitoring=data.monitoring||{},cloud=data.cloud,provider=cloud?.capture_provider;

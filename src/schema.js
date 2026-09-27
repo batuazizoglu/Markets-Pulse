@@ -296,6 +296,7 @@ CREATE TABLE IF NOT EXISTS ad_cloud_control (
   vision_calls INTEGER NOT NULL DEFAULT 0
 );
 INSERT INTO ad_cloud_control(id) VALUES(1) ON CONFLICT DO NOTHING;
+ALTER TABLE ad_cloud_control ADD COLUMN IF NOT EXISTS category_repair_after TEXT;
 CREATE TABLE IF NOT EXISTS ad_cloud_jobs (
   id BIGSERIAL PRIMARY KEY,
   batch_key TEXT NOT NULL,
@@ -347,7 +348,7 @@ ALTER TABLE ad_cloud_candidates ADD COLUMN IF NOT EXISTS review_round INTEGER NO
 ALTER TABLE ad_cloud_control ADD COLUMN IF NOT EXISTS analysis_manual_after TIMESTAMPTZ;
 ALTER TABLE ad_cloud_control ADD COLUMN IF NOT EXISTS capture_after TIMESTAMPTZ;
 ALTER TABLE ad_visual_versions DROP CONSTRAINT IF EXISTS ad_visual_versions_event_type_check;
-ALTER TABLE ad_visual_versions ADD CONSTRAINT ad_visual_versions_event_type_check CHECK(event_type IN ('first_seen','changed','analysis_updated'));
+ALTER TABLE ad_visual_versions ADD CONSTRAINT ad_visual_versions_event_type_check CHECK(event_type IN ('first_seen','changed','analysis_updated','category_updated'));
 
 ${PROVIDER_SCHEMA_SQL}
 `;

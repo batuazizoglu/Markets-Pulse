@@ -1,11 +1,12 @@
 import {randomUUID,createHash} from 'node:crypto';
-import {socialDirectory} from './isp-registry.js';
+import {socialDirectory,verifiedFixedIspPageId} from './isp-registry.js';
 import {captureCloudAds,adLibrarySource} from './ad-cloud-capture.js';
 import {captureTransportStatus} from './ad-capture-proxy.js';
 import {getProxyPoolStatus,selectCaptureProxy,recordProxyResult,canFailoverProxy} from './ad-proxy-pool.js';
 import {analyzeCloudImage,visionConfig} from './ad-cloud-vision.js';
 import {validateAdFeed,importAdFeed,getAdCategories} from './ad-visual.js';
 import {AD_TAXONOMY_VERSION} from './ad-categories.js';
+import {proposeStoredCategory} from './ad-category-evidence.js';
 import {providerConfig,providerStatus} from './ad-provider-client.js';
 import {runProviderTick,getProviderStatus} from './ad-provider-worker.js';
 import {normalizeProviderJpeg} from './ad-provider-image.js';
@@ -146,6 +147,81 @@ export async function queueStoredAdReviews(pool,sources,{manual=false,key=null,n
     return {queued,missing_evidence};
   });
 }
+// Reuse completed, archived readings before purchasing another model call. This
+// is a classification correction, never a new observation or an AI reanalysis.
+export async function repairReviewCategories(pool,sources,owner,{now=new Date()}={}){
+  return transaction(pool,async db=>{
+    await assertLease(db,owner);
+    const after=(await db.query('SELECT category_repair_after FROM ad_cloud_control WHERE id=1')).rows[0]?.category_repair_after||null;
+    // Match the feed importer's lock order so a concurrent publication cannot
+    // hold the sync row while waiting for one of these archived items.
+    const sync=(await db.query('SELECT * FROM ad_visual_sync WHERE id=1 FOR UPDATE')).rows[0]||{};
+    const rows=(await db.query(`SELECT ad_key,observed_at,analysis_json FROM ad_visual_items
+      WHERE category='review' AND analysis_json->'ai_analysis'->>'status'='completed'
+      AND ($1::text IS NULL OR ad_key>$1)
+      ORDER BY ad_key LIMIT 400 FOR UPDATE`,[after])).rows;
+    if(!rows.length){
+      if(after)await db.query('UPDATE ad_cloud_control SET category_repair_after=NULL WHERE id=1');
+      return {reclassified:0,categories:{}};
+    }
+    const categories=await getAdCategories(db),repairs=[];let processed=0,lastKey=after;
+    for(const row of rows){
+      if(repairs.length>=100)break;
+      processed++;lastKey=row.ad_key;
+      const ad=row.analysis_json;
+      // Older formats use the existing bounded AI migration queue; they cannot
+      // claim the current format's preserved visual transcription.
+      if(ad.taxonomy_version!==AD_TAXONOMY_VERSION)continue;
+      const candidate=(await db.query('SELECT * FROM ad_cloud_candidates WHERE ad_key=$1 FOR UPDATE',[row.ad_key])).rows[0];
+      // A newer/pending capture must be analyzed independently; never replace its
+      // findings with evidence from a previous archived observation.
+      if(candidate&&(candidate.status!=='analyzed'||+new Date(candidate.observed_at)!==+new Date(row.observed_at)||
+        JSON.stringify((candidate.payload?.images||[]).map(x=>x.sha256).sort())!==JSON.stringify((ad.images||[]).map(x=>x.sha256).sort())||
+        String(candidate.payload?.ad_text||'').trim().slice(0,8000)!==String(ad.ad_text||'')||
+        candidate.analysis_json&&candidate.analysis_json.category!=='review'))continue;
+      const proposal=proposeStoredCategory(ad,{categories,verifiedFixedIspPageId:verifiedFixedIspPageId(ad,sources)});
+      if(!proposal)continue;
+      const hashes=[...new Set((ad.images||[]).map(image=>image.sha256))];
+      if(!hashes.length)continue;
+      const stored=(await db.query('SELECT sha256,jpeg FROM ad_visual_evidence WHERE sha256=ANY($1::text[])',[hashes])).rows;
+      if(stored.length!==hashes.length||stored.some(image=>{
+        const bytes=Buffer.from(image.jpeg);return hash(bytes)!==image.sha256||bytes[0]!==255||bytes[1]!==216||bytes[2]!==255;
+      }))continue;
+      const category_assignment={method:'stored_evidence',rule:proposal.classification_rule,version:1,
+        evidence_source:proposal.evidence_source,reviewed_at:now.toISOString(),previous_category:'review'};
+      const updated={...ad,category:proposal.category,category_label:proposal.category_label,
+        category_evidence:proposal.category_evidence,category_assignment};
+      repairs.push({row,candidate,updated});
+    }
+    // Advance even when this page is entirely ambiguous, so older unresolved
+    // cards cannot hide later evidence. The cursor survives process restarts,
+    // and commits or rolls back together with the corresponding corrections.
+    const nextAfter=processed===rows.length&&rows.length<400?null:lastKey;
+    await db.query('UPDATE ad_cloud_control SET category_repair_after=$1 WHERE id=1 AND category_repair_after IS DISTINCT FROM $1',[nextAfter]);
+    if(!repairs.length)return {reclassified:0,categories:{}};
+    const feed=validateAdFeed({schema_version:1,producer:'cloud-vision',schedule:sync.schedule_json||CLOUD_SCHEDULE,
+      run:{id:'category-'+randomUUID(),checked_at:now.toISOString(),status:['ok','partial','blocked','error'].includes(sync.status)?sync.status:'partial',coverage:sync.coverage_json||[]},
+      ads:repairs.map(repair=>repair.updated)},sources,now);
+    const imported=await importAdFeed(db,feed,{reanalysis:true,existingTransaction:true,preserveSync:true,
+      fetcher:async()=>{throw new Error('CLOUD_EVIDENCE_MISSING')}});
+    if(imported.imported!==repairs.length)throw new Error('CLOUD_CATEGORY_REPAIR_CONFLICT');
+    // The item, history entry, and corresponding completed candidate commit
+    // together. No attempt, review round, AI timestamp or spend counter changes.
+    const changed={};
+    for(const {candidate,updated} of repairs){
+      if(candidate){
+        const patch={category:updated.category,category_label:updated.category_label,
+          category_evidence:updated.category_evidence,category_assignment:updated.category_assignment};
+        const result=await db.query(`UPDATE ad_cloud_candidates SET analysis_json=COALESCE(analysis_json,'{}'::jsonb)||$1::jsonb
+          WHERE ad_key=$2 AND fingerprint=$3 AND status='analyzed' AND observed_at=$4 RETURNING ad_key`,
+        [JSON.stringify(patch),candidate.ad_key,candidate.fingerprint,candidate.observed_at]);
+        if(result.rows.length!==1)throw new Error('CLOUD_CATEGORY_REPAIR_CONFLICT');
+      }
+      changed[updated.category]=(changed[updated.category]||0)+1;
+    }
+    return {reclassified:imported.imported,categories:changed};
+  });
+}
 // Shared transaction primitive: provider asset completion and capture commit together.
 export async function persistCloudCapture(db,candidate,job){
   if(!candidate.evidence?.length||candidate.evidence.length>3||candidate.evidence.some(x=>!Buffer.isBuffer(x.bytes)||x.bytes.length>1500000||hash(x.bytes)!==x.sha256||x.bytes[0]!==255||x.bytes[1]!==216))throw new Error('CLOUD_INVALID_EVIDENCE');
@@ -184,8 +260,9 @@ async function publishCloudAnalysis(pool,sources,candidate,analysis,owner){
   // The worker lease serializes publication and capture; fence expired workers before importing.
   await transaction(pool,db=>assertLease(db,owner));
   const at=new Date().toISOString(),coverage=await cloudCoverage(pool);
+  const {category_assignment:previousAssignment,...payload}=candidate.payload;
   const feed=validateAdFeed({schema_version:1,producer:'cloud-vision',schedule:CLOUD_SCHEDULE,
-    run:{id:'cloud-'+randomUUID(),checked_at:at,status:'partial',coverage},ads:[{...candidate.payload,...analysis}]},sources);
+    run:{id:'cloud-'+randomUUID(),checked_at:at,status:'partial',coverage},ads:[{...payload,...analysis}]},sources);
   await importAdFeed(pool,feed,{reanalysis:candidate.review_round>0,fetcher:async()=>{throw new Error('Cloud evidence missing')}});
   await pool.query("UPDATE ad_cloud_candidates SET status='analyzed',analysis_json=$1::jsonb,analyzed_at=NOW(),last_error=NULL WHERE ad_key=$2 AND fingerprint=$3",[JSON.stringify(analysis),candidate.ad_key,candidate.fingerprint]);
 }
@@ -208,7 +285,7 @@ export async function analyzeNextCloudCandidate(pool,sources,owner,{env=process.
       if(!reservation.rows.length)return {status:'daily_limit'};
       // Persist attempt before the external request; a restart cannot reset paid-call accounting.
       await pool.query("UPDATE ad_cloud_candidates SET status='retry',attempts=attempts+1,available_at=NOW()+INTERVAL '10 minutes' WHERE ad_key=$1",[candidate.ad_key]);
-      analysis=await analyze(candidate.payload,images,{env,categories:await getAdCategories(pool)});
+      analysis=await analyze(candidate.payload,images,{env,categories:await getAdCategories(pool),verifiedFixedIspPageId:verifiedFixedIspPageId(candidate.payload,sources)});
       analysis={...analysis,ai_analysis:{status:'completed',analyzed_at:new Date().toISOString(),model:config.model,pass:(candidate.review_round||0)+1}};
       // Keep a successful response if publication fails; retrying must not buy the same inference again.
       await transaction(pool,async db=>{await assertLease(db,owner);await db.query('UPDATE ad_cloud_candidates SET analysis_json=$1::jsonb WHERE ad_key=$2 AND fingerprint=$3',[JSON.stringify(analysis),candidate.ad_key,candidate.fingerprint])});
@@ -253,6 +330,8 @@ export function createCloudWorker(pool,sources,{capture=captureCloudAds,analyze=
       const added=await queueNewCloudSources(pool,sources,owner);
       if(added.length)log('[ad-cloud-sources]',JSON.stringify({registered:added.length,brands:added}));
       await queueCloudReview(pool,sources,{env});
+      const repaired=await repairReviewCategories(pool,sources,owner);
+      if(repaired.reclassified)log('[ad-category-repair]',JSON.stringify(repaired));
       const reviews=await queueStoredAdReviews(pool,sources);
       if(reviews.queued)log('[ad-cloud-review]',JSON.stringify(reviews));
       await pool.query("UPDATE ad_cloud_candidates SET status='error',last_error=COALESCE(last_error,'VISION_RETRY_EXHAUSTED') WHERE status='retry' AND attempts>=3 AND available_at<=NOW()");
