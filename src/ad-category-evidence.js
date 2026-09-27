@@ -104,10 +104,17 @@ function visualRetailProposal(ad,sources,categories){
   const text=mappedText(quote,{ascii:true}).text;
   // The caller supplies a completed or fresh AI visual analysis. Reject a
   // description that itself says the objects are hypothetical or not visible.
-  if(/belirsiz|net degil|secil(?:em|m)|tahmin|olabilir|muhtemel|varsay|hipotetik|sanki|gorunm(?:uyor|eyen|ez)|gorulem|gosterilm(?:iyor|emis|ez|edi)|sergilenm(?:iyor|emis|ez|edi)|bulunmuyor|yer almiyor|\b(?:yok|degil|no|not)\b|unclear|hypothetical|maybe|possibly|may be|could be|cannot see/.test(text))return null;
-  if(!/sergilen|gosteril|goruluyor|gorunuyor|yer aliyor|resmedil|displayed|depicted|shown/.test(text))return null;
+  const uncertain=/belirsiz|net degil|secil(?:em|m)|tahmin|olabilir|muhtemel|varsay|hipotetik|sanki|gorunm(?:uyor|eyen|ez)|gorulem|gosterilm(?:iyor|emis|ez|edi)|sergilenm(?:iyor|emis|ez|edi)|bulunmuyor|yer almiyor|\b(?:yok|degil|no|not)\b|unclear|hypothetical|maybe|possibly|may be|could be|cannot see/;
+  const displayed=/sergilen|gosteril|goruluyor|gorunuyor|yer aliyor|resmedil|displayed|depicted|shown/;
+  const mentionsOnly=/bahsedil|sozu gec|isimleri|kategorileri|kategorilerinden|\bmentioned\b|\bcategories\b/;
+  const clauses=text.split(/[.;!?](?:\s|$)|\s+(?:ancak|ama|fakat|but|however)\s+/).filter(Boolean);
+  const objectCount=clause=>deviceObjects.filter(pattern=>pattern.test(clause)).length;
+  // The visible predicate must describe the devices in its own clause. A logo
+  // displayed elsewhere cannot turn a list of device names into visual proof.
+  // Missing price text is separate from uncertainty about the objects themselves.
+  if(clauses.some(clause=>uncertain.test(clause)&&(objectCount(clause)>0||/cihaz|urun|nesne|\bdevices?\b|\bobjects?\b/.test(clause))))return null;
+  if(!clauses.some(clause=>objectCount(clause)>=2&&displayed.test(clause)&&!uncertain.test(clause)&&!mentionsOnly.test(clause)))return null;
   if(!/magaza|alisveris|online.{0,30}satis|satisi|satisa|retail|shopping|store/.test(text))return null;
-  if(deviceObjects.filter(pattern=>pattern.test(text)).length<2)return null;
   const resolved=resolveCategoryProposal('new','Cihazlar',categories);if(!resolved)return null;
   return {...resolved,category_evidence:quote,classification_method:'stored_evidence',
     classification_rule:'devices_visual_retail',classification_version:AD_STORED_CLASSIFICATION_VERSION,evidence_source:'visual_summary'};

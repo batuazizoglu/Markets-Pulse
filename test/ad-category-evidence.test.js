@@ -92,8 +92,14 @@ test('visual device retail requires explicit observed shop copy and distinct cle
     'Online alışveriş mağazası reklamında cep telefonu gösteriliyor ancak laptop yok.',
     'Online alışveriş mağazası için varsayımsal cep telefonu ve laptop sergileniyor.',
     'Aile evde cep telefonu ve laptop kullanıyor.',
+    'Online alışveriş mağazasında cep telefonu ve laptop kategorilerinden bahsediliyor; yalnızca mağaza logosu gösteriliyor.',
+    'Online alışveriş mağazasında cep telefonu ve laptop kategorilerinden bahsediliyor ve mağaza logosu gösteriliyor.',
     'Online alışveriş mağazası, cep telefonu ve laptop kategorilerinden bahsediyor.'
   ])assert.equal(proposeStoredCategory({...ad,visual_summary}),null,visual_summary);
+  for(const visual_summary of [
+    'Online alışveriş mağazası reklamında cep telefonu ve laptop açıkça gösteriliyor; ancak fiyat görünmüyor.',
+    'Online alışveriş mağazası reklamında cep telefonu ve laptop gösterilmekte. Fiyat ve taksit koşulları belirsiz.'
+  ])assert.equal(proposeStoredCategory({...ad,visual_summary}).category,'auto-cihazlar',visual_summary);
   for(const visible_text of ['Kaliteli bağlantı','Yeni kampanya 999 TL','Online mağazamıza hoş geldiniz'])assert.equal(proposeStoredCategory({...ad,visible_text}),null);
   assert.equal(proposeStoredCategory({...ad,visible_text:'Evde internet kampanyası'}).category,'home');
   assert.equal(proposeStoredCategory({...ad,category:'gsm'}),null);
