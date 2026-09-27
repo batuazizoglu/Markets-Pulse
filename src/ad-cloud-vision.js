@@ -23,6 +23,7 @@ function supportedNumber(value,quote){
 export function normalizeVision(result,candidate,{categories=AD_CATEGORIES,verifiedFixedIspPageId=null}={}){
   if(!result||!([...Object.keys(AD_CATEGORIES),'new'].includes(result.category)||isDynamicCategory(result.category))||typeof result.visible_text!=='string'||!String(result.visual_summary||'').trim()||!result.offer||!result.field_evidence||!Array.isArray(result.conditions)||!Array.isArray(result.uncertainties))throw new Error('VISION_INVALID');
   const visibleText=result.visible_text.slice(0,12000),caption=String(candidate.ad_text||'').slice(0,AD_CAPTION_MAX_LENGTH),rawCorpus=visibleText+' '+caption,corpus=fold(rawCorpus),uncertainties=result.uncertainties.map(String).slice(0,12);
+  const visualSummary=String(result.visual_summary||'Görsel okuma doğrulaması gerekli.').slice(0,2000);
   const offer={...result.offer};
   for(const k of numericFields){
     const quote=fold(result.field_evidence[k]);
@@ -56,7 +57,7 @@ export function normalizeVision(result,candidate,{categories=AD_CATEGORIES,verif
   if(category!=='review'&&(isDynamicCategory(category)&&confidence===null||confidence!==null&&confidence<0.8)){category='review';evidence='Kategori güveni otomatik sınıflandırma için yeterli değil.';uncertainties.push(evidence)}
   let categoryAssignment;
   if(category==='review'){
-    const supported=proposeStoredCategory({...candidate,...sources,category:'review'},{categories,verifiedFixedIspPageId});
+    const supported=proposeStoredCategory({...candidate,...sources,category:'review',visual_summary:visualSummary,category_confidence:confidence},{categories,verifiedFixedIspPageId});
     if(supported){
       category=supported.category;categoryLabel=supported.category_label;evidence=supported.category_evidence;
       categoryAssignment={method:'stored_evidence',rule:supported.classification_rule,version:supported.classification_version,evidence_source:supported.evidence_source,reviewed_at:new Date().toISOString(),previous_category:'review'};
@@ -65,7 +66,7 @@ export function normalizeVision(result,candidate,{categories=AD_CATEGORIES,verif
   if(category==='review')categoryLabel=AD_CATEGORIES.review;
   if(candidate.has_video)uncertainties.push('Videonun yalnız yakalanan karesi incelendi; tam video analizi yapılmadı.');
   return {category,category_label:categoryLabel,category_confidence:confidence,...(categoryAssignment?{category_assignment:categoryAssignment}:{}),taxonomy_version:AD_TAXONOMY_VERSION,visible_text:visibleText,category_evidence:evidence||'Açık sınıflandırma dayanağı yok.',title:String(result.title||'Diğer reklam').slice(0,250),
-    visual_summary:String(result.visual_summary||'Görsel okuma doğrulaması gerekli.').slice(0,2000),offer,
+    visual_summary:visualSummary,offer,
     conditions:result.conditions.map(String).slice(0,20),uncertainties:uncertainties.slice(0,20),review_required:uncertainties.length>0||category==='review'};
 }
 export async function analyzeCloudImage(candidate,images,{env=process.env,fetcher=fetch,categories=AD_CATEGORIES,verifiedFixedIspPageId=null}={}){

@@ -145,6 +145,28 @@ test('fresh AI reading of a repaired archive card does not inherit the old categ
   }finally{await db.close()}
 });
 
+test('device store classification can use recognized objects without claiming they are printed text',async()=>{
+  const db=await fixture();
+  try{
+    const before=await seed(db,advertisement('99999981',{
+      brand:'KKTCELL',page_id:'127496543986832',category_confidence:0.95,
+      visible_text:'Kuzey Kıbrıs Turkcell’in online alışveriş mağazası Tam – Turkcell Alışveriş Merkezi',
+      ad_text:'Eksiklerini Tam ile tamamla!',
+      visual_summary:'Reklamda cep telefonu, dizüstü bilgisayar, akıllı saat ve kulaklık gibi elektronik cihazlar sergileniyor. Kampanya, teknoloji ve elektronik cihazların online satışı amacı taşıyor.'
+    }),{candidate:false});
+    const result=await repairReviewCategories(db,HOME_INTERNET_SOURCES,owner);
+    assert.deepEqual(result,{reclassified:1,categories:{'auto-cihazlar':1}});
+    const saved=(await db.query('SELECT analysis_json FROM ad_visual_items')).rows[0].analysis_json;
+    assert.equal(saved.category_assignment.rule,'devices_visual_retail');assert.equal(saved.category_assignment.evidence_source,'visual_summary');
+    assert.ok(saved.visual_summary.includes(saved.category_evidence));
+    assert.deepEqual(semanticContent(saved),semanticContent(before));
+    const feed={schema_version:1,producer:'cloud-vision',schedule:{enabled:true,description:'Günlük tarama',timezone:'Asia/Famagusta'},run:{id:'visual-proof-validation',checked_at:new Date().toISOString(),status:'partial',coverage:[]},ads:[saved]};
+    for(const mutate of [a=>{a.visible_text='TAM';a.ad_text='TAM'},a=>a.visual_summary='Yalnızca logo görünüyor.',a=>a.category_assignment.evidence_source='visible_text',a=>a.category_confidence=0.4]){
+      const bad=structuredClone(feed);mutate(bad.ads[0]);assert.throws(()=>validateAdFeed(bad,HOME_INTERNET_SOURCES),/kanıt/);
+    }
+  }finally{await db.close()}
+});
+
 test('durable repair cursor passes 400 ambiguous cards and resumes after the 100-correction cap without gaps',async()=>{
   const db=await fixture();
   try{

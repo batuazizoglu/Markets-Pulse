@@ -98,3 +98,30 @@ test('vision request teaches service categories and receives verified fixed ISP 
   assert.match(request.instructions,/My Vodafone/);assert.match(request.instructions,/Kurumsal İletişim/);
   assert.match(request.instructions,/Brand identity alone never proves a category/);
 });
+
+test('retail classification uses current image recognition without treating visual summaries as general quote sources',()=>{
+  const visual_summary='Online alışveriş mağazasının görselinde cep telefonu, dizüstü bilgisayar ve kulaklık ürünleri gösteriliyor.';
+  const model=reading({category_confidence:0.96,visible_text:'Kuzey Kıbrıs Turkcell’in online alışveriş mağazası. Tıkla, alışverişe başla.',visual_summary});
+  const result=normalizeVision(model,{ad_text:'Eksiklerini Tam’la tamamla!',visual_summary:'Önceki kare yalnız logo içeriyor.',category_confidence:0.2});
+  assert.equal(result.category,'auto-cihazlar');
+  assert.equal(result.category_confidence,0.96);
+  assert.equal(result.category_assignment.rule,'devices_visual_retail');
+  assert.equal(result.category_assignment.evidence_source,'visual_summary');
+  assert.ok(visual_summary.includes(result.category_evidence));
+  assert.equal(result.visual_summary,visual_summary);
+  assert.equal(result.offer.price_try,null);
+  const unsupported=normalizeVision(reading({category:'new',category_label:'Yeni Hizmet',category_confidence:0.96,category_evidence:'Antivirüs hizmeti',visible_text:'Marka',visual_summary:'Antivirüs hizmeti tanıtımı olabilir.'}),{ad_text:''});
+  assert.equal(unsupported.category,'review','general quote recovery must not accept arbitrary summary prose');
+});
+
+test('a fresh logo-only analysis cannot inherit previous device recognition or confidence',()=>{
+  const old={visual_summary:'Online alışveriş mağazasının görselinde cep telefonu, dizüstü bilgisayar ve kulaklık ürünleri gösteriliyor.',category_confidence:0.99};
+  const candidate={ad_text:'Online alışveriş mağazamız. Tıkla, alışverişe başla.',...old,previous_analysis:old};
+  const result=normalizeVision(reading({visible_text:'TAM',visual_summary:'Sadece TAM logosu görünüyor.',category_confidence:0.96}),candidate);
+  assert.equal(result.category,'review');assert.equal(result.category_assignment,undefined);
+  assert.equal(result.visual_summary,'Sadece TAM logosu görünüyor.');
+  const currentClear=normalizeVision(reading({visible_text:'TAM',visual_summary:old.visual_summary,category_confidence:0.96}),candidate);
+  assert.equal(currentClear.category,'auto-cihazlar');
+  const lowConfidence=normalizeVision(reading({visible_text:'TAM',visual_summary:old.visual_summary,category_confidence:0.4}),candidate);
+  assert.equal(lowConfidence.category,'review','old confidence cannot elevate fresh uncertain image recognition');
+});

@@ -69,3 +69,32 @@ test('long OCR uses a bounded genuine source span and ignores distant unrelated 
   assert.ok(result.category_evidence.length<=2000);assert.ok(ad.visible_text.includes(result.category_evidence));
   assert.equal(proposeStoredCategory(row('30 Mbps '+ 'Açıklama '.repeat(350)+' Aylık 600 TL'),fixed),null);
 });
+test('visual device retail requires explicit observed shop copy and distinct clearly described devices',()=>{
+  const caption='Kuzey Kıbrıs Turkcell’in online alışveriş mağazası Tam – Turkcell Alışveriş Merkezi';
+  const summary="Reklamda, Kuzey Kıbrıs Turkcell'in online alışveriş mağazası 'Tam' tanıtılmakta. Gözlük, akıllı saat, kulaklık, kamera, oyun kontrol cihazı, cep telefonu ve dizüstü bilgisayar gibi çeşitli teknoloji ve elektronik cihazlar laptop ekranından çıkan kadın ile birlikte sergileniyor. Alt kısımda alışverişe başlamak için web sitesi adresi ve ücretsiz hızlı kargo ibaresi bulunuyor. Kampanya, teknoloji ve elektronik cihazların online satışı amacı taşıyor.";
+  const ad=row(caption,{visual_summary:summary,category_confidence:0.95,offer:{price_try:null,data_gb:null},images:[{sha256:'retained'}],observed_at:'2026-09-27T10:00:00Z'});
+  const before=structuredClone(ad),result=proposeStoredCategory(ad);
+  assert.equal(result.category,'auto-cihazlar');assert.equal(result.category_label,'Cihazlar');
+  assert.equal(result.classification_rule,'devices_visual_retail');assert.equal(result.evidence_source,'visual_summary');
+  assert.equal(result.category_evidence,summary);assert.equal(result.classification_method,'stored_evidence');
+  assert.equal(result.classification_version,1);assert.deepEqual(ad,before);
+  assert.equal(Object.hasOwn(result,'category_confidence'),false);assert.equal(Object.hasOwn(result,'offer'),false);
+  assert.equal(recoverSourceQuote(summary,ad),null,'visual description must never masquerade as OCR or caption');
+  assert.equal(proposeStoredCategory({...ad,visible_text:'',ad_text:caption}).category,'auto-cihazlar');
+  assert.equal(proposeStoredCategory({...ad,category_confidence:null}).category,'auto-cihazlar');
+  for(const category_confidence of [0.79,-1,1.5,NaN,'0.95'])assert.equal(proposeStoredCategory({...ad,category_confidence}),null);
+  for(const visual_summary of [
+    'Online alışveriş mağazası reklamında cep telefonu sergileniyor.',
+    'Online alışveriş mağazası reklamında cep telefonu ve akıllı telefon sergileniyor.',
+    'Online alışveriş mağazası reklamında cep telefonu ve laptop olabilir; cihazlar net değil.',
+    'Online alışveriş mağazası reklamında cep telefonu ve laptop gösterilmiyor.',
+    'Online alışveriş mağazası reklamında cep telefonu ve laptop bulunmuyor.',
+    'Online alışveriş mağazası reklamında cep telefonu gösteriliyor ancak laptop yok.',
+    'Online alışveriş mağazası için varsayımsal cep telefonu ve laptop sergileniyor.',
+    'Aile evde cep telefonu ve laptop kullanıyor.',
+    'Online alışveriş mağazası, cep telefonu ve laptop kategorilerinden bahsediyor.'
+  ])assert.equal(proposeStoredCategory({...ad,visual_summary}),null,visual_summary);
+  for(const visible_text of ['Kaliteli bağlantı','Yeni kampanya 999 TL','Online mağazamıza hoş geldiniz'])assert.equal(proposeStoredCategory({...ad,visible_text}),null);
+  assert.equal(proposeStoredCategory({...ad,visible_text:'Evde internet kampanyası'}).category,'home');
+  assert.equal(proposeStoredCategory({...ad,category:'gsm'}),null);
+});
