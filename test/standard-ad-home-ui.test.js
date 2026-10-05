@@ -91,7 +91,7 @@ test('standard home retains catalog, comparison, campaigns and social links with
   const f=fixture('home');const {dom,d,requests}=f;
   try{
     await f.load();await settled(()=>d.querySelectorAll('[data-pick]').length===2,'Products should render');
-    assert.match(d.querySelector('#hiChanges').textContent,/90 → 100/);
+    assert.match(d.querySelector('#hiChanges').textContent,/90 TL → 100 TL/);
     assert.match(d.querySelector('#hiCampaigns').textContent,/Sonbahar kampanyası/);
     noAdminPanels(d,'#hiCompanies,#hiSources,#hiObservationForm,#hiObservations');
     assert.doesNotMatch(d.body.textContent,new RegExp('BTHK şirket kapsamı|Kaynak Sağlığı|Gözlem kaydet|'+technical));

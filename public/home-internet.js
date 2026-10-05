@@ -1,5 +1,5 @@
 (()=>{
-const state={data:null,view:'tracking',family:'fixed',provider:'Tümü',tech:'Tümü',segment:'all',search:'',bestOnly:true,selected:new Set(),loading:false,observations:[],socialLoaded:false};
+const state={data:null,view:'tracking',family:'fixed',provider:'Tümü',tech:'Tümü',segment:'all',search:'',bestOnly:true,selected:new Set(),loading:false,days:30,changeProvider:'Tümü',changeType:'all',changeView:'timeline',timelineLimit:40,feedLimit:40,requestId:0,observations:[],socialLoaded:false};
 const isAdmin=()=>Boolean(window.MarketPulseAccess?.isAdmin());
 const accessReady=()=>Promise.resolve(window.MarketPulseAccess?.ready).catch(()=>null);
 const $=id=>document.getElementById(id);
@@ -22,10 +22,17 @@ function ensure(){
     '<nav class="hi-subnav" aria-label="Ev İnterneti görünümleri"><button data-view="tracking" aria-pressed="true">Rakip Takip</button><button data-view="compare" aria-pressed="false">Ürün Karşılaştırma <span id="hiSelectedCount"></span></button><button data-view="social" aria-pressed="false">Reklam &amp; Sayfalar</button></nav>',
     '<p id="hiMessage" role="status" aria-live="polite"></p><p id="hiFreshness" class="hi-help"></p>',
     '<div id="hiMarketViews">',
-      '<div id="hiTrackingTop"><article class="hi-panel"><div class="panel-head"><strong>Değişiklikler</strong><span>Son 30 gün'+(admin?' • ilk tarama başlangıç kaydıdır':'')+'</span></div><div id="hiChanges" class="hi-change-list"></div></article></div>',
+      '<div class="hi-family-tabs" aria-label="İnternet türü"><button class="hi-family-tab" data-family="fixed">Sabit İnternet</button><button class="hi-family-tab" data-family="fwa">Superbox / Red Box</button></div>',
+      '<div id="hiTrackingTop">',
+        '<div class="hi-changes-heading"><div><h3>Değişiklikler</h3><p>Yeni paketleri, fiyat hareketlerini ve değişen koşulları takip edin.</p></div><div class="tabs" aria-label="Ev interneti değişiklik dönemi">'+[7,30,90].map(days=>'<button class="tab" data-hi-days="'+days+'" aria-pressed="'+(days===30)+'">'+days+' gün</button>').join('')+'</div></div>',
+        '<div class="hi-change-filters"><div class="hi-filter"><label for="hiChangeProvider">Sağlayıcı</label><select id="hiChangeProvider"><option>Tümü</option></select></div><div class="hi-filter"><label for="hiChangeType">Değişiklik türü</label><select id="hiChangeType"><option value="all">Tüm değişiklikler</option><option value="added">Yeni paket / kampanya</option><option value="field_changed">Fiyat ve koşul değişiklikleri</option><option value="removed">Kaldırılan paket / kampanya</option></select></div></div>',
+        '<p id="hiChangeStatus" class="hi-help" role="status" aria-live="polite">Değişiklikler yükleniyor…</p>',
+        (!admin?'<div class="tabs hi-change-views" aria-label="Değişiklik görünümü"><button class="tab active" data-hi-change-view="timeline" aria-pressed="true">Zaman Çizelgesi</button><button class="tab" data-hi-change-view="feed" aria-pressed="false">Değişiklik Akışı</button></div>':''),
+        '<div class="hi-change-grid '+(admin?'':'hi-change-single')+'"><article id="hiTimelinePanel" class="hi-panel"><div class="panel-head"><strong>Zaman Çizelgesi</strong><span>En yeni önce</span></div><div id="hiChanges" class="timeline"><div class="empty">Değişiklikler yükleniyor…</div></div><div class="market-list-footer"><span id="hiTimelineCount"></span><button class="btn" id="hiTimelineMore" data-hi-more="timeline" hidden>Daha fazla göster</button></div></article>',
+        '<article id="hiFeedPanel" class="hi-panel"'+(admin?'':' hidden')+'><div class="panel-head"><strong>Değişiklik Akışı</strong><span>Önce / Sonra</span></div><div id="hiChangeFeed" class="change-feed"><div class="empty">Değişiklikler yükleniyor…</div></div><div class="market-list-footer"><span id="hiFeedCount"></span><button class="btn" id="hiFeedMore" data-hi-more="feed" hidden>Daha fazla göster</button></div></article></div>',
+      '</div>',
       '<div id="hiKpis" class="hi-kpis"></div>',
       '<div id="hiCompareView" hidden><article class="hi-panel"><div class="panel-head"><strong>Seçili ürünleri karşılaştır</strong><button class="btn" data-clear-selection>Seçimi temizle</button></div><div id="hiCompareResult"></div></article></div>',
-      '<div class="hi-family-tabs"><button class="hi-family-tab" data-family="fixed">Sabit İnternet</button><button class="hi-family-tab" data-family="fwa">Superbox / Red Box</button></div>',
       '<div class="hi-toolbar hi-catalog-toolbar">',
         '<div class="hi-filter"><label for="hiProvider">Sağlayıcı</label><select id="hiProvider"><option>Tümü</option></select></div>',
         '<div class="hi-filter"><label for="hiTech">Teknoloji</label><select id="hiTech"><option>Tümü</option></select></div>',
@@ -51,11 +58,15 @@ function ensure(){
     const b=e.target.closest('button');if(!b)return;
     if(b.dataset.view)setView(b.dataset.view);
     if(b.dataset.family)setFamily(b.dataset.family);
+    if(b.dataset.hiDays)selectDays(Number(b.dataset.hiDays));
+    if(b.dataset.hiMore){if(b.dataset.hiMore==='timeline')state.timelineLimit+=40;else state.feedLimit+=40;renderChanges()}
+    if(b.dataset.hiChangeView){state.changeView=b.dataset.hiChangeView;renderChanges()}
     if(b.hasAttribute('data-clear-selection')){state.selected.clear();renderProducts();renderCompare()}
     if(b.dataset.observe&&isAdmin()){$('hiObservationBrand').value=b.dataset.observe;$('hiObservationUrl').value=b.dataset.url||'';$('hiObservationNote').focus()}
   });
   section.addEventListener('change',e=>{if(e.target.dataset.pick)pick(e.target.dataset.pick,e.target.checked)});
   for(const [id,key] of [['hiProvider','provider'],['hiTech','tech'],['hiSegment','segment']])$(id).addEventListener('change',e=>{state[key]=e.target.value;renderProducts()});
+  for(const [id,key] of [['hiChangeProvider','changeProvider'],['hiChangeType','changeType']])$(id).addEventListener('change',e=>{state[key]=e.target.value;resetChangeLimits();renderChanges()});
   $('hiSearch').addEventListener('input',e=>{state.search=e.target.value;renderProducts()});
   $('hiBestOnly').addEventListener('change',e=>{state.bestOnly=e.target.checked;renderProducts()});
   $('hiAdCountry')?.addEventListener('change',renderSocial);
@@ -116,17 +127,72 @@ function renderCompare(){
 }
 function renderKpis(){
   const d=state.data,rows=d.products.filter(x=>(x.product_family||'fixed')===state.family),current=rows.filter(x=>!x.stale);
-  const cards=isAdmin()?[['BTHK şirket kapsamı',d.companies?.length||0,'29 şirket • 2026 Q2 listesi'],['Paket verisi alınan şirket',d.metrics.tracked_companies||0,'Kaynak durumu aşağıda'],['Güncel teklif',current.length,current.filter(x=>x.effective_monthly_try>0).length+' fiyatlı • '+rows.filter(x=>x.stale).length+' eski kayıt'],['7 günlük değişiklik',d.metrics.changes_7d||0,'Fiyat, hız ve süre takibi']]:[['Sağlayıcı',new Set(rows.map(x=>x.provider)).size,'Paketleri karşılaştırın'],['Güncel teklif',current.length,'Son doğrulanan paketler'],['Fiyatı yayımlanan',current.filter(x=>x.effective_monthly_try>0).length,'Aylık tutarı karşılaştırın'],['7 günlük değişiklik',d.metrics.changes_7d||0,'Fiyat, hız ve süre']];
+  const end=new Date(d.window_end||d.generated_at||Date.now()).getTime(),changes7d=familyChanges().filter(c=>new Date(c.detected_at).getTime()>=end-7*86400000&&new Date(c.detected_at).getTime()<end).length;
+  const cards=isAdmin()?[['BTHK şirket kapsamı',d.companies?.length||0,'29 şirket • 2026 Q2 listesi'],['Paket verisi alınan şirket',d.metrics.tracked_companies||0,'Kaynak durumu aşağıda'],['Güncel teklif',current.length,current.filter(x=>x.effective_monthly_try>0).length+' fiyatlı • '+rows.filter(x=>x.stale).length+' eski kayıt'],['7 günlük değişiklik',changes7d,'Fiyat, hız ve süre takibi']]:[['Sağlayıcı',new Set(rows.map(x=>x.provider)).size,'Paketleri karşılaştırın'],['Güncel teklif',current.length,'Son doğrulanan paketler'],['Fiyatı yayımlanan',current.filter(x=>x.effective_monthly_try>0).length,'Aylık tutarı karşılaştırın'],['7 günlük değişiklik',changes7d,'Fiyat, hız ve süre']];
   $('hiKpis').innerHTML=cards.map(([label,value,note])=>'<article class="hi-kpi"><span>'+esc(label)+'</span><strong>'+num(value)+'</strong><small>'+esc(note)+'</small></article>').join('');
 }
-function changeValue(v){
-  if(v==null)return '—';try{const p=JSON.parse(v);if(p&&typeof p==='object')return p.name||'Paket kaydı'}catch{}return String(v);
+function changeFamily(c){
+  if(c.product_family)return c.product_family;
+  const source=(state.data?.sources||[]).find(s=>s.slug===c.source_slug);
+  return source?.product_family||(/superbox|redbox/.test(c.source_slug||'')?'fwa':'fixed');
+}
+function familyChanges(){return (state.data?.changes||[]).filter(c=>changeFamily(c)===state.family)}
+function resetChangeLimits(){state.timelineLimit=40;state.feedLimit=40}
+function changeKind(c){return ['added','removed'].includes(c.change_type)?c.change_type:'field_changed'}
+function changeLabel(c){
+  const campaign=c.product_key?.includes('|campaign|');
+  return c.change_type==='added'?(campaign?'Yeni kampanya':'Yeni paket'):c.change_type==='removed'?(campaign?'Kampanya kaldırıldı':'Paket kaldırıldı'):'Koşul değişikliği';
+}
+function changeValue(v,field){
+  if(v==null||v==='')return '—';
+  if(field==='Limitsiz')return String(v)==='true'?'Limitsiz':String(v)==='false'?'Kotalı':String(v);
+  if(field==='Fiyat Durumu')return ({quote:'Teklif ile',published:'Yayımlanıyor',unpublished:'Yayımlanmıyor',unknown:'Belirtilmiyor'})[v]||String(v);
+  if(field==='Kampanya durumu')return ({active:'Aktif',expired:'Süresi doldu',unconfirmed:'Geçerlilik teyidi gerekli'})[v]||String(v);
+  const n=Number(v);
+  if(Number.isFinite(n)){
+    if(/Ücret|Fiyat|price|fee/.test(field||''))return money(n);
+    if(/Hızı|mbps/.test(field||''))return num(n,2)+' Mbps';
+    if(field==='Kota')return num(n,2)+' GB';
+    if(/Gün|gün/.test(field||''))return num(n)+' gün';
+    if(/Ay|Süresi/.test(field||''))return num(n)+' ay';
+    return num(n,2);
+  }
+  try{const p=JSON.parse(v);if(p&&typeof p==='object')return p.name||'Paket kaydı'}catch{}
+  return String(v);
+}
+function changeField(c){return ({'Download Hızı':'İndirme hızı','Upload Hızı':'Yükleme hızı'})[c.field_name]||c.field_name||'Koşul'}
+function offerSummary(c){
+  try{
+    const p=JSON.parse(c.change_type==='removed'?c.old_value:c.new_value);
+    if(!p||typeof p!=='object')return '';
+    return [p.technology,p.speed_down_mbps!=null?num(p.speed_down_mbps)+' Mbps':null,p.effective_monthly_try!=null?money(p.effective_monthly_try)+'/ay':null,p.duration_months||p.duration_days?term(p):null].filter(Boolean).join(' • ');
+  }catch{return ''}
+}
+function changeMarkup(c,detail=false){
+  if(changeKind(c)!=='field_changed')return '<span>'+esc(changeLabel(c))+'</span>'+(offerSummary(c)?'<div class="muted">'+esc(offerSummary(c))+'</div>':'');
+  const before=esc(changeValue(c.old_value,c.field_name)),after=esc(changeValue(c.new_value,c.field_name));
+  return detail?'<div class="hi-diff-label">'+esc(changeField(c))+'</div><div class="hi-diff-values"><div><small>Önce</small><span>'+before+'</span></div><span aria-hidden="true">→</span><div><small>Sonra</small><strong>'+after+'</strong></div></div>':'<span>'+esc(changeField(c))+': '+before+' → '+after+'</span>';
 }
 function renderChanges(){
-  const sources=new Set((state.data.sources||[]).filter(s=>state.family==='fwa'?/superbox|redbox/.test(s.slug):!/superbox|redbox/.test(s.slug)).map(x=>x.slug));
-  const changes=(state.data.changes||[]).filter(c=>sources.has(c.source_slug));
-  $('hiChanges').innerHTML=changes.length?changes.slice(0,24).map(c=>'<div class="hi-change"><div><b>'+esc(c.provider+' • '+(c.product_name||'Paket'))+'</b><small>'+esc(c.change_type==='added'?(c.product_key?.includes('|campaign|')?'Yeni kampanya':'Yeni paket'):c.change_type==='removed'?(c.product_key?.includes('|campaign|')?'Kampanya kaldırıldı':'Paket kaldırıldı'):c.field_name)+' • '+esc(changeValue(c.old_value))+' → '+esc(changeValue(c.new_value))+'</small></div><small>'+dt(c.detected_at)+'</small></div>').join(''):'<p class="hi-help">'+(isAdmin()?'Henüz değişiklik yok. İlk başarılı tarama başlangıç kaydı oluşturur; sonraki başarılı taramalar karşılaştırılır.':'Son 30 günde değişiklik kaydı yok.')+'</p>';
+  $('hiTimelinePanel').hidden=!isAdmin()&&state.changeView!=='timeline';$('hiFeedPanel').hidden=!isAdmin()&&state.changeView!=='feed';
+  $('home-internet-section').querySelectorAll('[data-hi-change-view]').forEach(b=>{const active=b.dataset.hiChangeView===state.changeView;b.classList.toggle('active',active);b.setAttribute('aria-pressed',String(active))});
+  if(!state.data)return;
+  const all=familyChanges().sort((a,b)=>new Date(b.detected_at)-new Date(a.detected_at)||Number(b.id||0)-Number(a.id||0));
+  const providers=[...new Set(all.map(c=>c.provider).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'tr'));
+  if(state.changeProvider!=='Tümü'&&!providers.includes(state.changeProvider))providers.push(state.changeProvider);
+  $('hiChangeProvider').innerHTML='<option>Tümü</option>'+providers.map(p=>'<option>'+esc(p)+'</option>').join('');$('hiChangeProvider').value=state.changeProvider;
+  const rows=all.filter(c=>(state.changeProvider==='Tümü'||c.provider===state.changeProvider)&&(state.changeType==='all'||changeKind(c)===state.changeType));
+  const empty='<div class="empty">'+(all.length?'Bu filtrelere uygun değişiklik yok.':'Seçili dönemde kaydedilmiş değişiklik yok.')+'</div>';
+  const timeline=rows.slice(0,state.timelineLimit),feed=rows.slice(0,state.feedLimit);
+  const severity=c=>['critical','high','medium','low'].includes(c.severity)?c.severity:'medium';
+  $('hiChanges').innerHTML=rows.length?timeline.map(c=>'<div class="tl '+severity(c)+'" data-change-id="'+esc(c.id)+'"><div class="tl-time">'+dt(c.detected_at)+'</div><div class="tl-axis"><span class="tl-dot"></span></div><div class="tl-content"><b>'+esc(c.product_name||'Paket')+'</b><div class="hi-change-provider">'+esc(c.provider)+'</div><div class="muted">'+changeMarkup(c)+'</div></div></div>').join(''):empty;
+  $('hiChangeFeed').innerHTML=rows.length?feed.map(c=>'<article class="change" data-change-id="'+esc(c.id)+'"><div class="change-top"><div><div class="change-title">'+esc(c.product_name||'Paket')+'</div><div class="change-meta">'+esc(c.provider)+' • '+dt(c.detected_at)+'</div></div><span class="status '+(changeKind(c)==='removed'?'warn':changeKind(c)==='added'?'ok':'neutral')+'">'+esc(changeLabel(c))+'</span></div><div class="diff">'+changeMarkup(c,true)+'</div>'+(c.source_url?'<div class="hi-change-source">'+link(c.source_url,c.source_name||'Paket kaynağı')+'</div>':'')+'</article>').join(''):empty;
+  for(const [prefix,shown] of [['hiTimeline',timeline],['hiFeed',feed]]){$(prefix+'Count').textContent=shown.length+' / '+rows.length+' değişiklik';$(prefix+'More').hidden=shown.length>=rows.length}
+  const days=state.data.window_days||state.data.days||30;
+  $('hiChangeStatus').textContent=(state.family==='fwa'?'Superbox / Red Box':'Sabit İnternet')+' • Son '+days+' gün • '+rows.length+' değişiklik'+(isAdmin()?' • İlk başarılı tarama başlangıç kaydıdır.':'');
+  $('home-internet-section').querySelectorAll('[data-hi-days]').forEach(b=>{const active=Number(b.dataset.hiDays)===state.days;b.classList.toggle('active',active);b.setAttribute('aria-pressed',String(active))});
 }
+async function selectDays(days){if(state.scanning||![7,30,90].includes(days)||days===state.days)return;state.days=days;resetChangeLimits();return load()}
 function renderCoverage(){
   if(!isAdmin()||!$('hiCompanies'))return;
   const companies=state.data.companies||[];$('hiCoverageCount').textContent=companies.length+' şirket';
@@ -191,17 +257,31 @@ function setView(view){
   if(view==='social'&&state.data&&!state.socialLoaded&&isAdmin())loadSocial();
   if(view==='social'&&window.AdVisualUI)window.AdVisualUI.mountHome();
 }
-function setFamily(family){state.family=family==='fwa'?'fwa':'fixed';state.provider='Tümü';state.tech='Tümü';render()}
+function setFamily(family){state.family=family==='fwa'?'fwa':'fixed';state.provider='Tümü';state.tech='Tümü';state.changeProvider='Tümü';resetChangeLimits();render()}
 async function load(force=false){
-  await accessReady();force=force&&isAdmin();ensure();if(state.loading)return;state.loading=true;const button=$('hiScanBtn');button.disabled=true;button.textContent=force?'Taranıyor…':'Yükleniyor…';$('hiMessage').textContent='';
-  try{
-    const r=await fetch('/api/home-internet'+(force?'?refresh=1':''),{cache:'no-store'});
-    if(!r.ok)throw new Error(r.status===401?'Oturum süresi doldu. Tekrar giriş yapın.':'Ev interneti verisi alınamadı');
-    state.data=await r.json();render();
-  }catch(e){$('hiMessage').textContent=e.message}
-  finally{state.loading=false;button.disabled=false;button.textContent=isAdmin()?'Şimdi Tara':'Yenile'}
+  await accessReady();force=force&&isAdmin();ensure();
+  if(state.loading&&(force||state.requestDays===state.days))return state.loadPromise;
+  const requestId=++state.requestId,days=state.days;state.requestDays=days;state.loading=true;state.scanning=force;
+  $('home-internet-section').querySelectorAll('[data-hi-days]').forEach(b=>{b.disabled=force});
+  $('hiTrackingTop').setAttribute('aria-busy','true');
+  const button=$('hiScanBtn');button.disabled=true;button.textContent=force?'Taranıyor…':'Yükleniyor…';$('hiMessage').textContent='';
+  state.loadPromise=(async()=>{
+    try{
+      const r=await fetch('/api/home-internet?days='+days+(force?'&refresh=1':''),{cache:'no-store'});
+      if(!r.ok)throw new Error(r.status===401?'Oturum süresi doldu. Tekrar giriş yapın.':'Ev interneti verisi alınamadı');
+      const data=await r.json();if(requestId!==state.requestId)return;state.data=data;render();
+    }catch(e){
+      if(requestId!==state.requestId)return;
+      $('hiMessage').textContent=e.message+(state.data?' Önceki '+(state.data.window_days||state.data.days||30)+' günlük kayıtlar gösteriliyor.':'');
+      if(state.data){state.days=state.data.window_days||state.data.days||30;renderChanges()}
+      else{$('hiChangeStatus').textContent='Değişiklik geçmişi alınamadı.';$('hiChanges').innerHTML=$('hiChangeFeed').innerHTML='<div class="empty">Kayıtlar yüklenemedi. Yeniden deneyin.</div>'}
+    }finally{
+      if(requestId===state.requestId){state.loading=false;state.scanning=false;$('home-internet-section').querySelectorAll('[data-hi-days]').forEach(b=>{b.disabled=false});$('hiTrackingTop').setAttribute('aria-busy','false');button.disabled=false;button.textContent=isAdmin()?'Şimdi Tara':'Yenile'}
+    }
+  })();
+  return state.loadPromise;
 }
-window.HomeInternetUI={ensure,load,scan:()=>load(true),setFamily,setView};
+window.HomeInternetUI={ensure,load,scan:()=>load(true),setFamily,setView,selectDays};
 async function init(){await accessReady();ensure();if(location.hash==='#home')load()}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
 })();

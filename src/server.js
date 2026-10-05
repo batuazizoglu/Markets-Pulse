@@ -17,7 +17,7 @@ import { generateReportPdf } from './report-render.js';
 import { generateEvidencePack } from './evidence-pack.js';
 import { getReportEmailStatus, sendReportEmail } from './report-email.js';
 import { sendPersonalReportEmail } from './manual-report-email.js';
-import { getHomeInternetMarket, scanHomeInternet, HOME_INTERNET_SOURCES } from './home-internet.js';
+import { getHomeInternetMarket, loadHomeInternetChanges, scanHomeInternet, HOME_INTERNET_SOURCES } from './home-internet.js';
 import { registerAuth, bootstrapInitialUsers } from './auth.js';
 import { registerEvidenceRoutes } from './evidence-archive.js';
 import { reportDays } from './report-data.js';
@@ -115,7 +115,9 @@ app.get('/api/competitive-trends', async (req,res,next)=>{try{
 
 app.get('/api/home-internet',requireAdminForRefresh, async (req,res,next)=>{try{
   const refresh=req.query.refresh==='1';
-  res.json(await getHomeInternetMarket(pool,{refresh}));
+  const days=Math.max(1,Math.min(180,parseInt(req.query.days||'30',10)||30));
+  res.set('Cache-Control','private, no-store');
+  res.json(await getHomeInternetMarket(pool,{refresh,days}));
 }catch(e){next(e)}});
 
 app.post('/api/home-internet/scan',requireOperationalAdmin, async (req,res,next)=>{try{
@@ -125,8 +127,10 @@ app.post('/api/home-internet/scan',requireOperationalAdmin, async (req,res,next)
 
 app.get('/api/home-internet/changes', async (req,res,next)=>{try{
   const days=Math.max(1,Math.min(180,parseInt(req.query.days||'30',10)||30));
-  const r=await pool.query(`SELECT * FROM home_internet_changes WHERE detected_at>=NOW()-($1::text||' days')::interval ORDER BY detected_at DESC,id DESC LIMIT 500`,[days]);
-  res.json({generated_at:new Date().toISOString(),days,rows:r.rows});
+  const bounds=competitiveWindow(days);
+  const rows=await loadHomeInternetChanges(pool,{start:bounds.window_start,end:bounds.window_end});
+  res.set('Cache-Control','private, no-store');
+  res.json({generated_at:bounds.window_end,days:bounds.window_days,...bounds,rows});
 }catch(e){next(e)}});
 
 app.get('/api/kktcell-catalog',requireAdminForRefresh, async (req,res,next)=>{try{
