@@ -264,6 +264,9 @@ html[data-theme="dark"] body.branded-app :is(.mp-score,.bm-pos,.status){font-wei
 }
 
 
+/* Let the GSM change feed grow with its rows instead of scrolling inside the panel. */
+#changes-section #changeFeed{max-height:none;overflow:visible}
+
 /* Reporting center */
 .report-grid-4{grid-template-columns:repeat(2,minmax(0,1fr))}
 .report-status-strip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:12px}
