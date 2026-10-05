@@ -9,10 +9,21 @@ import {normalizeOffer} from '../src/isp-economics.js';
 const s=HOME_INTERNET_SOURCES.find(x=>x.slug==='kibrisonline-home');
 const rows=Array.from({length:5},(_,i)=>normalizeOffer({source_slug:s.slug,provider:s.provider,name:'Premium '+(i+1),technology:'WDSL',speed_down_mbps:10+i*5,duration_months:12,bonus_months:2,total_price_try:9995+i*1000,product_key:'demo'+i,source_url:s.url}));
 const data=marketPayload([{source_slug:s.slug,status:'ok',captured_at:new Date().toISOString(),payload_json:rows,parsed_count:rows.length,source_meta_json:{parser_version:'home-isp-2'}}],[]);
-data.changes=Array.from({length:48},(_,i)=>({id:i+1,source_slug:s.slug,source_name:s.name,source_url:s.url,provider:s.provider,product_key:'demo'+i,product_family:'fixed',product_name:i%3===0?'Fiber Ev 100 Mbps':'Premium '+(i+1),change_type:i%4===0?'added':'field_changed',field_name:'Efektif Aylık Ücret',old_value:'649',new_value:i%4===0?JSON.stringify({technology:'Fiber',effective_monthly_try:799,speed_down_mbps:100,duration_months:12}):'799',severity:'high',detected_at:new Date(Date.now()-i*3600000).toISOString()}));
+const variants=[
+ {change_type:'added',new_value:JSON.stringify({technology:'Fiber',effective_monthly_try:799,speed_down_mbps:100,duration_months:12})},
+ {field_key:'effective_monthly_try',field_name:'Efektif Aylık Ücret',old_value:'649',new_value:'799'},
+ {field_key:'speed_down_mbps',field_name:'Download Hızı',old_value:'50',new_value:'100'},
+ {field_key:'data_limit_gb',field_name:'Kota',old_value:'500',new_value:'1000'},
+ {field_key:'duration_months',field_name:'Taahhüt / Ödeme Süresi',old_value:'12',new_value:'24'},
+ {field_key:'bonus_months',field_name:'Hediye Ay',old_value:'0',new_value:'2'},
+ {field_key:'technology',field_name:'Teknoloji',old_value:'WDSL',new_value:'Fiber'},
+ {change_type:'removed',old_value:JSON.stringify({technology:'WDSL',effective_monthly_try:399,speed_down_mbps:10})},
+ {field_name:'Modem koşulu',old_value:'Ayrı ücretli',new_value:'Pakete dahil'}
+];
+data.changes=Array.from({length:48},(_,i)=>({id:i+1,source_slug:s.slug,source_name:s.name,source_url:s.url,provider:s.provider,product_key:'demo'+i,product_family:'fixed',product_name:i%3===0?'Fiber Ev 100 Mbps':'Premium '+(i+1),change_type:'field_changed',severity:'high',detected_at:new Date(Date.now()-i*3600000).toISOString(),...variants[i%variants.length]}));
 data.campaigns=[{provider:'FixNet',name:'Yıllık paketlere özel hediye kampanyası',availability:'expired',expires_at:'2025-07-30',campaign_text:'Bu kampanya sona erdi. Paket fiyatlarına uygulanmaz.',verified_at:new Date().toISOString(),url:'https://www.fixnetbroadband.com/kampanyalar'}];
 const app=express();app.use(express.static('public'));
-app.get('/preview-home',(req,res)=>res.type('html').send('<!doctype html><html lang="tr" data-theme="light"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/app.css"><link rel="stylesheet" href="/brand.css"><main class="shell"></main><script>window.MarketPulseAccess={ready:Promise.resolve({role:"'+(req.query.role||'admin')+'"}),isAdmin:()=>'+(req.query.role!=='standard')+'};</script><script src="/home-internet.js"></script></html>'));
+app.get('/preview-home',(req,res)=>res.type('html').send('<!doctype html><html lang="tr" data-theme="light"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/app.css"><link rel="stylesheet" href="/brand.css"><body class="branded-app"><main class="shell"></main><script>window.MarketPulseAccess={ready:Promise.resolve({role:"'+(req.query.role||'admin')+'"}),isAdmin:()=>'+(req.query.role!=='standard')+'};</script><script src="/home-internet.js"></script></html>'));
 app.get('/api/home-internet',(req,res)=>res.json({...data,window_days:Number(req.query.days)||30}));
 app.get('/api/home-internet/social-observations',(_,res)=>res.json({rows:[]}));
 const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
@@ -32,6 +43,13 @@ try{
   await page.locator('[data-hi-days="90"]').click();
   await page.waitForFunction(()=>document.querySelector('#hiChangeStatus').textContent.includes('Son 90 gün'));
   assert.equal(await page.$eval('#hiTimelinePanel',el=>el.hidden),false);
+  assert.equal(await page.$$eval('[data-hi-category]',els=>els.length),10);
+  await page.locator('[data-hi-category="price"]').click();
+  assert.equal(await page.$$eval('#hiChanges [data-change-category="price"]',els=>els.length),6);
+  assert.equal(await page.$$eval('#hiChangeFeed [data-change-category="price"]',els=>els.length),6);
+  await page.locator('[data-hi-category="all"]').click();
+  const targets=await page.$$eval('.hi-category-chip',els=>els.map(el=>el.getBoundingClientRect().height));
+  assert.ok(targets.every(h=>h>=38),'category tap targets');
   for(const view of ['tracking','compare','social']){
    await page.evaluate(view=>window.HomeInternetUI.setView(view),view);
    if(view==='compare'){
@@ -45,6 +63,28 @@ try{
    assert.ok(bounds.buttons.every(x=>x.width>=60&&x.height>=32),'navigation tap targets');
    await page.screenshot({path:'test-output/home-'+role+'-'+view+'-'+width+'.png',fullPage:true});
    console.log('HOME_LAYOUT '+JSON.stringify({role,view,...bounds}));
+   if(view==='tracking'){
+    await page.evaluate(()=>document.documentElement.dataset.theme='dark');
+    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+    const colors=await page.evaluate(()=>({dot:getComputedStyle(document.querySelector('#hiChanges .hi-cat-price .tl-dot')).backgroundColor,badge:getComputedStyle(document.querySelector('#hiChangeFeed .hi-cat-price .hi-category-badge')).color}));
+    assert.equal(colors.dot,colors.badge,'timeline and feed use the same category color');
+    for(const theme of ['light','dark']){
+     await page.evaluate(theme=>{document.documentElement.dataset.theme=theme},theme);
+     // Capture the settled colors after the UI's 150ms theme transition.
+     await new Promise(resolve=>setTimeout(resolve,250));
+     const border=await page.evaluate(()=>{
+      const row=document.querySelector('#hiChangeFeed .hi-cat-price'),badge=row.querySelector('.hi-category-badge');
+      const colors={stripe:getComputedStyle(row).borderInlineStartColor,badge:getComputedStyle(badge).borderColor};
+      const luminance=color=>color.match(/[\d.]+/g).slice(0,3).map(Number).map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4}).reduce((sum,v,i)=>sum+v*[.2126,.7152,.0722][i],0);
+      const ratios=[...document.querySelectorAll('.hi-category-chip,.hi-category-badge')].map(el=>{const style=getComputedStyle(el),a=luminance(style.color),b=luminance(style.backgroundColor);return (Math.max(a,b)+.05)/(Math.min(a,b)+.05)});
+      return {...colors,contrast:Math.min(...ratios)};
+     });
+     assert.equal(border.stripe,border.badge,'category stripe survives full app theme in '+theme);
+     assert.ok(border.contrast>=4.5,'readable category text in '+theme+': '+border.contrast);
+    }
+    await page.screenshot({path:'test-output/home-'+role+'-categories-dark-'+width+'.png',fullPage:true});
+    await page.evaluate(()=>document.documentElement.dataset.theme='light');
+   }
    if(view==='tracking'&&role==='standard'){
     await page.locator('[data-hi-change-view="feed"]').click();
     assert.equal(await page.$eval('#hiTimelinePanel',el=>el.hidden),true);

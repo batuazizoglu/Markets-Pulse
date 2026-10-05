@@ -90,3 +90,64 @@ test('a manual source scan retains its period and publishes newly recorded chang
     assert.ok([...f.d.querySelectorAll('[data-hi-days]')].every(b=>!b.disabled));
   }finally{f.dom.window.close()}
 });
+
+test('recorded fields receive consistent categories in both views with readable directional summaries',async()=>{
+  const cases=[
+    ['price','effective_monthly_try','Efektif Aylık Ücret','0','499','Fiyat arttı'],
+    ['price','price_monthly_try','Aylık Ücret','999','799','Fiyat düştü'],
+    ['price','total_price_try','Toplam Ücret','10000','9000','Fiyat düştü'],
+    ['price','install_fee_try','Kurulum Ücreti','300','0','Fiyat düştü'],
+    ['price','price_status','Fiyat Durumu','quote','published',null],
+    ['speed','speed_down_mbps','Download Hızı','20','100','Hız arttı'],
+    ['speed','speed_up_mbps','Upload Hızı','20','10','Hız düştü'],
+    ['quota','unlimited','Limitsiz','false','true','Limitsize geçti'],
+    ['quota','data_limit_gb','Kota','500','1000','Kota arttı'],
+    ['term','duration_months','Taahhüt / Ödeme Süresi','12','24','Süre uzadı'],
+    ['term','duration_days','Ödeme Süresi (gün)','30','15','Süre kısaldı'],
+    ['campaign','bonus_months','Hediye Ay','0','2','Hediye süre uzadı'],
+    ['campaign','bonus_days','Hediye Gün','10','5','Hediye süre kısaldı'],
+    ['campaign','availability','Kampanya durumu','active','expired',null],
+    ['campaign','expires_at','Kampanya bitişi','2026-10-01','2026-11-01',null],
+    ['campaign','campaign_text','Kampanya koşulları','Eski koşul','Yeni koşul',null],
+    ['technology','technology','Teknoloji','WDSL','Fiber',null],
+    ['other','future_field','Yeni koşul','Eski','Yeni',null]
+  ];
+  // Alternate canonical keys and legacy labels to cover existing history.
+  const rows=cases.map(([category,field_key,field_name,old_value,new_value],i)=>({...changes[0],id:i+1,field_key:i%2?null:field_key,field_name,old_value,new_value}));
+  rows.push({...changes[0],id:101,change_type:'added'}, {...changes[0],id:102,change_type:'added',product_key:'brand|campaign|new'}, {...changes[0],id:103,change_type:'removed',product_key:'brand|campaign|old'});
+  const f=await fixture('admin',rows);try{
+    for(const [i,[category,,,,,direction]] of cases.entries()){
+      for(const view of ['#hiChanges','#hiChangeFeed']){const row=f.d.querySelector(view+' [data-change-id="'+(i+1)+'"]');assert.equal(row.dataset.changeCategory,category);assert.ok(row.querySelector('.hi-category-badge.hi-cat-'+category));}
+      const actual=f.d.querySelector('#hiChangeFeed [data-change-id="'+(i+1)+'"] .hi-change-direction');
+      if(direction)assert.ok(actual.textContent.includes(direction));else assert.equal(actual,null);
+    }
+    for(const [id,category] of [[101,'new'],[102,'campaign'],[103,'removed']])assert.equal(f.d.querySelector('#hiChangeFeed [data-change-id="'+id+'"]').dataset.changeCategory,category);
+    assert.equal(f.d.querySelector('[data-hi-category="all"] .hi-category-count').textContent,String(rows.length));
+  }finally{f.dom.window.close()}
+});
+test('category counts include all pages, selection filters both views and stays visible at zero while scope changes',async()=>{
+  const f=await fixture('standard',[...changes,{...changes[0],id:950,provider:'Gamma',field_key:'speed_down_mbps',field_name:'Download Hızı'}]);
+  try{
+    assert.equal(f.d.querySelector('[data-hi-category="price"] .hi-category-count').textContent,'125');
+    const speed=f.d.querySelector('[data-hi-category="speed"]');speed.focus();speed.click();
+    assert.equal(f.d.activeElement.dataset.hiCategory,'speed');assert.equal(f.d.activeElement.getAttribute('aria-pressed'),'true');
+    assert.deepEqual(ids(f.d,'#hiChanges'),['950']);assert.deepEqual(ids(f.d,'#hiChangeFeed'),['950']);
+    const provider=f.d.querySelector('#hiChangeProvider');provider.value='Alpha';provider.dispatchEvent(new f.dom.window.Event('change'));
+    assert.equal(f.d.querySelector('[data-hi-category="speed"] .hi-category-count').textContent,'0');assert.equal(ids(f.d,'#hiChanges').length,0);
+    assert.equal(f.d.querySelector('[data-hi-category="price"] .hi-category-count').textContent,'63');
+    f.d.querySelector('[data-hi-category="price"]').click();assert.equal(ids(f.d,'#hiChanges').length,40);
+    f.d.querySelector('#hiTimelineMore').click();assert.equal(ids(f.d,'#hiChanges').length,63);
+    await f.ui.selectDays(90);assert.equal(f.d.querySelector('[data-hi-category="price"]').getAttribute('aria-pressed'),'true');
+    f.ui.setFamily('fwa');assert.equal(f.d.querySelector('[data-hi-category="all"]').getAttribute('aria-pressed'),'true');assert.deepEqual(ids(f.d,'#hiChanges'),['900']);
+  }finally{f.dom.window.close()}
+});
+test('unknown, empty and boolean price values never produce invented increase or decrease signals',async()=>{
+  const invalid=[null,undefined,'',' ',true,false,'not-a-number','499 TL'];
+  const rows=invalid.map((old_value,i)=>({...changes[0],id:i+1,field_key:'effective_monthly_try',old_value}));
+  rows.push({...changes[0],id:20,field_key:'unknown_future_key',field_name:'Download Hızı',old_value:'25',new_value:'50'});
+  const f=await fixture('standard',rows);try{
+    for(let i=1;i<=invalid.length;i++)assert.equal(f.d.querySelector('#hiChangeFeed [data-change-id="'+i+'"] .hi-change-direction'),null);
+    assert.equal(f.d.querySelector('#hiChangeFeed [data-change-id="20"]').dataset.changeCategory,'speed');
+    assert.equal(f.requests.length,1,'Categorization requires no external analysis call');
+  }finally{f.dom.window.close()}
+});

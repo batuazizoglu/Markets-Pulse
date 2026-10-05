@@ -1,5 +1,5 @@
 (()=>{
-const state={data:null,view:'tracking',family:'fixed',provider:'Tümü',tech:'Tümü',segment:'all',search:'',bestOnly:true,selected:new Set(),loading:false,days:30,changeProvider:'Tümü',changeType:'all',changeView:'timeline',timelineLimit:40,feedLimit:40,requestId:0,observations:[],socialLoaded:false};
+const state={data:null,view:'tracking',family:'fixed',provider:'Tümü',tech:'Tümü',segment:'all',search:'',bestOnly:true,selected:new Set(),loading:false,days:30,changeProvider:'Tümü',changeType:'all',changeCategory:'all',changeView:'timeline',timelineLimit:40,feedLimit:40,requestId:0,observations:[],socialLoaded:false};
 const isAdmin=()=>Boolean(window.MarketPulseAccess?.isAdmin());
 const accessReady=()=>Promise.resolve(window.MarketPulseAccess?.ready).catch(()=>null);
 const $=id=>document.getElementById(id);
@@ -13,6 +13,67 @@ function link(url,label){
 function term(x){return x.duration_days?x.duration_days+' gün'+(x.bonus_days?' + '+x.bonus_days+' gün hediye':''):x.duration_months?x.duration_months+' ay'+(x.bonus_months?' + '+x.bonus_months+' ay hediye':''):'Süre yayımlanmıyor'}
 const price=x=>x.effective_monthly_try!=null?money(x.effective_monthly_try):x.price_status==='quote'?'Teklif ile':'Fiyat yayımlanmıyor';
 const statusText={tracked:'İzleniyor',partial:'Kısmi kapsam',stale:'Son doğrulanmış veri',website_unverified:'Site doğrulanamadı',unavailable:'Erişim / ayrıştırma sorunu',discovery:'Paket doğrulaması gerekli',source_needed:'Kaynak gerekli',pending:'İlk tarama bekleniyor',ok:'Sağlıklı',error:'Erişim sorunu',parse_error:'Paket okunamadı'};
+// Stable categories describe the recorded field, independently of source severity.
+const changeCategories=[
+  {id:'all',label:'Tüm kategoriler',icon:'◫'},
+  {id:'new',label:'Yeni paket',icon:'+'},
+  {id:'price',label:'Fiyat',icon:'₺'},
+  {id:'speed',label:'Hız',icon:'↗'},
+  {id:'quota',label:'Kota',icon:'∞'},
+  {id:'term',label:'Süre / Taahhüt',icon:'◷'},
+  {id:'campaign',label:'Kampanya / Hediye',icon:'✦'},
+  {id:'technology',label:'Teknoloji',icon:'◇'},
+  {id:'removed',label:'Kaldırılan',icon:'−'},
+  {id:'other',label:'Diğer koşullar',icon:'…'}
+];
+const changeFields=[
+  ['speed_down_mbps','Download Hızı','speed'],['speed_up_mbps','Upload Hızı','speed'],
+  ['effective_monthly_try','Efektif Aylık Ücret','price'],['price_monthly_try','Aylık Ücret','price'],['total_price_try','Toplam Ücret','price'],['install_fee_try','Kurulum Ücreti','price'],['price_status','Fiyat Durumu','price'],
+  ['duration_months','Taahhüt / Ödeme Süresi','term'],['duration_days','Ödeme Süresi (gün)','term'],
+  ['bonus_months','Hediye Ay','campaign'],['bonus_days','Hediye Gün','campaign'],
+  ['unlimited','Limitsiz','quota'],['data_limit_gb','Kota','quota'],['technology','Teknoloji','technology'],
+  ['availability','Kampanya durumu','campaign'],['expires_at','Kampanya bitişi','campaign'],['campaign_text','Kampanya koşulları','campaign']
+];
+function recordedField(c){return changeFields.find(([key])=>key===c.field_key)||changeFields.find(([key,label])=>label===c.field_name||key===c.field_name)||(['Fiyat','price_try'].includes(c.field_name)?['price_try','Fiyat','price']:null)}
+function changeCategory(c){
+  if(c.change_type==='removed')return 'removed';
+  if(c.change_type==='added')return c.product_key?.includes('|campaign|')?'campaign':'new';
+  return recordedField(c)?.[2]||'other';
+}
+function categoryDetails(id){return changeCategories.find(c=>c.id===id)||changeCategories.at(-1)}
+function categoryIcon(category){return '<span class="hi-category-icon" aria-hidden="true">'+category.icon+'</span>'}
+function categoryBadge(c){const category=categoryDetails(changeCategory(c));return '<span class="hi-category-badge hi-cat-'+category.id+'">'+categoryIcon(category)+'<span>'+category.label+'</span></span>'}
+function knownNumber(value){
+  if(typeof value==='number')return Number.isFinite(value)?value:null;
+  if(typeof value!=='string'||!value.trim()||!/^[-+]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(value.trim()))return null;
+  const parsed=Number(value);return Number.isFinite(parsed)?parsed:null;
+}
+function changeDirection(c){
+  if(changeKind(c)!=='field_changed')return '';
+  const field=recordedField(c);if(!field)return '';
+  const [key,,category]=field;
+  if(key==='unlimited'){
+    const before=String(c.old_value),after=String(c.new_value);
+    return before==='false'&&after==='true'?'Limitsize geçti':before==='true'&&after==='false'?'Kotalı pakete geçti':'';
+  }
+  const before=knownNumber(c.old_value),after=knownNumber(c.new_value);
+  if(before==null||after==null||before===after)return '';
+  const up=after>before,delta=num(Math.abs(after-before),2),arrow=up?'↑':'↓';
+  if(category==='price'&&key!=='price_status')return arrow+' Fiyat '+(up?'arttı':'düştü')+' · '+delta+' TL';
+  if(category==='speed')return arrow+' Hız '+(up?'arttı':'düştü')+' · '+delta+' Mbps';
+  if(key==='data_limit_gb')return arrow+' Kota '+(up?'arttı':'azaldı')+' · '+delta+' GB';
+  if(category==='term'||key==='bonus_months'||key==='bonus_days')return arrow+' '+(key.startsWith('bonus_')?'Hediye süre':'Süre')+' '+(up?'uzadı':'kısaldı')+' · '+delta+(key.endsWith('_days')?' gün':' ay');
+  return '';
+}
+function renderCategoryFilters(rows){
+  const counts=new Map();for(const row of rows){const key=changeCategory(row);counts.set(key,(counts.get(key)||0)+1)}
+  const focused=$('hiChangeCategories').contains(document.activeElement)?document.activeElement.dataset.hiCategory:null;
+  $('hiChangeCategories').innerHTML=changeCategories.filter(c=>c.id==='all'||counts.has(c.id)||c.id===state.changeCategory).map(c=>{
+    const count=c.id==='all'?rows.length:counts.get(c.id)||0;
+    return '<button class="hi-category-chip hi-cat-'+c.id+'" data-hi-category="'+c.id+'" aria-pressed="'+(state.changeCategory===c.id)+'" aria-label="'+c.label+': '+count+' değişiklik">'+categoryIcon(c)+'<span>'+c.label+'</span><span class="hi-category-count">'+count+'</span></button>';
+  }).join('');
+  if(focused&&changeCategories.some(c=>c.id===focused))$('hiChangeCategories').querySelector('[data-hi-category="'+focused+'"]')?.focus({preventScroll:true});
+}
 function ensure(){
   const shell=document.querySelector('main.shell');if(!shell||$('home-internet-section'))return;
   const admin=isAdmin();
@@ -26,6 +87,7 @@ function ensure(){
       '<div id="hiTrackingTop">',
         '<div class="hi-changes-heading"><div><h3>Değişiklikler</h3><p>Yeni paketleri, fiyat hareketlerini ve değişen koşulları takip edin.</p></div><div class="tabs" aria-label="Ev interneti değişiklik dönemi">'+[7,30,90].map(days=>'<button class="tab" data-hi-days="'+days+'" aria-pressed="'+(days===30)+'">'+days+' gün</button>').join('')+'</div></div>',
         '<div class="hi-change-filters"><div class="hi-filter"><label for="hiChangeProvider">Sağlayıcı</label><select id="hiChangeProvider"><option>Tümü</option></select></div><div class="hi-filter"><label for="hiChangeType">Değişiklik türü</label><select id="hiChangeType"><option value="all">Tüm değişiklikler</option><option value="added">Yeni paket / kampanya</option><option value="field_changed">Fiyat ve koşul değişiklikleri</option><option value="removed">Kaldırılan paket / kampanya</option></select></div></div>',
+        '<div id="hiChangeCategories" class="hi-category-filters" role="group" aria-label="Değişiklik kategorileri"></div>',
         '<p id="hiChangeStatus" class="hi-help" role="status" aria-live="polite">Değişiklikler yükleniyor…</p>',
         (!admin?'<div class="tabs hi-change-views" aria-label="Değişiklik görünümü"><button class="tab active" data-hi-change-view="timeline" aria-pressed="true">Zaman Çizelgesi</button><button class="tab" data-hi-change-view="feed" aria-pressed="false">Değişiklik Akışı</button></div>':''),
         '<div class="hi-change-grid '+(admin?'':'hi-change-single')+'"><article id="hiTimelinePanel" class="hi-panel"><div class="panel-head"><strong>Zaman Çizelgesi</strong><span>En yeni önce</span></div><div id="hiChanges" class="timeline"><div class="empty">Değişiklikler yükleniyor…</div></div><div class="market-list-footer"><span id="hiTimelineCount"></span><button class="btn" id="hiTimelineMore" data-hi-more="timeline" hidden>Daha fazla göster</button></div></article>',
@@ -60,6 +122,7 @@ function ensure(){
     if(b.dataset.family)setFamily(b.dataset.family);
     if(b.dataset.hiDays)selectDays(Number(b.dataset.hiDays));
     if(b.dataset.hiMore){if(b.dataset.hiMore==='timeline')state.timelineLimit+=40;else state.feedLimit+=40;renderChanges()}
+    if(b.dataset.hiCategory&&changeCategories.some(c=>c.id===b.dataset.hiCategory)){state.changeCategory=b.dataset.hiCategory;resetChangeLimits();renderChanges()}
     if(b.dataset.hiChangeView){state.changeView=b.dataset.hiChangeView;renderChanges()}
     if(b.hasAttribute('data-clear-selection')){state.selected.clear();renderProducts();renderCompare()}
     if(b.dataset.observe&&isAdmin()){$('hiObservationBrand').value=b.dataset.observe;$('hiObservationUrl').value=b.dataset.url||'';$('hiObservationNote').focus()}
@@ -148,8 +211,8 @@ function changeValue(v,field){
   if(field==='Limitsiz')return String(v)==='true'?'Limitsiz':String(v)==='false'?'Kotalı':String(v);
   if(field==='Fiyat Durumu')return ({quote:'Teklif ile',published:'Yayımlanıyor',unpublished:'Yayımlanmıyor',unknown:'Belirtilmiyor'})[v]||String(v);
   if(field==='Kampanya durumu')return ({active:'Aktif',expired:'Süresi doldu',unconfirmed:'Geçerlilik teyidi gerekli'})[v]||String(v);
-  const n=Number(v);
-  if(Number.isFinite(n)){
+  const n=knownNumber(v);
+  if(n!==null){
     if(/Ücret|Fiyat|price|fee/.test(field||''))return money(n);
     if(/Hızı|mbps/.test(field||''))return num(n,2)+' Mbps';
     if(field==='Kota')return num(n,2)+' GB';
@@ -181,15 +244,17 @@ function renderChanges(){
   const providers=[...new Set(all.map(c=>c.provider).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'tr'));
   if(state.changeProvider!=='Tümü'&&!providers.includes(state.changeProvider))providers.push(state.changeProvider);
   $('hiChangeProvider').innerHTML='<option>Tümü</option>'+providers.map(p=>'<option>'+esc(p)+'</option>').join('');$('hiChangeProvider').value=state.changeProvider;
-  const rows=all.filter(c=>(state.changeProvider==='Tümü'||c.provider===state.changeProvider)&&(state.changeType==='all'||changeKind(c)===state.changeType));
+  const scoped=all.filter(c=>(state.changeProvider==='Tümü'||c.provider===state.changeProvider)&&(state.changeType==='all'||changeKind(c)===state.changeType));
+  renderCategoryFilters(scoped);
+  const rows=scoped.filter(c=>state.changeCategory==='all'||changeCategory(c)===state.changeCategory);
   const empty='<div class="empty">'+(all.length?'Bu filtrelere uygun değişiklik yok.':'Seçili dönemde kaydedilmiş değişiklik yok.')+'</div>';
   const timeline=rows.slice(0,state.timelineLimit),feed=rows.slice(0,state.feedLimit);
   const severity=c=>['critical','high','medium','low'].includes(c.severity)?c.severity:'medium';
-  $('hiChanges').innerHTML=rows.length?timeline.map(c=>'<div class="tl '+severity(c)+'" data-change-id="'+esc(c.id)+'"><div class="tl-time">'+dt(c.detected_at)+'</div><div class="tl-axis"><span class="tl-dot"></span></div><div class="tl-content"><b>'+esc(c.product_name||'Paket')+'</b><div class="hi-change-provider">'+esc(c.provider)+'</div><div class="muted">'+changeMarkup(c)+'</div></div></div>').join(''):empty;
-  $('hiChangeFeed').innerHTML=rows.length?feed.map(c=>'<article class="change" data-change-id="'+esc(c.id)+'"><div class="change-top"><div><div class="change-title">'+esc(c.product_name||'Paket')+'</div><div class="change-meta">'+esc(c.provider)+' • '+dt(c.detected_at)+'</div></div><span class="status '+(changeKind(c)==='removed'?'warn':changeKind(c)==='added'?'ok':'neutral')+'">'+esc(changeLabel(c))+'</span></div><div class="diff">'+changeMarkup(c,true)+'</div>'+(c.source_url?'<div class="hi-change-source">'+link(c.source_url,c.source_name||'Paket kaynağı')+'</div>':'')+'</article>').join(''):empty;
+  $('hiChanges').innerHTML=rows.length?timeline.map(c=>'<div class="tl '+severity(c)+' hi-cat-'+changeCategory(c)+'" data-change-category="'+changeCategory(c)+'" data-change-id="'+esc(c.id)+'"><div class="tl-time">'+dt(c.detected_at)+'</div><div class="tl-axis"><span class="tl-dot"></span></div><div class="tl-content">'+categoryBadge(c)+'<b>'+esc(c.product_name||'Paket')+'</b><div class="hi-change-provider">'+esc(c.provider)+'</div><div class="muted">'+changeMarkup(c)+'</div></div></div>').join(''):empty;
+  $('hiChangeFeed').innerHTML=rows.length?feed.map(c=>'<article class="change hi-cat-'+changeCategory(c)+'" data-change-category="'+changeCategory(c)+'" data-change-id="'+esc(c.id)+'"><div class="change-top"><div><div class="change-title">'+esc(c.product_name||'Paket')+'</div><div class="change-meta">'+esc(c.provider)+' • '+dt(c.detected_at)+'</div></div>'+categoryBadge(c)+'</div><div class="diff">'+(changeDirection(c)?'<div class="hi-change-direction">'+esc(changeDirection(c))+'</div>':'')+changeMarkup(c,true)+'</div>'+(c.source_url?'<div class="hi-change-source">'+link(c.source_url,c.source_name||'Paket kaynağı')+'</div>':'')+'</article>').join(''):empty;
   for(const [prefix,shown] of [['hiTimeline',timeline],['hiFeed',feed]]){$(prefix+'Count').textContent=shown.length+' / '+rows.length+' değişiklik';$(prefix+'More').hidden=shown.length>=rows.length}
   const days=state.data.window_days||state.data.days||30;
-  $('hiChangeStatus').textContent=(state.family==='fwa'?'Superbox / Red Box':'Sabit İnternet')+' • Son '+days+' gün • '+rows.length+' değişiklik'+(isAdmin()?' • İlk başarılı tarama başlangıç kaydıdır.':'');
+  $('hiChangeStatus').textContent=(state.family==='fwa'?'Superbox / Red Box':'Sabit İnternet')+' • Son '+days+' gün • '+rows.length+' değişiklik'+(state.changeCategory==='all'?'':' • '+categoryDetails(state.changeCategory).label)+(isAdmin()?' • İlk başarılı tarama başlangıç kaydıdır.':'');
   $('home-internet-section').querySelectorAll('[data-hi-days]').forEach(b=>{const active=Number(b.dataset.hiDays)===state.days;b.classList.toggle('active',active);b.setAttribute('aria-pressed',String(active))});
 }
 async function selectDays(days){if(state.scanning||![7,30,90].includes(days)||days===state.days)return;state.days=days;resetChangeLimits();return load()}
@@ -257,7 +322,7 @@ function setView(view){
   if(view==='social'&&state.data&&!state.socialLoaded&&isAdmin())loadSocial();
   if(view==='social'&&window.AdVisualUI)window.AdVisualUI.mountHome();
 }
-function setFamily(family){state.family=family==='fwa'?'fwa':'fixed';state.provider='Tümü';state.tech='Tümü';state.changeProvider='Tümü';resetChangeLimits();render()}
+function setFamily(family){state.family=family==='fwa'?'fwa':'fixed';state.provider='Tümü';state.tech='Tümü';state.changeProvider='Tümü';state.changeCategory='all';resetChangeLimits();render()}
 async function load(force=false){
   await accessReady();force=force&&isAdmin();ensure();
   if(state.loading&&(force||state.requestDays===state.days))return state.loadPromise;
