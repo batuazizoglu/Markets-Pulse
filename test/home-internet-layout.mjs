@@ -23,7 +23,7 @@ const variants=[
 data.changes=Array.from({length:48},(_,i)=>({id:i+1,source_slug:s.slug,source_name:s.name,source_url:s.url,provider:s.provider,product_key:'demo'+i,product_family:'fixed',product_name:i%3===0?'Fiber Ev 100 Mbps':'Premium '+(i+1),change_type:'field_changed',severity:'high',detected_at:new Date(Date.now()-i*3600000).toISOString(),...variants[i%variants.length]}));
 data.campaigns=[{provider:'FixNet',name:'Yıllık paketlere özel hediye kampanyası',availability:'expired',expires_at:'2025-07-30',campaign_text:'Bu kampanya sona erdi. Paket fiyatlarına uygulanmaz.',verified_at:new Date().toISOString(),url:'https://www.fixnetbroadband.com/kampanyalar'}];
 const app=express();app.use(express.static('public'));
-app.get('/preview-home',(req,res)=>res.type('html').send('<!doctype html><html lang="tr" data-theme="light"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/app.css"><link rel="stylesheet" href="/brand.css"><main class="shell"></main><script>window.MarketPulseAccess={ready:Promise.resolve({role:"'+(req.query.role||'admin')+'"}),isAdmin:()=>'+(req.query.role!=='standard')+'};</script><script src="/home-internet.js"></script></html>'));
+app.get('/preview-home',(req,res)=>res.type('html').send('<!doctype html><html lang="tr" data-theme="light"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/app.css"><link rel="stylesheet" href="/brand.css"><body class="branded-app"><main class="shell"></main><script>window.MarketPulseAccess={ready:Promise.resolve({role:"'+(req.query.role||'admin')+'"}),isAdmin:()=>'+(req.query.role!=='standard')+'};</script><script src="/home-internet.js"></script></html>'));
 app.get('/api/home-internet',(req,res)=>res.json({...data,window_days:Number(req.query.days)||30}));
 app.get('/api/home-internet/social-observations',(_,res)=>res.json({rows:[]}));
 const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
@@ -69,13 +69,18 @@ try{
     const colors=await page.evaluate(()=>({dot:getComputedStyle(document.querySelector('#hiChanges .hi-cat-price .tl-dot')).backgroundColor,badge:getComputedStyle(document.querySelector('#hiChangeFeed .hi-cat-price .hi-category-badge')).color}));
     assert.equal(colors.dot,colors.badge,'timeline and feed use the same category color');
     for(const theme of ['light','dark']){
-     const border=await page.evaluate(theme=>{
-      document.documentElement.dataset.theme=theme;document.body.classList.add('branded-app');
+     await page.evaluate(theme=>{document.documentElement.dataset.theme=theme},theme);
+     // Capture the settled colors after the UI's 150ms theme transition.
+     await new Promise(resolve=>setTimeout(resolve,250));
+     const border=await page.evaluate(()=>{
       const row=document.querySelector('#hiChangeFeed .hi-cat-price'),badge=row.querySelector('.hi-category-badge');
       const colors={stripe:getComputedStyle(row).borderInlineStartColor,badge:getComputedStyle(badge).borderColor};
-      document.body.classList.remove('branded-app');return colors;
-     },theme);
+      const luminance=color=>color.match(/[\d.]+/g).slice(0,3).map(Number).map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4}).reduce((sum,v,i)=>sum+v*[.2126,.7152,.0722][i],0);
+      const ratios=[...document.querySelectorAll('.hi-category-chip,.hi-category-badge')].map(el=>{const style=getComputedStyle(el),a=luminance(style.color),b=luminance(style.backgroundColor);return (Math.max(a,b)+.05)/(Math.min(a,b)+.05)});
+      return {...colors,contrast:Math.min(...ratios)};
+     });
      assert.equal(border.stripe,border.badge,'category stripe survives full app theme in '+theme);
+     assert.ok(border.contrast>=4.5,'readable category text in '+theme+': '+border.contrast);
     }
     await page.screenshot({path:'test-output/home-'+role+'-categories-dark-'+width+'.png',fullPage:true});
     await page.evaluate(()=>document.documentElement.dataset.theme='light');
