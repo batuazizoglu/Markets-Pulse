@@ -3,6 +3,7 @@ import * as cheerio from 'cheerio';
 import {parseAmount as n, normalizeOffer as offer} from './isp-economics.js';
 import {parseISP, socialLinks, parseAlemPackages, parseFixnetCampaigns} from './isp-parsers.js';
 import {ISP_SCOPE, ISP_COMPANIES, EXTRA_HOME_SOURCES, LEGACY_COMPANIES, companyCoverage, socialDirectory} from './isp-registry.js';
+import {competitiveWindow} from './competitive-changes.js';
 const PARSER_VERSION='home-isp-2';
 const compatibleSnapshot=(row,source)=>row?.source_meta_json?.parser_version===PARSER_VERSION&&
   (row.source_meta_json.source_revision||1)===(source.revision||1);
@@ -763,7 +764,47 @@ function scoreOffer(x){
   return Math.round(value*.45+tech*.25+flexibility*.15+install*.15);
 }
 
-export function marketPayload(scans,changes,lastGood=[]){
+function recordedProduct(value){
+  if(value==null)return null;
+  try{const product=typeof value==='string'?JSON.parse(value):value;return product&&typeof product==='object'&&!Array.isArray(product)?product:null}catch{return null}
+}
+
+// Attribute history from the scan that recorded it, not today's catalogue. A
+// removed package is no longer in that scan, but its original offer is retained
+// in old_value. Source definitions only fill gaps in older records.
+export async function loadHomeInternetChanges(pool,{start,end=new Date()}={}){
+  const params=[new Date(end).toISOString()],where=['c.detected_at < $1::timestamptz'];
+  if(start!=null){params.push(new Date(start).toISOString());where.push('c.detected_at >= $2::timestamptz')}
+  const result=await pool.query(`SELECT c.*,s.source_name,s.source_url,s.technology,s.ownership_group,
+    event.product _event_product
+    FROM home_internet_changes c
+    LEFT JOIN home_internet_scans s ON s.id=c.scan_id AND s.source_slug=c.source_slug
+    LEFT JOIN LATERAL (
+      SELECT item product FROM jsonb_array_elements(
+        (CASE WHEN jsonb_typeof(s.payload_json)='array' THEN s.payload_json ELSE '[]'::jsonb END) ||
+        (CASE WHEN jsonb_typeof(s.source_meta_json->'campaigns')='array' THEN s.source_meta_json->'campaigns' ELSE '[]'::jsonb END)
+      ) item WHERE item->>'product_key'=c.product_key LIMIT 1
+    ) event ON TRUE
+    WHERE ${where.join(' AND ')} ORDER BY c.detected_at DESC,c.id DESC`,params);
+  const definitions=new Map(HOME_INTERNET_SOURCES.map(source=>[source.slug,source]));
+  return result.rows.map(({_event_product,...row})=>{
+    const source=definitions.get(row.source_slug);
+    const stored=recordedProduct(row.change_type==='removed'?row.old_value:row.change_type==='added'?row.new_value:null);
+    const product=stored||_event_product||{};
+    const technology=product.technology||row.technology||source?.technology||null;
+    const source_url=row.source_url||product.source_url||source?.url||null;
+    const product_family=product.product_family||(/\bFWA\b/i.test(technology||'')||/(?:^|-)superbox$|(?:^|-)redbox$/.test(row.source_slug)?'fwa':source||technology?'fixed':null);
+    return {...row,source_name:row.source_name||source?.name||row.provider||row.source_slug,
+      source_url,technology,product_family,brand:product.brand||row.provider,
+      product_url:product.product_url||source_url,
+      ownership_group:product.ownership_group||row.ownership_group||source?.ownership_group||null,
+      market_segment:product.market_segment||source?.market_segment||'residential',
+      field_key:TRACK_FIELDS.find(([,label])=>label===row.field_name)?.[0]||null};
+  });
+}
+
+export function marketPayload(scans,changes,lastGood=[],{days=30,now=new Date()}={}){
+  const bounds=competitiveWindow(days,now);
   const products=[],sources=[],campaigns=[];
   const today=new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Famagusta'}).format(new Date());
   const bySlug=new Map(scans.map(r=>[r.source_slug,r]));
@@ -810,25 +851,29 @@ export function marketPayload(scans,changes,lastGood=[]){
   const redbox=fwaProducts.filter(x=>x.brand==='Red Box').sort((a,b)=>(a.effective_monthly_try||Infinity)-(b.effective_monthly_try||Infinity));
   const fwa_comparison={superbox,redbox,superbox_count:superbox.length,redbox_count:redbox.length};
   return {
-    generated_at:new Date().toISOString(),
+    generated_at:bounds.window_end,days:bounds.window_days,...bounds,
     methodology:'Home Internet v2 • Resmî paket kaynakları. Hediye süre dâhil efektif aylık bedel; kurulum/kablo ayrıca. Gün bazlı paketlerde 30 gün = 1 ay. 12 ay eşdeğer bedel bir taahhüt fiyatı değildir.',
     scope:ISP_SCOPE,companies,social:socialDirectory(sources),campaigns,
     metrics:{
       listed_companies:companies.length,tracked_companies:companies.filter(c=>['tracked','partial'].includes(c.status)).length,
       providers:providerCount,sources:sources.length,products:products.length,priced_products:priced.length,
       fixed_products:fixedProducts.length,fwa_products:fwaProducts.length,turkcell_home_products:fixedProducts.filter(x=>x.provider==='Turkcell Ev İnterneti').length,superbox_products:fwaProducts.filter(x=>x.brand==='Superbox').length,redbox_products:fwaProducts.filter(x=>x.brand==='Red Box').length,
-      technologies:technologies.length,changes_7d:changes.filter(x=>new Date(x.detected_at)>Date.now()-7*86400000).length,
+      technologies:technologies.length,changes_7d:changes.filter(x=>+new Date(x.detected_at)>=+new Date(bounds.window_end)-7*86400000&&+new Date(x.detected_at)<+new Date(bounds.window_end)).length,
+      changes_window:changes.length,
       best_value:bestValue,fastest,cheapest
     },
-    sources,products,fixed_products:fixedProducts,fwa_products:fwaProducts,opportunities:opportunities.slice(0,10),fwa_comparison,changes:changes.slice(0,100)
+    sources,products,fixed_products:fixedProducts,fwa_products:fwaProducts,opportunities:opportunities.slice(0,10),fwa_comparison,changes
   };
 }
 
-export async function getHomeInternetMarket(pool,{refresh=false}={}){
+export async function getHomeInternetMarket(pool,{refresh=false,days=30,now}={}){
   if(refresh)await scanHomeInternet(pool);
   let r=await pool.query(`SELECT DISTINCT ON (source_slug) * FROM home_internet_scans ORDER BY source_slug,captured_at DESC,id DESC`);
   if(!r.rows.length){await scanHomeInternet(pool);r=await pool.query(`SELECT DISTINCT ON (source_slug) * FROM home_internet_scans ORDER BY source_slug,captured_at DESC,id DESC`)}
-  const ch=await pool.query(`SELECT * FROM home_internet_changes WHERE detected_at>=NOW()-INTERVAL '30 days' ORDER BY detected_at DESC,id DESC LIMIT 300`);
+  // Manual/initial collection can take minutes. End the default history window
+  // after that work so the response includes changes that were just recorded.
+  const bounds=competitiveWindow(days,now??new Date());
+  const changes=await loadHomeInternetChanges(pool,{start:bounds.window_start,end:bounds.window_end});
   const good=await pool.query(`SELECT DISTINCT ON (source_slug) * FROM home_internet_scans WHERE status='ok' AND source_meta_json->>'parser_version'=$1 ORDER BY source_slug,captured_at DESC,id DESC`,[PARSER_VERSION]);
-  return marketPayload(r.rows,ch.rows,good.rows);
+  return marketPayload(r.rows,changes,good.rows,{days:bounds.window_days,now:bounds.window_end});
 }
