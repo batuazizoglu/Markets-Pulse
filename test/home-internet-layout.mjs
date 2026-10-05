@@ -68,6 +68,15 @@ try{
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
     const colors=await page.evaluate(()=>({dot:getComputedStyle(document.querySelector('#hiChanges .hi-cat-price .tl-dot')).backgroundColor,badge:getComputedStyle(document.querySelector('#hiChangeFeed .hi-cat-price .hi-category-badge')).color}));
     assert.equal(colors.dot,colors.badge,'timeline and feed use the same category color');
+    for(const theme of ['light','dark']){
+     const border=await page.evaluate(theme=>{
+      document.documentElement.dataset.theme=theme;document.body.classList.add('branded-app');
+      const row=document.querySelector('#hiChangeFeed .hi-cat-price'),badge=row.querySelector('.hi-category-badge');
+      const colors={stripe:getComputedStyle(row).borderInlineStartColor,badge:getComputedStyle(badge).borderColor};
+      document.body.classList.remove('branded-app');return colors;
+     },theme);
+     assert.equal(border.stripe,border.badge,'category stripe survives full app theme in '+theme);
+    }
     await page.screenshot({path:'test-output/home-'+role+'-categories-dark-'+width+'.png',fullPage:true});
     await page.evaluate(()=>document.documentElement.dataset.theme='light');
    }
