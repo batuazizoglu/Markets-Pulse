@@ -25,6 +25,18 @@ test('top three priorities are selected across GSM, MNP, fixed, FWA and ads, wit
   assert.ok(brief.highlights.every(x=>!x.owned));assert.equal(brief.counts.moves,4);assert.equal(brief.counts.ads,1);
 });
 
+test('MNP labels recognize explicit segments and Turkish title forms while preserving GSM and home families',()=>{
+  const ctx=context();
+  for(const input of [{segment:'MNP / Numara Taşıma',product_name:'Süper 50'},{segment:'Numara Taşıma',product_name:'Süper 50'},{product_name:'Numaranı Taşı 50 GB'},{product_name:'NUMARANI TAŞI 50 GB'},{product_name:'Numarani Tasi 50 GB'},{product_name:'Numaranızı Taşıyın 50 GB'},{product_name:'Numara Taşıma 50 GB'}]){
+    ctx.changes=[change(input)];const item=buildDailyBrief(ctx).highlights[0];assert.equal(item.domain,'mnp',JSON.stringify(input));assert.equal(item.label,'MNP / Numara Taşıma');
+  }
+  ctx.changes=[change({product_name:'Süper 50 GB',segment:'Genel'})];assert.equal(buildDailyBrief(ctx).highlights[0].domain,'gsm');
+  for(const family of ['fixed','fwa']){
+    ctx.changes=[change({segment:'MNP',product_name:'Numaranı Taşı',product_family:family})];assert.equal(buildDailyBrief(ctx).highlights[0].domain,family);
+    ctx.changes=[];ctx.daily_home[family].changes=[change({segment:'MNP',product_name:'Numaranı Taşı',product_id:undefined,product_key:family+'|offer'})];assert.equal(buildDailyBrief(ctx).highlights[0].domain,family);ctx.daily_home[family].changes=[];
+  }
+});
+
 test('same-price flags require two explicit snapshots, not a missing price field or null-coerced zero',()=>{
   const ctx=context();const base=change({field_name:'Data',old_value:'50',new_value:'40'});
   ctx.changes=[base];assert.equal(buildDailyBrief(ctx).highlights[0].flags.length,0);

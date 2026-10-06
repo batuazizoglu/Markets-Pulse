@@ -131,3 +131,14 @@ test('large valid campaign conditions and multibyte change text use explicit det
   assert.match(text,/Tüm koşulları ve belirsizlikleri inceleyin: https:\/\/www.facebook.com\/ads\/library\//);
   assert.doesNotMatch(html,/ç{100}/);assert.doesNotMatch(text,/ç{100}/);
 });
+
+test('ad radar preserves dynamically discovered category labels safely in HTML and plain text',()=>{
+  const ctx=context(),row=ad(1);row.analysis_json.category='auto-cihazlar';row.analysis_json.category_label='Cihazlar';ctx.ad_report_data.rows=[row];
+  const $=load(dailyBriefEmailHtml(ctx)),text=dailyBriefPlainText(ctx);
+  assert.match($('.brief-ad-category').text(),/^Cihazlar/);
+  assert.match(text,/Cihazlar · Telsim · Reklam 1/);
+  row.analysis_json.category_label='<img src=x onerror="alert(1)">Cihazlar';
+  const unsafeDom=load(dailyBriefEmailHtml(ctx));
+  assert.equal(unsafeDom('.brief-ad-category img,[onerror]').length,0);
+  assert.match(unsafeDom('.brief-ad-category').text(),/<img src=x onerror="alert\(1\)">Cihazlar/);
+});

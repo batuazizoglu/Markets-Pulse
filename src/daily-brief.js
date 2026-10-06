@@ -41,7 +41,10 @@ function displayChange(row){
 function detectDomain(row,fallback='gsm'){
   if(row.product_family==='fwa')return 'fwa';
   if(row.product_family==='fixed')return 'fixed';
-  return /mnp|numara taşı|numara tasi/i.test([row.product_name,row.acquisition,JSON.stringify(row.product_after||{}),JSON.stringify(row.extras_json||{})].join(' '))?'mnp':fallback;
+  if(fallback==='fixed'||fallback==='fwa')return fallback;
+  const text=[row.segment,row.product_name,row.acquisition,JSON.stringify(row.product_after||{}),JSON.stringify(row.extras_json||{})]
+    .join(' ').toLocaleLowerCase('tr-TR').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').replace(/ı/g,'i');
+  return /\bmnp\b|\bnumara(?:ni|nizi|mi|mizi|sini|si)?\s+tasi/.test(text)?'mnp':fallback;
 }
 
 function unchangedPrice(rows){
