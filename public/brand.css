@@ -264,8 +264,12 @@ html[data-theme="dark"] body.branded-app :is(.mp-score,.bm-pos,.status){font-wei
 }
 
 
-/* Let the GSM change feed grow with its rows instead of scrolling inside the panel. */
-#changes-section #changeFeed{max-height:none;overflow:visible}
+/* Keep GSM change panels aligned while their records scroll independently. */
+#changes-section>.grid2>.panel{display:flex;flex-direction:column;min-width:0;height:740px}
+#changes-section>.grid2>.panel>.panel-head{flex:none;min-height:64px}
+#changes-section :is(#timeline,#changeFeed){flex:1;min-height:0;max-height:none;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
+#changes-section>.grid2>.panel>.market-list-footer{flex:none;min-height:64px}
+@media(max-width:720px){#changes-section>.grid2>.panel{height:620px}}
 
 /* Reporting center */
 .report-grid-4{grid-template-columns:repeat(2,minmax(0,1fr))}
