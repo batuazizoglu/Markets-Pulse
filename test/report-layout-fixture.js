@@ -1,5 +1,6 @@
 // Synthetic, offline reports. No production data, scans, API calls or email delivery.
 import sharp from 'sharp';
+import {createHash} from 'node:crypto';
 import {REPORT_NAMES} from '../src/report-data.js';
 import {adVisualReportHtml} from '../src/ad-visual-report.js';
 
@@ -44,10 +45,11 @@ export async function createReportLayoutFixtures(){
     creative(720,1280,'#a92f30','NUMARA TAŞIMA'),
     creative(960,960,'#145e49','CİHAZ FIRSATI')
   ]);
+  const hashes=assets.map(bytes=>createHash('sha256').update(bytes).digest('hex'));
   const categories={home:'Ev İnterneti',gsm:'GSM Paketleri',mnp:'MNP / Numara Taşıma','auto-cihazlar':'Cihazlar'};
   const rows=Object.entries(categories).map(([category,label],i)=>({
     event_type:i%2?'changed':'first_seen',observed_at:at,
-    report_image:{cid:`fixture-${i}@markets-pulse`,width:[960,1200,720,960][i],height:[960,628,1280,960][i],mime_type:'image/jpeg'},
+    report_image:{cid:`fixture-${i}@markets-pulse`,sha256:hashes[i],selection:'creative',url:'https://www.marketspulse.cloud/report-media/'+hashes[i]+'.jpg',width:[960,1200,720,960][i],height:[960,628,1280,960][i],mime_type:'image/jpeg'},
     analysis_json:{brand:i%2?'Örnek Rakip':'Telsim',category,category_label:label,ad_id:`1234567890${i}`,title:`${label} - Yeni Abonelere ve Ailelere Özel Uzun İsimli Kampanya`,
       source_url:'https://www.facebook.com/ads/library/?id=1234567890'+i,offer:{price_try:999,billing_period:'monthly',data_gb:category==='gsm'?50:null,bonus_data_gb:category==='mnp'?25:null,speed_mbps:category==='home'?100:null},
       visual_summary:'Kampanya görselindeki ana fiyat ve ürün bilgileri ayrı olarak okunur. Kullanım koşulları ile cihazın taksit süresi birbirine karıştırılmadan değerlendirilir.',
@@ -65,7 +67,9 @@ export async function createReportLayoutFixtures(){
     benchmark:{overall_score:{score:72,level:'GÜÇLÜ'},methodology:'Karşılaştırmalar doğrulanmış paket özelliklerine dayanır.',score_methodology:'Fiyat, internet ve taahhüt bileşenleri birlikte değerlendirilir.',history_note:'Dönem başı verisi olmayan segmentte fark hesaplanmaz.'},
     stats:stats(17),sources:sources(7),changes:changes(22,'Telsim'),evidence:[],
     score_deltas:['Genel','Genç / Öğrenci','Premium / Platinum','Uluslararası / Diaspora'].map((segment,i)=>({segment,current:i===3?null:72+i,baseline:i===3?null:68,delta:i===3?null:4+i,level:i===3?'KARŞILIK BULUNAMADI':'GÜÇLÜ',confidence:i===3?'Sınırlı':'Yüksek',rationale:i===3?'İzlenen katalogda aynı segmente uygun ana tarife bulunamadı.':''})),
-    daily_home:{fixed,fwa},ad_analysis_html:emailAdHtml,ad_analysis_html_pdf:adHtml
+    daily_home:{fixed,fwa},ad_analysis_html:emailAdHtml,ad_analysis_html_pdf:adHtml,
+    ad_report_data:{...data,coverage:[{brand:'Telsim',status:'ok',checked_at:at},{brand:'Örnek Rakip',status:'ok',checked_at:at}]},
+    fixture_report_images:Object.fromEntries(hashes.map((digest,i)=>[digest,assets[i]]))
   };
   const monthly={...base,type:'monthly',title:REPORT_NAMES.monthly,days:30,period_start:'2026-08-22T06:00:00.000Z',monthly:{total_changes:31,evidence_total:43,evidence_complete:40,evidence_missing:3,evidence_visual:38,
     trend:Array.from({length:12},(_,i)=>({week:`2026-09-${String(1+7*Math.floor(i/4)).padStart(2,'0')}`,segment:['Genel','Genç / Öğrenci','Premium / Platinum','Uluslararası / Diaspora'][i%4],average_score:72+i,samples:4,first_sample:stamp(12),last_sample:stamp(19)})),
@@ -78,4 +82,38 @@ export async function createReportLayoutFixtures(){
     fwa:{...base,type:'fwa',title:REPORT_NAMES.fwa,days:7,home:fwa},
     empty
   };
+}
+
+
+// Dedicated daily-email scenarios keep the legacy PDF and non-daily fixtures intact.
+export function createDailyBriefLayoutFixtures(base){
+  const checked='2026-09-21T05:30:00.000Z',observed='2026-09-20T14:30:00.000Z';
+  const mobileSources=[{id:1,slug:'telsim-paketler',name:'Telsim Paketler',url:'https://example.com/telsim/paketler',last_status:'ok',last_checked_at:checked}];
+  const fixedSources=[{slug:'fixture-fixed',name:'Örnek Fiber',url:'https://example.net/fiber/paketler',status:'ok',captured_at:checked}];
+  const fwaSources=[{slug:'telsim-redbox',name:'Red Box',url:'https://example.org/redbox/paketler',status:'ok',captured_at:checked}];
+  const sourceFields={source_id:1,source_slug:'telsim-paketler',source_name:'Telsim Paketler',source_url:mobileSources[0].url,provider:'Telsim',brand:'Telsim',detected_at:observed,scan_id:42};
+  const mnpBefore={id:101,name:'Numaranı Taşı 50 GB',price_try:999,data_gb:50,validity_days:30,commitment_months:12};
+  const mnpAfter={...mnpBefore,price_try:899,data_gb:60};
+  const gsmBefore={id:102,name:'Aile 40 GB',price_try:799,data_gb:40,validity_days:30};
+  const gsmAfter={...gsmBefore,data_gb:30};
+  const mobileChanges=[
+    {...sourceFields,id:101,product_id:101,product_name:mnpAfter.name,segment:'MNP / Numara Taşıma',change_type:'field_changed',field_name:'Fiyat',field_key:'price_try',old_value:'999',new_value:'899',severity:'high',product_before:mnpBefore,product_after:mnpAfter},
+    {...sourceFields,id:102,product_id:101,product_name:mnpAfter.name,segment:'MNP / Numara Taşıma',change_type:'field_changed',field_name:'İnternet',field_key:'data_gb',old_value:'50',new_value:'60',severity:'high',product_before:mnpBefore,product_after:mnpAfter},
+    {...sourceFields,id:103,product_id:102,product_name:gsmAfter.name,segment:'Genel',change_type:'field_changed',field_name:'İnternet',field_key:'data_gb',old_value:'40',new_value:'30',severity:'medium',product_before:gsmBefore,product_after:gsmAfter}
+  ];
+  const fixedProduct={product_key:'fixture-fixed|aile|12',provider:'Örnek Fiber',brand:'Örnek Fiber',name:'Aile Fiber 100 Mbps',source_slug:'fixture-fixed',source_url:fixedSources[0].url,product_url:'https://example.net/fiber/aile',product_family:'fixed',speed_down_mbps:100,effective_monthly_try:999,price_monthly_try:999,duration_months:12,unlimited:true,technology:'Fiber',availability:'active',expires_at:'2026-09-23',verified_at:checked,stale:false};
+  const fixedChanges=[{id:201,scan_id:52,product_key:fixedProduct.product_key,product_name:fixedProduct.name,provider:fixedProduct.provider,brand:fixedProduct.brand,source_slug:fixedProduct.source_slug,source_url:fixedProduct.source_url,detected_at:observed,change_type:'field_changed',field_name:'İndirme hızı',field_key:'speed_down_mbps',old_value:'50',new_value:'100',severity:'high',product_before:{...fixedProduct,speed_down_mbps:50},product_after:fixedProduct}];
+  const rich={...base,sources:mobileSources,changes:mobileChanges,stats:stats(mobileChanges.length),
+    benchmark:{...base.benchmark,generated_at:checked,kktcell_error:null,matches:[{match_status:'Primary',match_score:90,telsim:{...mnpAfter,source_url:mobileSources[0].url},kktcell:{name:'Turkcell 60 GB',price_try:949,data_gb:60,validity_days:30,commitment_months:12,source_url:'https://example.edu/turkcell/60gb'}}]},
+    daily_home:{fixed:{products:[fixedProduct],sources:fixedSources,changes:fixedChanges,stats:stats(1),opportunities:[]},fwa:{products:[],sources:fwaSources,changes:[],stats:stats(0),comparison:{}}},
+    ad_report_data:{...base.ad_report_data,checked_at:checked,rows:base.ad_report_data.rows.map(row=>({...row,observed_at:observed,analysis_json:{...row.analysis_json,observed_at:observed}})),coverage:base.ad_report_data.coverage.map(row=>({...row,checked_at:checked}))}
+  };
+  const quiet={...rich,market:{...rich.market,top_threats:[],move_count:0},changes:[],stats:stats(0),
+    daily_home:{fixed:{...rich.daily_home.fixed,products:[],changes:[],stats:stats(0)},fwa:rich.daily_home.fwa},
+    ad_report_data:{...rich.ad_report_data,rows:[]}}
+  ;
+  const limited={...quiet,sources:mobileSources.map(row=>({...row,last_status:'blocked',last_checked_at:'2026-09-19T04:00:00.000Z'})),
+    daily_home:{fixed:{...quiet.daily_home.fixed,sources:fixedSources.map(row=>({...row,status:'blocked',captured_at:'2026-09-19T04:00:00.000Z'}))},fwa:quiet.daily_home.fwa},
+    ad_report_data:{...quiet.ad_report_data,status:'partial',checked_at:'2026-09-19T04:00:00.000Z',coverage:quiet.ad_report_data.coverage.map(row=>({...row,status:'blocked',checked_at:'2026-09-19T04:00:00.000Z'}))}};
+  return {daily:rich,'daily-quiet':quiet,'daily-limited':limited};
 }

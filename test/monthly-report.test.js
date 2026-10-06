@@ -9,6 +9,7 @@ import {collectMonthlyData} from '../src/monthly-report-data.js';
 import {monthlyOverviewHtml,monthlyPlainText} from '../src/monthly-report-content.js';
 import {buildReportContext,reportDays,REPORT_NAMES,REPORT_TZ} from '../src/report-data.js';
 import {renderReportHtml} from '../src/report-render.js';
+import {dailyBriefEmailHtml} from '../src/daily-brief-email.js';
 
 let fixture,ctx;
 const end=new Date(),start=new Date(end.getTime()-30*86400000);
@@ -71,13 +72,13 @@ test('production email formatter includes monthly home/FWA blocks and consolidat
   // Execute only pure formatting functions; transport, DB startup timers and mail sending are never imported/executed.
   const helpers=source.split('\n').filter(line=>line.startsWith('function esc(')||line.startsWith('function localDate(')).join('\n');
   const body=source.slice(source.indexOf('function signed('),source.indexOf('export async function sendReportEmail('));
-  const render=compileFunction(helpers+'\n'+body+'\nreturn emailHtml(type,ctx,attachments);',['type','ctx','attachments','REPORT_NAMES','REPORT_TZ','monthlyOverviewHtml']);
-  const html=render('monthly',ctx,[{filename:'aylik-rapor.pdf'}],REPORT_NAMES,REPORT_TZ,monthlyOverviewHtml);
+  const render=compileFunction(helpers+'\n'+body+'\nreturn emailHtml(type,ctx,attachments);',['type','ctx','attachments','REPORT_NAMES','REPORT_TZ','monthlyOverviewHtml','dailyBriefEmailHtml']);
+  const html=render('monthly',ctx,[{filename:'aylik-rapor.pdf'}],REPORT_NAMES,REPORT_TZ,monthlyOverviewHtml,dailyBriefEmailHtml);
   const document=new JSDOM(html).window.document,text=document.body.textContent;
   assert.match(text,/Turkcell Ev İnterneti • 30 Günlük Özet/);assert.match(text,/Superbox \/ Red Box • 30 Günlük Özet/);
   assert.match(text,/Kanıt Arşivi • 30 Günlük Kapsam/);assert.match(text,/aylik-rapor.pdf/);assert.ok(!text.includes('NaN'));
   document.defaultView.close();
-  for(const type of ['daily','weekly'])assert.ok(!render(type,{...ctx,type},[],REPORT_NAMES,REPORT_TZ,monthlyOverviewHtml).includes('NaN'));
+  for(const type of ['daily','weekly'])assert.ok(!render(type,{...ctx,type},[],REPORT_NAMES,REPORT_TZ,monthlyOverviewHtml,dailyBriefEmailHtml).includes('NaN'));
 });
 
 test('monthly summary escapes stored text and report buttons target the authenticated manual endpoints',async()=>{

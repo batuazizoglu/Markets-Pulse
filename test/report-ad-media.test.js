@@ -11,6 +11,7 @@ import {SCHEMA_SQL} from '../src/schema.js';
 import {buildAdReportSection,registerReportMediaRoutes} from '../src/report-ad-media.js';
 import {REPORT_NAMES,REPORT_TZ} from '../src/report-data.js';
 import {monthlyOverviewHtml} from '../src/monthly-report-content.js';
+import {dailyBriefEmailHtml} from '../src/daily-brief-email.js';
 
 test('email and PDF use the same prepared creative; public route exposes only report derivatives',async()=>{
   const db=new PGlite();await db.exec(SCHEMA_SQL);let server;
@@ -32,6 +33,10 @@ test('email and PDF use the same prepared creative; public route exposes only re
     const bytes=Buffer.from(embedded.split(',')[1],'base64'),derivedHash=emailSrc.match(/([a-f0-9]{64})\.jpg$/)[1];
     assert.equal(createHash('sha256').update(bytes).digest('hex'),derivedHash);
     assert.equal(ctx.ad_report_image_summary.prepared,1);
+    assert.equal(ctx.ad_report_data.rows[0].report_image.sha256,derivedHash);
+    const daily=new JSDOM(dailyBriefEmailHtml({...ctx,type:'daily',period_start:start.toISOString(),period_end:end.toISOString(),generated_at:end.toISOString(),sources:[],changes:[],benchmark:{},daily_home:null}));
+    assert.equal(daily.window.document.querySelector('.brief-ad-image')?.src,emailSrc,'daily radar preserves the same approved creative');
+    daily.window.close();
     await buildAdReportSection(db,'daily',start,end);
     assert.equal((await db.query('SELECT count(*)::int n FROM ad_report_image_assets')).rows[0].n,1);
     const app=express();registerReportMediaRoutes(app,db);app.use((req,res)=>res.status(401).end());
@@ -52,12 +57,13 @@ test('all HTML email families retain the illustrated ad section without sending 
   const source=await readFile(new URL('../src/report-email.js',import.meta.url),'utf8');
   const helpers=source.split('\n').filter(line=>line.startsWith('function esc(')||line.startsWith('function localDate(')).join('\n');
   const body=source.slice(source.indexOf('function signed('),source.indexOf('export async function sendReportEmail('));
-  const render=compileFunction(helpers+'\n'+body+'\nreturn emailHtml(type,ctx,attachments);',['type','ctx','attachments','REPORT_NAMES','REPORT_TZ','monthlyOverviewHtml']);
-  const at=new Date().toISOString();
-  const ctx={days:1,period_start:at,period_end:at,home:{products:[],sources:[],changes:[]},market:{},benchmark:{},stats:{},sources:[],score_deltas:[],ad_analysis_html:'<section class="ad-report"><img alt="Reklam" src="https://www.marketspulse.cloud/report-media/'+'a'.repeat(64)+'.jpg"></section>'};
+  const render=compileFunction(helpers+'\n'+body+'\nreturn emailHtml(type,ctx,attachments);',['type','ctx','attachments','REPORT_NAMES','REPORT_TZ','monthlyOverviewHtml','dailyBriefEmailHtml']);
+  const at=new Date().toISOString(),start=new Date(Date.now()-86400000).toISOString();
+  const ctx={days:1,period_start:start,period_end:at,generated_at:at,home:{products:[],sources:[],changes:[]},market:{},benchmark:{},stats:{},sources:[],score_deltas:[],ad_analysis_html:'<section class="ad-report"><img alt="Reklam" src="https://www.marketspulse.cloud/report-media/'+'a'.repeat(64)+'.jpg"></section>'};
+  ctx.ad_report_data={status:'ok',checked_at:at,coverage:[{brand:'Telsim',status:'ok',checked_at:at}],rows:[{event_type:'first_seen',observed_at:new Date(Date.now()-1000).toISOString(),report_image:{sha256:'a'.repeat(64),selection:'creative',url:'https://www.marketspulse.cloud/report-media/'+'a'.repeat(64)+'.jpg'},analysis_json:{brand:'Telsim',title:'Güncel 50 GB kampanyası',category:'gsm',ad_id:'123456',source_url:'https://www.facebook.com/ads/library/?id=123456',offer:{price_try:899,data_gb:50,billing_period:'monthly'},conditions:[],visual_summary:'Doğrulanmış kampanya görseli.'}}]};
   for(const type of ['daily','weekly','monthly','home','fwa']){
-    const dom=new JSDOM(render(type,ctx,[],REPORT_NAMES,REPORT_TZ,monthlyOverviewHtml));
-    assert.equal(dom.window.document.querySelectorAll('.ad-report img').length,1,type);
+    const dom=new JSDOM(render(type,{...ctx,type},[],REPORT_NAMES,REPORT_TZ,monthlyOverviewHtml,dailyBriefEmailHtml));
+    assert.equal(dom.window.document.querySelectorAll(type==='daily'?'.brief-ad-image':'.ad-report img').length,1,type);
     dom.window.close();
   }
 });
@@ -83,6 +89,8 @@ test('unverified archive screenshots stay PDF-only even if another row proves th
       assert.equal(pdf.window.document.querySelectorAll('.ad-report-image').length,3);
       assert.equal((await db.query('SELECT count(*)::int n FROM ad_report_image_assets')).rows[0].n,1);
       assert.equal(result.ad_report_image_summary.prepared,1);assert.equal(result.ad_report_image_summary.unavailable,2);
+      assert.equal(result.ad_report_data.rows.filter(row=>row.report_image).length,1,'daily structured rows withhold unverified evidence too');
+      for(const id of ['789013','789014'])assert.equal(result.ad_report_data.rows.find(row=>row.analysis_json.ad_id===id).report_image,undefined);
       assert.match(email.window.document.body.textContent,/1 kayıtta reklam görseli kullanıldı/);
       assert.match(pdf.window.document.body.textContent,/3 kayıtta reklam görseli kullanıldı/);
     }finally{email.window.close();pdf.window.close()}
@@ -104,6 +112,7 @@ test('a public-media write failure preserves the report and PDF with a text-only
       assert.equal(email.window.document.querySelector('.ad-report-image'),null);assert.match(email.window.document.body.textContent,/Korunan reklam/);
       assert.match(pdf.window.document.querySelector('.ad-report-image').src,/^data:image\/jpeg;base64,/);
       assert.equal(result.ad_report_image_summary.prepared,0);assert.equal(result.ad_report_image_summary.unavailable,1);
+      assert.equal(result.ad_report_data.rows[0].report_image,undefined,'daily structured radar cannot expose unpublished media');
       assert.equal((await db.query('SELECT count(*)::int n FROM ad_report_image_assets')).rows[0].n,0);
     }finally{email.window.close();pdf.window.close()}
   }finally{await db.close()}

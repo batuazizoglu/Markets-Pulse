@@ -5,6 +5,7 @@ import { currentBenchmark } from './live-benchmark.js';
 import { ENGINE_VERSION } from './comparable-engine.js';
 import { getHomeInternetMarket } from './home-internet.js';
 import {buildAdReportSection} from './report-ad-media.js';
+import {enrichDailyChanges,loadDailyMobileCatalog} from './daily-brief-evidence.js';
 
 export const REPORT_TZ = 'Asia/Famagusta';
 export const REPORT_NAMES = {
@@ -23,13 +24,14 @@ export function reportDays(type,requestedDays=7){
 
 async function sourceHealth(pool) {
   const r = await pool.query(
-    "SELECT s.id,s.slug,s.name,s.url," +
+    "SELECT s.id,s.slug,s.name,s.url,s.enabled," +
     " (SELECT started_at FROM scans sc WHERE sc.source_id=s.id ORDER BY sc.id DESC LIMIT 1) last_checked_at," +
     " (SELECT status FROM scans sc WHERE sc.source_id=s.id ORDER BY sc.id DESC LIMIT 1) last_status," +
     " (SELECT http_status FROM scans sc WHERE sc.source_id=s.id ORDER BY sc.id DESC LIMIT 1) http_status," +
     " (SELECT response_ms FROM scans sc WHERE sc.source_id=s.id ORDER BY sc.id DESC LIMIT 1) response_ms," +
     " (SELECT parsed_count FROM scans sc WHERE sc.source_id=s.id ORDER BY sc.id DESC LIMIT 1) parsed_count," +
     " (SELECT error FROM scans sc WHERE sc.source_id=s.id ORDER BY sc.id DESC LIMIT 1) last_error," +
+    " (SELECT started_at FROM scans sc WHERE sc.source_id=s.id AND sc.status='ok' ORDER BY sc.id DESC LIMIT 1) last_success_at," +
     " (SELECT COUNT(*)::int FROM products p WHERE p.source_id=s.id AND p.active=TRUE) active_products" +
     " FROM sources s ORDER BY s.id"
   );
@@ -97,6 +99,7 @@ function dailyHomeSections(home,days=1,now=new Date()){
   const productMap=new Map((home.products||[]).map(x=>[x.product_key,x]));
   const familyChanges=family=>(home.changes||[]).filter(ch=>{
     if(new Date(ch.detected_at).getTime()<cutoff||new Date(ch.detected_at)>=new Date(now))return false;
+    if(ch.product_family)return ch.product_family===family;
     const p=productMap.get(ch.product_key);
     if(p)return (p.product_family||'fixed')===family;
     if(family==='fwa')return ['kktcell-superbox','lifecell-digital-superbox','telsim-redbox'].includes(ch.source_slug)||/superbox|red box/i.test(ch.product_name||'');
@@ -107,9 +110,10 @@ function dailyHomeSections(home,days=1,now=new Date()){
   const fixedSources=(home.sources||[]).filter(s=>!['kktcell-superbox','lifecell-digital-superbox','telsim-redbox'].includes(s.slug));
   const fwaSources=(home.sources||[]).filter(s=>['kktcell-superbox','lifecell-digital-superbox','telsim-redbox'].includes(s.slug));
   const fixedChanges=familyChanges('fixed'),fwaChanges=familyChanges('fwa');
+  const familyCampaigns=family=>(home.campaigns||[]).filter(c=>(c.product_family||(/superbox|red\s*box/i.test([c.source_slug,c.brand,c.name].filter(Boolean).join(' '))?'fwa':'fixed'))===family);
   return {
-    fixed:{products:fixedProducts,sources:fixedSources,changes:fixedChanges,stats:changeStats(fixedChanges),opportunities:home.opportunities||[]},
-    fwa:{products:fwaProducts,sources:fwaSources,changes:fwaChanges,stats:changeStats(fwaChanges),comparison:home.fwa_comparison||{}}
+    fixed:{products:fixedProducts,campaigns:familyCampaigns('fixed'),sources:fixedSources,changes:fixedChanges,stats:changeStats(fixedChanges),opportunities:home.opportunities||[]},
+    fwa:{products:fwaProducts,campaigns:familyCampaigns('fwa'),sources:fwaSources,changes:fwaChanges,stats:changeStats(fwaChanges),comparison:home.fwa_comparison||{}}
   };
 }
 
@@ -152,15 +156,25 @@ export async function buildReportContext(pool, type, options={},loaders={current
   const tasks=[
     loaders.currentBenchmark(pool),loaders.sourceHealth(pool),loadCompetitiveChanges(pool,{start:window.window_start,end:window.window_end}),scoreBaselines(pool,window.window_start),periodEvidence(pool,days,type==='evidence'?'full':type==='daily'?'meta':'visual',periodEnd)
   ];
-  if(type==='daily'||type==='weekly')tasks.push(loaders.getHomeInternetMarket(pool,{refresh:false}));
+  if(type==='daily'||type==='weekly')tasks.push(loaders.getHomeInternetMarket(pool,{refresh:false,days,now:periodEnd}));
   const results=await Promise.all(tasks);
-  const [benchmark,sources,changes,baseline,evidence]=results;
+  const [benchmark,sources,loadedChanges,baseline,evidence]=results;
+  let changes=loadedChanges,home=results[5],catalog_products;
+  if(type==='daily'){
+    const [enriched,catalog]=await Promise.all([
+      enrichDailyChanges(pool,{changes,homeChanges:home?.changes||[]}),
+      loadDailyMobileCatalog(pool,{start:periodStart,end:periodEnd})
+    ]);
+    catalog_products=catalog;
+    changes=enriched.changes;
+    if(home)home={...home,changes:enriched.homeChanges};
+  }
   const market=marketPulseFromRows(changes,days,periodEnd);
-  const daily_home=(type==='daily'||type==='weekly')?dailyHomeSections(results[5],days,periodEnd):null;
+  const daily_home=(type==='daily'||type==='weekly')?dailyHomeSections(home,days,periodEnd):null;
   return {
     ...adSection,type,title:REPORT_NAMES[type]||'Markets Pulse Raporu',days,
     period_start:periodStart.toISOString(),period_end:periodEnd.toISOString(),generated_at:periodEnd.toISOString(),
     market,benchmark,sources,changes,stats:changeStats(changes),score_deltas:scoreDeltas(benchmark,baseline),evidence,
-    daily_home
+    daily_home,...(type==='daily'?{catalog_products}:{})
   };
 }

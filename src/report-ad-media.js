@@ -35,6 +35,7 @@ export async function buildAdReportSection(pool,type,start,end){
     prepared:prepared.data.image_summary.prepared-withheld,unavailable:prepared.data.image_summary.unavailable+withheld,
     total_bytes:[...published].reduce((total,id)=>total+byHash.get(id).content.length,0)}};
   return {
+    ...(type==='daily'?{ad_report_data:emailData}:{}),
     ad_analysis_html:adVisualReportHtml(emailData,{mode:'email',imageSrc:image=>published.has(image.sha256)?imageUrl(image.sha256):null}),
     ad_analysis_html_pdf:adVisualReportHtml(prepared.data,{mode:'pdf',imageSrc:image=>byHash.has(image.sha256)?'data:image/jpeg;base64,'+byHash.get(image.sha256).content.toString('base64'):null}),
     ad_report_image_summary:emailData.image_summary
