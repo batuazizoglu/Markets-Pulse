@@ -2,6 +2,8 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {compileFunction} from 'node:vm';
+import {dailyBriefSubject} from '../src/daily-brief.js';
+import {dailyBriefPlainText} from '../src/daily-brief-email.js';
 
 // Exercise the actual recipient and delivery functions while keeping database
 // timers, report rendering and both external mail transports fully isolated.
@@ -10,14 +12,15 @@ const personalSource=(await readFile(new URL('../src/manual-report-email.js',imp
 function harness(mode,{configured=true,fail=false}={}){
   const sent=[],scheduled=['scheduled-one@example.test','scheduled-two@example.test'];let reads=0;
   const pool={query:async()=>{reads++;return {rows:scheduled.map(email=>({email}))}}};
-  const deliver=async recipients=>{if(fail)throw new Error('Synthetic mail failure');const id='message-'+(sent.length+1);sent.push({id,recipients});return id};
+  const deliver=async(recipients,message={})=>{if(fail)throw new Error('Synthetic mail failure');const id='message-'+(sent.length+1);sent.push({id,recipients,subject:message.subject,text:message.text??message.textContent});return id};
   const dependencies={
-    nodemailer:{createTransport:()=>({sendMail:async message=>({messageId:await deliver(message.to.split(', '))})})},
+    nodemailer:{createTransport:()=>({sendMail:async message=>({messageId:await deliver(message.to.split(', '),message)})})},
     REPORT_NAMES:{home:'Home'},REPORT_TZ:'UTC',reportDays:()=>7,monthlyOverviewHtml:()=>'',monthlyPlainText:()=>'',
-    generateReportPdf:async()=>({ctx:{period_end:'2026-09-24T10:00:00Z'},fileName:'synthetic.pdf',buffer:Buffer.from('PDF'),contentType:'application/pdf'}),
+    dailyBriefSubject,dailyBriefPlainText,
+    generateReportPdf:async()=>({ctx:{period_start:'2026-09-23T10:00:00Z',period_end:'2026-09-24T10:00:00Z',changes:[],sources:[]},fileName:'synthetic.pdf',buffer:Buffer.from('PDF'),contentType:'application/pdf'}),
     generateEvidencePack:()=>assert.fail('Evidence pack not used'),dbPool:pool,
     process:{env:configured?{REPORT_EMAIL_FROM:'sender@example.test',...(mode==='api'?{BREVO_API_KEY:'synthetic-only'}:{SMTP_HOST:'synthetic-only'})}:{}},
-    fetch:async(url,options)=>{assert.equal(url,'https://api.brevo.com/v3/smtp/email');const body=JSON.parse(options.body);const messageId=await deliver(body.to.map(row=>row.email));return {ok:true,status:201,json:async()=>({messageId})}},
+    fetch:async(url,options)=>{assert.equal(url,'https://api.brevo.com/v3/smtp/email');const body=JSON.parse(options.body);const messageId=await deliver(body.to.map(row=>row.email),body);return {ok:true,status:201,json:async()=>({messageId})}},
     setTimeout:()=>({unref(){}}),setInterval:()=>({unref(){}}),clearTimeout:()=>{},console:{log(){},error(){}}
   };
   const report=compileFunction(reportSource+'\nfunction emailHtml(){return ""}\nreturn {sendReportEmail,refreshReportRecipients,getReportEmailStatus};',Object.keys(dependencies))(...Object.values(dependencies));
@@ -58,4 +61,14 @@ test('failed or invalid personal delivery leaves scheduled recipients intact',as
   const missing=harness('smtp',{configured:false});
   await assert.rejects(missing.sendPersonalReportEmail(missing.pool,'home','reader@example.test'),{code:'EMAIL_NOT_CONFIGURED'});
   assert.equal(missing.sent.length,0);
+});
+
+for(const mode of ['smtp','api'])test(mode+': daily delivery uses the new evidence-aware subject and matching plain text',async()=>{
+  const h=harness(mode);
+  const result=await h.report.sendReportEmail(h.pool,'daily');
+  assert.equal(h.sent.length,1);assert.deepEqual(h.sent[0].recipients,h.scheduled);
+  assert.match(result.subject,/Markets Pulse.*Kaynak kontrolleri eksik/);
+  assert.equal(h.sent[0].subject,result.subject);
+  assert.match(h.sent[0].text,/Güncel görünüm henüz doğrulanamadı/);
+  assert.doesNotMatch(h.sent[0].text,/undefined|NaN|Kritik rakip hamlesi yok/);
 });

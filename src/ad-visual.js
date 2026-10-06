@@ -260,8 +260,8 @@ export async function getAdVisuals(pool,{now=new Date(),...options}={}){
 export async function getAdReport(pool,start,end,{category}={}){
   const params=[date(start),date(end)];if(category)params.push(category);
   const r=await pool.query("SELECT event_type,analysis_json,observed_at FROM ad_visual_versions WHERE observed_at >= $1 AND observed_at < $2 AND event_type IN ('first_seen','changed') "+(category?"AND analysis_json->>'category'=$3 ":'')+"ORDER BY observed_at DESC,id DESC",params);
-  const current=await pool.query('SELECT checked_at,status,last_error FROM ad_visual_sync WHERE id=1');
-  return {rows:r.rows,categories:await getAdCategories(pool),checked_at:current.rows[0]?.checked_at||null,status:current.rows[0]?.status||'pending',last_error:current.rows[0]?.last_error||null};
+  const current=await pool.query('SELECT checked_at,status,last_error,coverage_json FROM ad_visual_sync WHERE id=1');
+  return {rows:r.rows,categories:await getAdCategories(pool),checked_at:current.rows[0]?.checked_at||null,status:current.rows[0]?.status||'pending',last_error:current.rows[0]?.last_error||null,coverage:current.rows[0]?.coverage_json||[]};
 }
 export function registerAdVisualRoutes(app,pool,sources,{sync=syncAdVisuals,now=Date.now,cloudStatus=null}={}){
   let lastManualSync=-Infinity;

@@ -1,6 +1,8 @@
 import nodemailer from 'nodemailer';
 import { REPORT_NAMES, REPORT_TZ, reportDays } from './report-data.js';
 import { monthlyOverviewHtml, monthlyPlainText } from './monthly-report-content.js';
+import {dailyBriefEmailHtml,dailyBriefPlainText} from './daily-brief-email.js';
+import {dailyBriefSubject} from './daily-brief.js';
 import { generateReportPdf } from './report-render.js';
 import { generateEvidencePack } from './evidence-pack.js';
 import { pool as dbPool } from './db.js';
@@ -204,6 +206,7 @@ function dailyHomeEmailBlocks(ctx){
 }
 
 function emailHtml(type,ctx,attachments=[]){
+  if(type==='daily')return dailyBriefEmailHtml(ctx,attachments);
   if(type==='home'||type==='fwa')return homeEmailHtml(type,ctx,attachments);
   const title=REPORT_NAMES[type]||'Markets Pulse Raporu';
   const m=ctx.market||{},b=ctx.benchmark||{},s=ctx.stats||{};
@@ -322,12 +325,13 @@ export async function sendReportEmail(pool,type,options={}){
   }
   const maxBytes=mail.status.max_attachment_mb*1024*1024;
   if(totalBytes>maxBytes){const e=new Error('E-posta eki '+(totalBytes/1024/1024).toFixed(1)+' MB; limit '+mail.status.max_attachment_mb+' MB.');e.code='ATTACHMENT_TOO_LARGE';throw e;}
-  const subject='Markets Pulse | '+(REPORT_NAMES[type]||type)+' | '+localDate(ctx.period_end);
+  const subject=type==='daily'?dailyBriefSubject(ctx):'Markets Pulse | '+(REPORT_NAMES[type]||type)+' | '+localDate(ctx.period_end);
+  const textContent=type==='daily'?dailyBriefPlainText(ctx):type==='monthly'?monthlyPlainText(ctx):(ctx.market?.executive_summary||(type==='fwa'?'Markets Pulse Superbox / Red Box rekabet raporu':'Markets Pulse Turkcell Ev İnterneti rekabet raporu'));
   let info;
   if(mail.status.api_configured){
     info=await sendViaBrevoApi({
       status:mail.status,subject,
-      textContent:type==='monthly'?monthlyPlainText(ctx):(ctx.market?.executive_summary||(type==='fwa'?'Markets Pulse Superbox / Red Box rekabet raporu':'Markets Pulse Turkcell Ev İnterneti rekabet raporu')),
+      textContent,
       htmlContent:emailHtml(type,ctx,attachments),
       attachments
     });
@@ -335,7 +339,7 @@ export async function sendReportEmail(pool,type,options={}){
     console.log('[report-email] smtp connecting',JSON.stringify({host:process.env.SMTP_HOST,port:Number(process.env.SMTP_PORT||587),from:mail.status.from,recipients:recipientEmails.length,subject,total_bytes:totalBytes}));
     info=await mail.transport.sendMail({
       from:mail.status.from,to:recipientEmails.join(', '),subject,
-      text:type==='monthly'?monthlyPlainText(ctx):(ctx.market?.executive_summary||(type==='fwa'?'Markets Pulse Superbox / Red Box rekabet raporu':'Markets Pulse Turkcell Ev İnterneti rekabet raporu')),html:emailHtml(type,ctx,attachments),attachments
+      text:textContent,html:emailHtml(type,ctx,attachments),attachments
     });
     console.log('[report-email] smtp accepted',JSON.stringify({message_id:info.messageId,accepted_count:Array.isArray(info.accepted)?info.accepted.length:null,rejected_count:Array.isArray(info.rejected)?info.rejected.length:null,response:info.response}));
   }

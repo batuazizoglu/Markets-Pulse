@@ -6,7 +6,8 @@ import {spawnSync} from 'node:child_process';
 import {compileFunction} from 'node:vm';
 import puppeteer from 'puppeteer';
 import {renderReportHtml,renderReportPdf} from '../src/report-render.js';
-import {createReportLayoutFixtures} from './report-layout-fixture.js';
+import {createReportLayoutFixtures,createDailyBriefLayoutFixtures} from './report-layout-fixture.js';
+import {dailyBriefEmailHtml} from '../src/daily-brief-email.js';
 import {REPORT_NAMES,REPORT_TZ} from '../src/report-data.js';
 import {monthlyOverviewHtml} from '../src/monthly-report-content.js';
 
@@ -19,7 +20,7 @@ const fixtures=await createReportLayoutFixtures(),results=[],emails=[];
 const emailSource=await readFile(new URL('../src/report-email.js',import.meta.url),'utf8');
 const emailHelpers=emailSource.split('\n').filter(line=>line.startsWith('function esc(')||line.startsWith('function localDate(')).join('\n');
 const emailFormatters=emailSource.slice(emailSource.indexOf('function signed('),emailSource.indexOf('export async function sendReportEmail('));
-const emailHtml=compileFunction(emailHelpers+'\n'+emailFormatters+'\nreturn emailHtml(type,ctx,attachments);',['type','ctx','attachments','REPORT_NAMES','REPORT_TZ','monthlyOverviewHtml']);
+const emailHtml=compileFunction(emailHelpers+'\n'+emailFormatters+'\nreturn emailHtml(type,ctx,attachments);',['type','ctx','attachments','REPORT_NAMES','REPORT_TZ','monthlyOverviewHtml','dailyBriefEmailHtml']);
 const command=(name,args)=>{
   const result=spawnSync(name,args,{encoding:'utf8',maxBuffer:20*1024*1024});
   if(result.error||result.status!==0)throw new Error(`${name} failed: ${result.error?.message||result.stderr}`);
@@ -70,25 +71,65 @@ try{
     results.push({name,pages,bytes:buffer.length,...metrics});
     console.log('REPORT_LAYOUT '+JSON.stringify(results.at(-1)));
   }
-  for(const name of ['daily','monthly','home','fwa']){
-    const ctx=fixtures[name],html=emailHtml(ctx.type,ctx,[{filename:`markets-pulse-${name}.pdf`}],REPORT_NAMES,REPORT_TZ,monthlyOverviewHtml);
+  const dailyFixtures=createDailyBriefLayoutFixtures(fixtures.daily);
+  for(const name of ['daily','daily-quiet','daily-limited','monthly','home','fwa']){
+    const ctx=dailyFixtures[name]||fixtures[name],isDaily=ctx.type==='daily',html=emailHtml(ctx.type,ctx,[{filename:`markets-pulse-${name}.pdf`}],REPORT_NAMES,REPORT_TZ,monthlyOverviewHtml,dailyBriefEmailHtml);
     await writeFile(`${output}/email-${name}.html`,html);
     for(const width of [700,390]){
       const page=await browser.newPage();await page.emulateMediaType('screen');
+      // Public report-media URLs are mapped to synthetic JPEGs; this gate never
+      // contacts production or fetches real advertising assets.
+      const unexpectedRequests=[];
+      await page.setRequestInterception(true);
+      page.on('request',request=>{
+        const url=request.url(),digest=url.match(/^https:\/\/www\.marketspulse\.cloud\/report-media\/([a-f0-9]{64})\.jpg$/)?.[1];
+        if(digest&&ctx.fixture_report_images?.[digest])return request.respond({status:200,contentType:'image/jpeg',body:ctx.fixture_report_images[digest]});
+        if(/^(data:|about:)/.test(url))return request.continue();
+        unexpectedRequests.push(url);return request.abort();
+      });
       await page.setViewport({width,height:1000,deviceScaleFactor:1});await page.setContent(html,{waitUntil:'load',timeout:60000});
       await page.evaluate(async()=>{await document.fonts.ready;await Promise.all(Array.from(document.images,image=>image.decode()))});
       const metrics=await page.evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth,images:document.images.length,
         brokenImages:Array.from(document.images).filter(el=>!el.complete||!el.naturalWidth).length,
         mode:document.querySelector('.ad-report')?.dataset.reportMode,
+        bodyFont:parseFloat(getComputedStyle(document.body).fontSize),
+        textMinFont:Math.min(...Array.from(document.body.querySelectorAll('*')).filter(el=>Array.from(el.childNodes).some(node=>node.nodeType===Node.TEXT_NODE&&node.textContent.trim())&&el.getBoundingClientRect().height>0).map(el=>parseFloat(getComputedStyle(el).fontSize))),
+        highlights:document.querySelectorAll('.brief-highlight').length,adCards:document.querySelectorAll('.brief-ad').length,
+        changes:document.querySelectorAll('.brief-change-table').length,comparisons:document.querySelectorAll('.brief-comparison').length,
+        quiet:!!document.querySelector('.brief-quiet'),coverage:!!document.querySelector('.brief-coverage'),
+        text:document.body.textContent,htmlBytes:new TextEncoder().encode(document.documentElement.outerHTML).length,
         clippedImages:Array.from(document.images).filter(el=>{const box=el.getBoundingClientRect();return box.x<0||box.right>innerWidth+1}).length
       }));
       await page.screenshot({path:`${output}/email-${name}-${width}.png`,fullPage:true});
       assert.ok(metrics.scroll<=width+1,`email ${name} horizontal overflow ${width}: ${metrics.scroll}`);
       assert.equal(metrics.brokenImages,0,`email ${name} missing images ${width}`);
       assert.equal(metrics.clippedImages,0,`email ${name} image outside viewport ${width}`);
-      assert.ok(metrics.images>=5,`email ${name} missing illustrated ad cards ${width}`);
-      assert.equal(metrics.mode,'email',`email ${name} must render email ad markup`);
-      emails.push({name,...metrics});console.log('EMAIL_LAYOUT '+JSON.stringify(emails.at(-1)));
+      assert.deepEqual(unexpectedRequests,[],`email ${name} tried external network ${width}`);
+      if(isDaily){
+        assert.ok(metrics.bodyFont>=14,`email ${name} body text below 14px ${width}`);
+        assert.ok(metrics.textMinFont>=14,`email ${name} visible text below 14px ${width}`);
+        assert.ok(metrics.highlights<=3,`email ${name} has more than three priorities`);
+        assert.ok(metrics.adCards<=3&&metrics.images<=3,`email ${name} has more than three ads`);
+        assert.ok(metrics.coverage,`email ${name} missing freshness note`);
+        assert.doesNotMatch(metrics.text,/AI sonucu beklenen|Bulut taraması|analiz kuyruğu|Reklam sağlayıcısı|Görsel analiz bağlantısı|PostgreSQL|VERİ YETERSİZ/i,`email ${name} technical clutter`);
+        if(name==='daily'){
+          assert.ok(metrics.highlights>0,`email ${name} missing priorities`);
+          assert.ok(metrics.adCards>0&&metrics.images>0,`email ${name} missing creative radar`);
+          assert.ok(metrics.changes>0,`email ${name} missing before/after`);
+          assert.ok(metrics.comparisons>0,`email ${name} missing comparable counter-offer`);
+        }else{
+          assert.equal(metrics.highlights,0,`email ${name} repeats older priorities`);
+          assert.equal(metrics.adCards,0,`email ${name} fabricates ad updates`);
+          assert.equal(metrics.images,0,`email ${name} fabricates creative images`);
+          if(name==='daily-quiet')assert.ok(metrics.quiet,`email ${name} missing verified quiet message`);
+          else assert.equal(metrics.quiet,false,`email ${name} must not imply all checks are complete`);
+        }
+      }else{
+        assert.ok(metrics.images>=5,`email ${name} missing illustrated ad cards ${width}`);
+        assert.equal(metrics.mode,'email',`email ${name} must render email ad markup`);
+      }
+      const {text,...reviewMetrics}=metrics;
+      emails.push({name,...reviewMetrics});console.log('EMAIL_LAYOUT '+JSON.stringify(emails.at(-1)));
       await page.close();
     }
   }

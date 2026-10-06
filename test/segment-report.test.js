@@ -44,7 +44,7 @@ test('catalog failures are distinct from legitimate no-peer cases and manual rej
   assert.equal(rejected.availability,'no_approved_match');assert.equal(rejected.score,null);assert.match(rejected.rationale,/10 eşleşme yönetici tarafından reddedilmiş/);
 });
 
-test('daily email and PDF include the actual missing-score reasons without sending a message',()=>{
+test('detailed weekly email and PDF include the actual missing-score reasons without sending a message',()=>{
   const ctx={type:'daily',title:REPORT_NAMES.daily,days:1,period_start:'2026-09-16T05:00:00Z',period_end:'2026-09-17T05:00:00Z',generated_at:'2026-09-17T05:00:00Z',
     benchmark,market:{pressure_index:0,pressure_level:'DÜŞÜK',executive_summary:'Örnek',top_threats:[]},stats:{total:0,added:0,removed:0},sources:[],changes:[],evidence:[],
     score_deltas:benchmark.segment_scores.map(x=>({segment:x.segment,current:x.score,baseline:null,delta:null,level:x.level,confidence:x.confidence,rationale:x.rationale}))};
@@ -52,13 +52,13 @@ test('daily email and PDF include the actual missing-score reasons without sendi
   const helpers=source.split('\n').filter(line=>line.startsWith('function esc(')||line.startsWith('function localDate(')).join('\n');
   const body=source.slice(source.indexOf('function signed('),source.indexOf('export async function sendReportEmail('));
   const render=compileFunction(helpers+'\n'+body+'\nreturn emailHtml(type,ctx,attachments);',['type','ctx','attachments','REPORT_NAMES','REPORT_TZ','monthlyOverviewHtml']);
-  for(const html of [render('daily',ctx,[],REPORT_NAMES,REPORT_TZ,monthlyOverviewHtml),renderReportHtml(ctx)]){
+  for(const html of [render('weekly',ctx,[],REPORT_NAMES,REPORT_TZ,monthlyOverviewHtml),renderReportHtml(ctx)]){
     const dom=new JSDOM(html),text=dom.window.document.body.textContent;
     assert.match(text,/Premium \/ Platinum/);assert.match(text,/EŞLEŞME İNCELENMELİ/);assert.match(text,/3 aday inceleme bekliyor/);
     assert.match(text,/Uluslararası \/ Diaspora/);assert.match(text,/KARŞILIK BULUNAMADI/);assert.match(text,/İzlenen KKTCELL kataloğunda aynı segmente uygun ana tarife bulunamadı/);
     assert.ok(!text.includes('VERİ YETERSİZ'));assert.ok(!text.includes('NaN'));dom.window.close();
   }
   ctx.score_deltas[0].rationale='<script>unsafe()</script>';
-  const dom=new JSDOM(render('daily',ctx,[],REPORT_NAMES,REPORT_TZ,monthlyOverviewHtml));
+  const dom=new JSDOM(render('weekly',ctx,[],REPORT_NAMES,REPORT_TZ,monthlyOverviewHtml));
   assert.equal(dom.window.document.querySelector('script'),null);assert.match(dom.window.document.body.textContent,/<script>unsafe/);dom.window.close();
 });
