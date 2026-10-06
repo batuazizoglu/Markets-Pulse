@@ -33,6 +33,19 @@ test('same-price flags require two explicit snapshots, not a missing price field
   ctx.changes=[{...ctx.changes[0]},change({id:2,old_value:'899',new_value:'999'})];assert.ok(!buildDailyBrief(ctx).highlights[0].flags.includes('Fiyat aynı, teklif değişti'));
 });
 
+test('daily-only enriched rows provide snapshot signals without modifying canonical dashboard changes',()=>{
+  const ctx=context();ctx.changes=[Object.freeze(change({field_name:'Data',old_value:'50',new_value:'40'}))];
+  const canonical=JSON.stringify(ctx.changes);ctx.market={changes:ctx.changes};
+  assert.ok(!buildDailyBrief(ctx).highlights[0].flags.includes('Fiyat aynı, teklif değişti'));
+  ctx.daily_changes=[{...ctx.changes[0],product_before:{price_try:899,data_gb:50},product_after:{price_try:899,data_gb:40}}];
+  const brief=buildDailyBrief(ctx);
+  assert.ok(brief.highlights[0].flags.includes('Fiyat aynı, teklif değişti'));
+  assert.equal(brief.counts.moves,1);assert.equal(brief.counts.fields,1);
+  assert.equal(JSON.stringify(ctx.changes),canonical);assert.equal(JSON.stringify(ctx.market.changes),canonical);
+  assert.equal(ctx.changes[0].product_after,undefined);
+  ctx.daily_changes=[];assert.equal(buildDailyBrief(ctx).counts.moves,0,'an explicitly empty daily selection does not fall back to raw changes');
+});
+
 test('null, boolean and malformed numeric values never become numeric comparison or directional claims',()=>{
   const ctx=context();ctx.changes=[change({old_value:null,new_value:false})];
   ctx.benchmark.matches=[{match_status:'Primary',match_score:99,telsim:{id:7,name:'Süper 50',price_try:null,data_gb:50,validity_days:30},kktcell:{name:'GO 60',price_try:0,data_gb:60,validity_days:30}}];

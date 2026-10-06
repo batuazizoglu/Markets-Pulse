@@ -158,15 +158,15 @@ export async function buildReportContext(pool, type, options={},loaders={current
   ];
   if(type==='daily'||type==='weekly')tasks.push(loaders.getHomeInternetMarket(pool,{refresh:false,days,now:periodEnd}));
   const results=await Promise.all(tasks);
-  const [benchmark,sources,loadedChanges,baseline,evidence]=results;
-  let changes=loadedChanges,home=results[5],catalog_products;
+  const [benchmark,sources,changes,baseline,evidence]=results;
+  let home=results[5],catalog_products,daily_changes;
   if(type==='daily'){
     const [enriched,catalog]=await Promise.all([
       enrichDailyChanges(pool,{changes,homeChanges:home?.changes||[]}),
       loadDailyMobileCatalog(pool,{start:periodStart,end:periodEnd})
     ]);
     catalog_products=catalog;
-    changes=enriched.changes;
+    daily_changes=enriched.changes;
     if(home)home={...home,changes:enriched.homeChanges};
   }
   const market=marketPulseFromRows(changes,days,periodEnd);
@@ -175,6 +175,6 @@ export async function buildReportContext(pool, type, options={},loaders={current
     ...adSection,type,title:REPORT_NAMES[type]||'Markets Pulse Raporu',days,
     period_start:periodStart.toISOString(),period_end:periodEnd.toISOString(),generated_at:periodEnd.toISOString(),
     market,benchmark,sources,changes,stats:changeStats(changes),score_deltas:scoreDeltas(benchmark,baseline),evidence,
-    daily_home,...(type==='daily'?{catalog_products}:{})
+    daily_home,...(type==='daily'?{catalog_products,daily_changes}:{})
   };
 }

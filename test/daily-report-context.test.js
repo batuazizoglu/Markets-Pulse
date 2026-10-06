@@ -23,6 +23,7 @@ test('daily context freezes all change windows and preserves dated campaigns and
     const ctx=await buildReportContext(db,'daily',{now:end},loaders);
     assert.equal(homeOptions.refresh,false);assert.equal(homeOptions.days,1);assert.equal(new Date(homeOptions.now).toISOString(),end);
     assert.equal(ctx.period_start,start);assert.equal(ctx.period_end,end);
+    assert.deepEqual(ctx.daily_changes,[]);assert.deepEqual(ctx.changes,ctx.market.changes);
     assert.equal(ctx.daily_home.fixed.changes.length,0,'current catalogue family cannot overwrite the historical family');
     assert.deepEqual(ctx.daily_home.fwa.changes.map(x=>x.id),[1],'exclusive end is respected');
     assert.equal(ctx.daily_home.fixed.campaigns[0].expires_at,'2026-10-08');

@@ -151,7 +151,8 @@ function catalogFor(ctx){
   // Only explicit catalogue rows with their own verification timestamp can
   // establish an ad/catalog discrepancy; benchmark generation isn't a scrape.
   const snapshots=new Map();
-  for(const row of [...list(ctx.changes)].sort((a,b)=>time(b.detected_at)-time(a.detected_at))){
+  const dailyRows=Array.isArray(ctx.daily_changes)?ctx.daily_changes:list(ctx.changes);
+  for(const row of [...dailyRows].sort((a,b)=>time(b.detected_at)-time(a.detected_at))){
     if(!row.product_after||row.change_type==='removed'||row.product_id==null||snapshots.has(String(row.product_id)))continue;
     snapshots.set(String(row.product_id),{...row.product_after,id:row.product_id,product_id:row.product_id,brand:row.brand||'Telsim',source_url:row.source_url,verified_at:row.detected_at,domain:detectDomain(row)});
   }
@@ -267,7 +268,7 @@ function rank(a,b){return Number(a.owned)-Number(b.owned)||b.priority-a.priority
 export function buildDailyBrief(ctx={}){
   const end=time(ctx.period_end),start=time(ctx.period_start);
   if(!Number.isFinite(start)||!Number.isFinite(end)||start>=end)throw new TypeError('Daily brief requires a valid report period');
-  const mobile=Array.isArray(ctx.changes)?ctx.changes:list(ctx.market?.moves).flatMap(move=>list(move.changes).map(change=>({...move,...change})));
+  const mobile=Array.isArray(ctx.daily_changes)?ctx.daily_changes:Array.isArray(ctx.changes)?ctx.changes:list(ctx.market?.moves).flatMap(move=>list(move.changes).map(change=>({...move,...change})));
   const moves=[...groupChanges(mobile,'gsm',start,end),...groupChanges(list(ctx.daily_home?.fixed?.changes),'fixed',start,end),...groupChanges(list(ctx.daily_home?.fwa?.changes),'fwa',start,end)];
   for(const move of moves){
     const comparison=comparisonFor(move,ctx,start,end);
