@@ -22,7 +22,32 @@ export function reportDays(type,requestedDays=7){
   return type==='monthly'?30:type==='daily'?1:Math.max(1,Math.min(30,Number(requestedDays)||7));
 }
 
-async function sourceHealth(pool) {
+export async function sourceHealth(pool,{cutoff}={}) {
+  if(cutoff!=null){
+    const end=new Date(cutoff);
+    if(!Number.isFinite(+end))throw new RangeError('A valid source health cutoff is required');
+    // The 08:00 email and hourly scan start together. A running check does not
+    // invalidate the last completed observation, and a later result cannot
+    // leak into this report. Keep the latest completed failure visible too.
+    const r=await pool.query(`SELECT s.id,s.slug,s.name,s.url,s.enabled,
+      latest.started_at last_checked_at,latest.status last_status,
+      latest.http_status,latest.response_ms,latest.parsed_count,latest.error last_error,
+      successful.started_at last_success_at,
+      (SELECT COUNT(*)::int FROM products p WHERE p.source_id=s.id AND p.active=TRUE) active_products
+      FROM sources s
+      LEFT JOIN LATERAL (
+        SELECT sc.* FROM scans sc WHERE sc.source_id=s.id AND sc.status<>'running'
+          AND sc.started_at<=$1::timestamptz AND sc.finished_at<=$1::timestamptz
+        ORDER BY sc.started_at DESC,sc.id DESC LIMIT 1
+      ) latest ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT sc.started_at FROM scans sc WHERE sc.source_id=s.id AND sc.status='ok'
+          AND sc.started_at<=$1::timestamptz AND sc.finished_at<=$1::timestamptz
+        ORDER BY sc.started_at DESC,sc.id DESC LIMIT 1
+      ) successful ON TRUE
+      ORDER BY s.id`,[end.toISOString()]);
+    return r.rows;
+  }
   const r = await pool.query(
     "SELECT s.id,s.slug,s.name,s.url,s.enabled," +
     " (SELECT started_at FROM scans sc WHERE sc.source_id=s.id ORDER BY sc.id DESC LIMIT 1) last_checked_at," +
@@ -154,7 +179,7 @@ export async function buildReportContext(pool, type, options={},loaders={current
   }
 
   const tasks=[
-    loaders.currentBenchmark(pool),loaders.sourceHealth(pool),loadCompetitiveChanges(pool,{start:window.window_start,end:window.window_end}),scoreBaselines(pool,window.window_start),periodEvidence(pool,days,type==='evidence'?'full':type==='daily'?'meta':'visual',periodEnd)
+    loaders.currentBenchmark(pool),loaders.sourceHealth(pool,type==='daily'?{cutoff:periodEnd}:undefined),loadCompetitiveChanges(pool,{start:window.window_start,end:window.window_end}),scoreBaselines(pool,window.window_start),periodEvidence(pool,days,type==='evidence'?'full':type==='daily'?'meta':'visual',periodEnd)
   ];
   if(type==='daily'||type==='weekly')tasks.push(loaders.getHomeInternetMarket(pool,{refresh:false,days,now:periodEnd}));
   const results=await Promise.all(tasks);

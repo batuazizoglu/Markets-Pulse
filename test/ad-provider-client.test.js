@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {providerConfig,providerStatus,startProviderRun,getProviderRun,getProviderItems,fetchProviderImage,safeProviderImageUrl} from '../src/ad-provider-client.js';
+import {providerConfig,providerStatus,providerHttpDiagnostics,startProviderRun,getProviderRun,getProviderItems,fetchProviderImage,safeProviderImageUrl} from '../src/ad-provider-client.js';
 
 const env={AD_CAPTURE_PROVIDER:'apify',APIFY_TOKEN:'secret-test-token',APIFY_MAX_RUN_USD:'0.50',APIFY_DAILY_BUDGET_USD:'2'};
 const source={brand:'Verified provider',page_id:'159064954156749'};
@@ -60,8 +60,41 @@ test('ambiguous create failure is marked and never retried; provider error text 
 });
 
 test('authentication and rate restrictions do not become ambiguous retries; long Retry-After is preserved',async()=>{
-  await assert.rejects(startProviderRun(source,{env,fetcher:async()=>json({error:env.APIFY_TOKEN},403)}),error=>error.code==='PROVIDER_AUTH_FAILED' && !error.ambiguous && !String(error).includes(env.APIFY_TOKEN));
+  await assert.rejects(startProviderRun(source,{env,fetcher:async()=>json({error:env.APIFY_TOKEN},403)}),error=>error.code==='PROVIDER_ACCESS_DENIED' && !error.ambiguous && !String(error).includes(env.APIFY_TOKEN));
   await assert.rejects(startProviderRun(source,{env,fetcher:async()=>json({},429,{'retry-after':'172800'})}),error=>error.code==='PROVIDER_RATE_LIMITED' && error.retry_after_ms===172800000 && !error.ambiguous);
+});
+
+test('HTTP diagnostics distinguish safe status classes without reading or retaining provider response data',async()=>{
+  const cases=[
+    [401,'AUTH_FAILED','authentication',false],[402,'PAYMENT_REQUIRED','payment',false],
+    [403,'ACCESS_DENIED','access_denied',false],[451,'ACCESS_DENIED','access_denied',false],
+    [400,'REQUEST_INVALID','validation',false],[422,'REQUEST_INVALID','validation',false],
+    [404,'NOT_FOUND','not_found',false],[429,'RATE_LIMITED','rate_limit',false],
+    [408,'UNAVAILABLE','unavailable',true],[503,'UNAVAILABLE','unavailable',true],[302,'HTTP_ERROR','http_error',true]
+  ];
+  for(const [status,suffix,category,ambiguous] of cases) {
+    let calls=0,cancels=0;
+    const response={ok:false,status,headers:new Headers({'retry-after':'120','x-private-info':env.APIFY_TOKEN}),body:{
+      cancel:async()=>{cancels++;},getReader:()=>assert.fail('error bodies must never be consumed')
+    },text:()=>assert.fail('error bodies must never be consumed'),json:()=>assert.fail('error bodies must never be consumed')};
+    await assert.rejects(startProviderRun(source,{env,fetcher:async()=>{calls++;return response;}}),error=>{
+      assert.equal(error.code,'PROVIDER_'+suffix);assert.equal(error.http_status,status);assert.equal(error.error_category,category);
+      assert.equal(error.ambiguous===true,ambiguous);assert.equal(JSON.stringify(error).includes(env.APIFY_TOKEN),false);
+      assert.equal(Object.hasOwn(error,'headers'),false);assert.equal(Object.hasOwn(error,'body'),false);return true;
+    });
+    assert.equal(calls,1);assert.equal(cancels,1);
+  }
+});
+
+test('diagnostics accept numeric HTTP statuses only and known-code exceptions are rebuilt without secret properties',async()=>{
+  for(const status of ['402',0,600,NaN,Infinity,402.5,env.APIFY_TOKEN])assert.deepEqual(providerHttpDiagnostics({http_status:status,error_category:env.APIFY_TOKEN}),{});
+  assert.deepEqual(providerHttpDiagnostics({http_status:402,error_category:env.APIFY_TOKEN}),{http_status:402,error_category:'payment'});
+  await assert.rejects(getProviderRun(run.id,{env,fetcher:async()=>{throw Object.assign(new Error(env.APIFY_TOKEN),{
+    code:'PROVIDER_HTTP_ERROR',http_status:404,body:env.APIFY_TOKEN,url:'https://example.test/?token='+env.APIFY_TOKEN
+  });}}),error=>{
+    assert.equal(error.message,'PROVIDER_HTTP_ERROR');assert.equal(error.http_status,404);assert.equal(error.error_category,'not_found');
+    assert.equal(JSON.stringify(error).includes(env.APIFY_TOKEN),false);return true;
+  });
 });
 
 test('run lookup validates identity and accepts running jobs without treating them as empty',async()=>{
@@ -107,9 +140,9 @@ test('media redirects are bounded and access/rate denials stop before trying ano
   let calls=0;
   await assert.rejects(fetchProviderImage(asset,{fetcher:async()=>{calls++;return new Response(null,{status:302,headers:{location:'/again.jpg'}});}}),{code:'MEDIA_REDIRECT_LIMIT'});
   assert.equal(calls,4);
-  for (const status of [403,429]) {
+  for (const status of [403,429,451]) {
     calls=0;
-    await assert.rejects(fetchProviderImage({...asset,urls:[...asset.urls,'https://scontent.xx.fbcdn.net/alt.jpg']},{fetcher:async()=>{calls++;return new Response(null,{status,headers:{'retry-after':'120'}});}}),error=>error.code===(status===403 ? 'MEDIA_AUTH_FAILED' : 'MEDIA_RATE_LIMITED'));
+    await assert.rejects(fetchProviderImage({...asset,urls:[...asset.urls,'https://scontent.xx.fbcdn.net/alt.jpg']},{fetcher:async()=>{calls++;return new Response(null,{status,headers:{'retry-after':'120'}});}}),error=>error.code===(status===403 ? 'MEDIA_AUTH_FAILED' : status===451?'MEDIA_ACCESS_DENIED':'MEDIA_RATE_LIMITED') && error.http_status===status);
     assert.equal(calls,1);
   }
 });

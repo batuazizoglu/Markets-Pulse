@@ -30,6 +30,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 app.use(express.json({limit:'1mb'}));
 
+// Railway needs a public readiness probe; application data stays behind auth.
+app.get('/api/health', async (req,res)=>{
+  res.set('Cache-Control','no-store');
+  try { await pool.query('SELECT 1'); res.json({ok:true,now:new Date().toISOString()}); }
+  catch { res.status(503).json({ok:false}); }
+});
+
 registerReportMediaRoutes(app,pool);
 registerAuth(app,pool,path.join(__dirname,'..','public'));
 registerSocialWatchRoutes(app,pool,HOME_INTERNET_SOURCES);
@@ -92,11 +99,6 @@ async function scheduledReportEmail(type){
     console.error('[report-email]',type,'failed',e);
   }
 }
-
-app.get('/api/health', async (req,res)=>{
-  try { await pool.query('SELECT 1'); res.json({ok:true,now:new Date().toISOString()}); }
-  catch(e){ res.status(500).json({ok:false,error:e.message}); }
-});
 
 app.get('/api/market-pulse', async (req,res,next)=>{try{
   const days=Math.max(1,Math.min(180,parseInt(req.query.days||'30',10)||30));
