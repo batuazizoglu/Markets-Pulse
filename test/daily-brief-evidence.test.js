@@ -21,6 +21,7 @@ before(async()=>{
   await db.query(`INSERT INTO sources(id,slug,name,url) VALUES(1,'mobile-a','Mobile A','https://example.test/mobile-a'),(2,'mobile-b','Mobile B','https://example.test/mobile-b')`);
   await db.query(`INSERT INTO scans(id,source_id,started_at,status) VALUES
     (11,1,'2026-10-05T07:00:00Z','ok'),(12,1,$1,'ok'),(13,1,'2026-10-06T08:00:00Z','ok'),(21,2,$1,'ok')`,[at]);
+  await db.query('UPDATE scans SET finished_at=started_at');
   await db.query(`INSERT INTO products(id,source_id,identity_base,current_name,first_seen_at,last_seen_at) VALUES
     (1,1,'original','Renamed today',$1,$1),(2,2,'other-source','Other source',$1,$1),(3,1,'fresh','No prior version',$1,$1)`,[at]);
   await db.query(`INSERT INTO product_versions(id,product_id,scan_id,captured_at,name,data_gb,bonus_data_gb,price_try,validity_days,extras_json,raw_text,product_hash) VALUES
@@ -50,7 +51,7 @@ test('mobile benefits and unchanged price come from the original event and its p
   assert.equal(Number(row.product_after.price_try),500);
   assert.equal(Number(row.product_before.data_gb),20);assert.equal(Number(row.product_after.data_gb),15);
   assert.equal(row.product_after.name,'Original mobile');
-  assert.equal(row.first_seen_at,at);assert.equal(row.product_after.verified_at,at);
+  assert.equal(row.first_seen_at,'2026-10-05T07:00:00.000Z','an older verified version is stronger evidence than a later catalogue first-seen timestamp');assert.equal(row.product_after.verified_at,at);
   assert.equal(row.product_before.verified_at,'2026-10-05T07:00:00.000Z');
   assert.deepEqual(row.product_before.extras_json,['Gift included']);assert.deepEqual(row.product_after.extras_json,['Gift removed']);
   assert.equal('raw_text' in row.product_before,false);assert.equal('product_hash' in row.product_after,false);
@@ -152,7 +153,7 @@ test('daily mobile catalogue returns every fresh active product with the latest 
 });
 
 test('daily catalogue does not fall back to older success when the latest source check failed',async()=>{
-  await db.query("INSERT INTO scans(id,source_id,started_at,status) VALUES(15,1,'2026-10-06T07:05:00Z','error')");
+  await db.query("INSERT INTO scans(id,source_id,started_at,finished_at,status) VALUES(15,1,'2026-10-06T07:05:00Z','2026-10-06T07:06:00Z','error')");
   try{
     const catalog=await loadDailyMobileCatalog(db,{start:'2026-10-05T07:30:00Z',end:'2026-10-06T07:30:00Z'});
     assert.deepEqual(catalog.map(x=>Number(x.product_id)),[2]);
@@ -173,7 +174,118 @@ test('daily catalogue requires observed-in-window active products and a finished
     assert.deepEqual((await loadDailyMobileCatalog(db,range)).map(x=>Number(x.product_id)),[2]);
   }finally{
     await db.query('UPDATE products SET active=TRUE,last_seen_at=$1',[at]);
-    await db.query('UPDATE scans SET finished_at=NULL WHERE id=12');
+    await db.query('UPDATE scans SET finished_at=started_at WHERE id=12');
   }
   await assert.rejects(loadDailyMobileCatalog(db,{start:'invalid',end:at}),RangeError);
+});
+
+test('re-added mobile products retain the latest prior successful evidence for that exact product and source',async()=>{
+  await db.exec('BEGIN');
+  try{
+    await db.query("INSERT INTO sources(id,slug,name,url) VALUES(3,'mobile-history','History','https://example.test/history')");
+    await db.query(`INSERT INTO scans(id,source_id,started_at,status) VALUES
+      (31,3,'2026-10-01T07:00:00Z','ok'),(32,3,'2026-10-03T07:00:00Z','ok'),
+      (33,3,'2026-10-05T07:00:00Z','error'),(34,3,$1,'ok'),
+      (35,3,'2026-10-07T07:00:00Z','ok'),(36,2,'2026-10-05T08:00:00Z','ok')`,[at]);
+    await db.query(`INSERT INTO products(id,source_id,identity_base,current_name,first_seen_at,last_seen_at) VALUES
+      (4,3,'returning','Shared name','2026-10-10T07:00:00Z',$1),
+      (5,3,'different-id','Shared name','2026-10-01T07:00:00Z',$1),
+      (6,3,'fresh-id','Shared name',$1,$1)`,[at]);
+    await db.query(`INSERT INTO product_versions(id,product_id,scan_id,captured_at,name,data_gb,price_try,validity_days,extras_json,raw_text,product_hash) VALUES
+      (31,4,31,'2026-10-01T07:00:00Z','Shared name',20,500,30,'["Earlier benefit"]','private old','return-old'),
+      (33,4,33,'2026-10-05T07:00:00Z','Shared name',999,1,30,'[]','failed scan','return-failed'),
+      (30,4,34,$1,'Shared name',51,666,30,'[]','same event time','return-simultaneous'),
+      (34,4,34,$1,'Shared name',30,700,30,'["Changed benefit"]','private current','return-now'),
+      (35,4,35,'2026-10-07T07:00:00Z','Shared name',777,999,30,'[]','private future','return-future'),
+      (36,4,36,'2026-10-05T08:00:00Z','Shared name',888,2,30,'[]','wrong source','return-wrong'),
+      (37,5,31,'2026-10-01T07:00:00Z','Shared name',20,500,30,'[]','different identity','separate-old'),
+      (38,6,34,$1,'Shared name',20,500,30,'[]','new identity','separate-new')`,[at]);
+    const added={...mobile,source_id:3,source_slug:'mobile-history',product_id:4,scan_id:34,event_version_id:34,change_type:'added'};
+    const {changes:[returning,fresh,wrongSource]}=await enrichDailyChanges(db,{changes:[added,
+      {...added,product_id:6,event_version_id:38},{...added,source_id:2}]});
+    assert.equal('product_before' in returning,false,'a historic sighting must not fabricate an immediate added-event baseline');
+    assert.equal(returning.prior_observation.observed_at,'2026-10-01T07:00:00.000Z');
+    assert.equal(returning.first_seen_at,'2026-10-01T07:00:00.000Z','future catalogue metadata cannot replace proven history');
+    assert.equal(Number(returning.prior_observation.product.price_try),500);
+    assert.equal(Number(returning.product_after.price_try),700,'changed returning terms remain available to the brief');
+    assert.deepEqual(returning.prior_observation.product.extras_json,['Earlier benefit']);
+    assert.deepEqual(returning.product_after.extras_json,['Changed benefit']);
+    assert.deepEqual(Object.keys(returning.prior_observation.product).sort(),Object.keys(returning.product_after).sort());
+    assert.equal('raw_text' in returning.prior_observation.product,false);
+    assert.equal('prior_observation' in fresh,false,'same title on another product ID is not historical identity');
+    assert.equal('prior_observation' in wrongSource,false);
+    assert.equal('prior_observation' in added,false,'input rows are not modified');
+  }finally{await db.exec('ROLLBACK')}
+});
+
+test('returning home products bridge missing scans using exact historical keys, retaining changed commercial conditions',async()=>{
+  await db.exec('BEGIN');
+  try{
+    const source='home-history';
+    const offer={source_slug:source,product_key:'stable-key',name:'Shared name',price_monthly_try:500,
+      duration_months:12,features:['Router included'],conditions:['Installation included'],raw_text:'private page'};
+    await homeScan(201,source,'2026-09-27T07:00:00Z','ok',[offer]);
+    await homeScan(202,source,'2026-10-01T07:00:00Z','ok',[{...offer,price_monthly_try:599}],
+      [{...offer,price_monthly_try:600,features:['Static IP included']}]);
+    await homeScan(203,source,'2026-10-03T07:00:00Z','ok',[{...offer,product_key:'different-key',price_monthly_try:1}]);
+    await homeScan(204,source,'2026-10-04T07:00:00Z','error',[{...offer,price_monthly_try:2}]);
+    await homeScan(205,'different-source','2026-10-05T07:00:00Z','ok',[{...offer,source_slug:'different-source',price_monthly_try:3}]);
+    await homeScan(206,source,'2026-10-05T08:00:00Z','ok',[{...offer,source_slug:'different-source',price_monthly_try:4}]);
+    await homeScan(207,source,at,'ok',[{...offer,price_monthly_try:800,features:['Router rental'],conditions:['Installation 100 TL']},
+      {...offer,product_key:'fresh-key'}, {...offer,product_key:'past-limit-key'}]);
+    await homeScan(208,source,'2026-10-07T07:00:00Z','ok',[{...offer,price_monthly_try:999}]);
+    await homeScan(209,source,'2026-06-01T07:00:00Z','ok',[{...offer,product_key:'past-limit-key'}]);
+    const added={...home,source_slug:source,product_key:'stable-key',scan_id:207,change_type:'added'};
+    const queries=[];const pool={query:async(sql,params)=>{queries.push({sql,params});return db.query(sql,params)}};
+    const {homeChanges:[returning,fresh,pastLimit,missing]}=await enrichDailyChanges(pool,{homeChanges:[added,
+      {...added,product_key:'fresh-key'},{...added,product_key:'past-limit-key'},{...added,product_key:'missing-key'}]});
+    assert.equal(queries.length,1);assert.equal(JSON.parse(queries[0].params[0]).length,1,'one batched history request per scan, not per product');
+    assert.match(queries[0].sql,/LIMIT 2160/,'history has a fixed scan budget as well as a time horizon');
+    assert.equal('product_before' in returning,false);
+    assert.equal(returning.prior_observation.observed_at,'2026-10-01T07:00:00.000Z');
+    assert.equal(returning.first_seen_at,'2026-09-27T07:00:00.000Z');
+    assert.equal(returning.prior_observation.product.price_monthly_try,600,'campaigns retain last-key-wins semantics in the prior scan');
+    assert.equal(returning.product_after.price_monthly_try,800);
+    assert.deepEqual(returning.prior_observation.product.features,['Static IP included']);
+    assert.deepEqual(returning.product_after.features,['Router rental']);
+    assert.deepEqual(returning.prior_observation.product.conditions,['Installation included']);
+    assert.deepEqual(returning.product_after.conditions,['Installation 100 TL']);
+    assert.deepEqual(Object.keys(returning.prior_observation.product).sort(),Object.keys(returning.product_after).sort());
+    assert.equal('raw_text' in returning.prior_observation.product,false);
+    assert.equal('prior_observation' in fresh,false,'same title with another key must not be merged');
+    assert.equal('prior_observation' in pastLimit,false,'history beyond the bounded search is unknown');
+    assert.equal('prior_observation' in missing,false,'an absent event product is not proven by history');
+  }finally{await db.exec('ROLLBACK')}
+});
+
+test('a home scan at the event timestamp is not an earlier lifecycle observation',async()=>{
+  await db.exec('BEGIN');
+  try{
+    const offer={product_key:'same-time',name:'Plan',price_monthly_try:500};
+    await homeScan(301,'same-time',at,'ok',[offer]);
+    await homeScan(302,'same-time',at,'ok',[offer]);
+    const {homeChanges:[row]}=await enrichDailyChanges(db,{homeChanges:[{...home,scan_id:302,source_slug:'same-time',product_key:'same-time',change_type:'added'}]});
+    assert.equal(row.product_after.price_monthly_try,500);
+    assert.equal('prior_observation' in row,false);
+    assert.equal('product_before' in row,false);
+  }finally{await db.exec('ROLLBACK')}
+});
+
+test('daily catalogue uses the latest completed source check when the scheduled scan is running or finishes after cutoff',async()=>{
+  const range={start:'2026-10-05T07:30:00Z',end:'2026-10-06T07:30:00Z'};
+  await db.exec('BEGIN');
+  try{
+    await db.query(`INSERT INTO scans(id,source_id,started_at,finished_at,status) VALUES
+      (41,1,'2026-10-06T07:30:00Z',NULL,'running'),
+      (42,2,'2026-10-06T07:29:00Z','2026-10-06T07:31:00Z','ok')`);
+    let catalog=await loadDailyMobileCatalog(db,range);
+    assert.deepEqual(catalog.map(x=>Number(x.product_id)),[1,3,2],'unfinished checks do not hide the latest completed successful catalogue');
+    await db.query("UPDATE scans SET status='error',finished_at='2026-10-06T07:30:00Z' WHERE id=41");
+    catalog=await loadDailyMobileCatalog(db,range);
+    assert.deepEqual(catalog.map(x=>Number(x.product_id)),[2],'a completed failure at the cutoff is authoritative');
+    await db.query("UPDATE scans SET status='running',finished_at=NULL WHERE id=41");
+    await db.query("UPDATE products SET last_seen_at='2026-10-06T07:30:00Z' WHERE id=1");
+    catalog=await loadDailyMobileCatalog(db,range);
+    assert.deepEqual(catalog.map(x=>Number(x.product_id)),[3,2],'a partial in-flight product observation cannot be represented as a completed check');
+  }finally{await db.exec('ROLLBACK')}
 });

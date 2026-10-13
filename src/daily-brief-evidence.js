@@ -4,7 +4,11 @@ const MOBILE_FIELDS=['name','data_gb','bonus_data_gb','local_tr_minutes','intern
 const HOME_FIELDS=['product_key','name','source_slug','source_url','product_url','provider','brand','product_family','market_segment','technology',
   'speed_down_mbps','speed_up_mbps','price_monthly_try','effective_monthly_try','total_price_try','price_status','install_fee_try',
   'data_limit_gb','unlimited','duration_months','duration_days','bonus_months','bonus_days','availability','expires_at','campaign_text',
-  'contract_months','commitment_months','contract_required'];
+  'contract_months','commitment_months','contract_required','conditions'];
+// Daily email enrichment must not load the complete archive. Search at most
+// 90 days / 2,160 successful scans, and return only the requested stable keys.
+const HOME_HISTORY_DAYS=90;
+const HOME_HISTORY_SCAN_LIMIT=2160;
 const MOBILE_KEYS=new Map([...TRACKED_FIELDS.map(([key,label])=>[label,key]),['Paket Adı','name']]);
 const HOME_KEYS=new Map([
   ['Download Hızı','speed_down_mbps'],['Upload Hızı','speed_up_mbps'],['Efektif Aylık Ücret','effective_monthly_try'],
@@ -24,7 +28,9 @@ function safeSnapshot(value,fields,verifiedAt){
     if(item===null||typeof item==='string'||typeof item==='boolean'||typeof item==='number'&&Number.isFinite(item))result[key]=item;
   }
   // The tariff parser stores explicit benefit/condition lines, never page HTML.
-  if(Array.isArray(value.extras_json))result.extras_json=value.extras_json.filter(x=>typeof x==='string');
+  for(const key of ['extras_json','features','conditions']){
+    if(Array.isArray(value[key]))result[key]=value[key].filter(x=>typeof x==='string');
+  }
   const verified=timestamp(verifiedAt);if(verified)result.verified_at=verified;
   return result;
 }
@@ -59,7 +65,9 @@ async function mobileEvidence(pool,rows){
   const versionColumns=['id','product_id','scan_id','captured_at',...MOBILE_FIELDS,'extras_json'].map(key=>'pv.'+key).join(',');
   const result=await pool.query(`WITH requested AS (
     SELECT * FROM jsonb_to_recordset($1::jsonb) AS input(key text,product_id bigint,scan_id bigint,event_version_id bigint,source_id bigint,source_slug text,detected_at timestamptz)
-  ) SELECT r.key,p.first_seen_at,to_jsonb(event) event_product,to_jsonb(previous) previous_product
+  ) SELECT r.key,LEAST(CASE WHEN p.first_seen_at<=event.captured_at THEN p.first_seen_at END,
+      first_observation.observed_at,event.captured_at) first_seen_at,
+      to_jsonb(event) event_product,to_jsonb(previous) previous_product,to_jsonb(prior) prior_product
     FROM requested r JOIN products p ON p.id=r.product_id
     JOIN sources s ON s.id=p.source_id AND (r.source_id IS NULL OR s.id=r.source_id) AND (r.source_slug IS NULL OR s.slug=r.source_slug)
     JOIN scans sc ON sc.id=r.scan_id AND sc.source_id=p.source_id
@@ -68,9 +76,16 @@ async function mobileEvidence(pool,rows){
         AND (r.event_version_id IS NULL OR pv.id=r.event_version_id)
       ORDER BY pv.captured_at DESC,pv.id DESC LIMIT 1) event ON TRUE
     LEFT JOIN LATERAL (SELECT ${versionColumns} FROM product_versions pv
-      JOIN scans ps ON ps.id=pv.scan_id AND ps.source_id=p.source_id
+      JOIN scans ps ON ps.id=pv.scan_id AND ps.source_id=p.source_id AND ps.status='ok'
       WHERE pv.product_id=p.id AND (pv.captured_at,pv.id)<(event.captured_at,event.id)
-      ORDER BY pv.captured_at DESC,pv.id DESC LIMIT 1) previous ON TRUE`,[JSON.stringify([...events.values()])]);
+      ORDER BY pv.captured_at DESC,pv.id DESC LIMIT 1) previous ON TRUE
+    LEFT JOIN LATERAL (SELECT ${versionColumns} FROM product_versions pv
+      JOIN scans ps ON ps.id=pv.scan_id AND ps.source_id=p.source_id AND ps.status='ok'
+      WHERE pv.product_id=p.id AND pv.captured_at<event.captured_at
+      ORDER BY pv.captured_at DESC,pv.id DESC LIMIT 1) prior ON TRUE
+    LEFT JOIN LATERAL (SELECT MIN(pv.captured_at) observed_at FROM product_versions pv
+      JOIN scans ps ON ps.id=pv.scan_id AND ps.source_id=p.source_id AND ps.status='ok'
+      WHERE pv.product_id=p.id AND pv.captured_at<=event.captured_at) first_observation ON TRUE`,[JSON.stringify([...events.values()])]);
   const evidence=new Map(result.rows.map(row=>[row.key,row]));
   return rows.map((row,index)=>{
     const found=evidence.get(keys[index]);
@@ -79,7 +94,10 @@ async function mobileEvidence(pool,rows){
     const after=safeSnapshot(found.event_product,MOBILE_FIELDS,found.event_product.captured_at);
     const field=MOBILE_KEYS.get(row.field_name)||(MOBILE_FIELDS.includes(row.field_key)?row.field_key:null);
     const firstSeen=timestamp(found.first_seen_at);
-    return attach({...row,...(firstSeen?{first_seen_at:firstSeen}:{})},before,after,field);
+    const prior=found.prior_product;
+    const priorObservation=row.change_type==='added'&&prior&&+new Date(prior.captured_at)<+new Date(found.event_product.captured_at)
+      ?{observed_at:timestamp(prior.captured_at),product:safeSnapshot(prior,MOBILE_FIELDS,prior.captured_at)}:null;
+    return attach({...row,...(firstSeen?{first_seen_at:firstSeen}:{}),...(priorObservation?{prior_observation:priorObservation}:{})},before,after,field);
   });
 }
 
@@ -98,21 +116,47 @@ async function homeEvidence(pool,rows){
   const scans=new Map(),keys=[];
   for(const row of rows){
     const entry={scan_id:id(row.scan_id),source_slug:typeof row.source_slug==='string'?row.source_slug:null};
-    if(!entry.scan_id||!entry.source_slug||!timestamp(row.detected_at)||!row.product_key){keys.push(null);continue}
-    const key=JSON.stringify(entry);keys.push(key);scans.set(key,{key,...entry});
+    if(!entry.scan_id||!entry.source_slug||!timestamp(row.detected_at)||typeof row.product_key!=='string'||!row.product_key){keys.push(null);continue}
+    const key=JSON.stringify(entry);keys.push(key);
+    const request=scans.get(key)||{key,...entry,product_keys:[]};
+    if(row.change_type==='added'&&!request.product_keys.includes(row.product_key))request.product_keys.push(row.product_key);
+    scans.set(key,request);
   }
   if(!scans.size)return rows;
   const result=await pool.query(`WITH requested AS (
-    SELECT * FROM jsonb_to_recordset($1::jsonb) AS input(key text,scan_id bigint,source_slug text)
+    SELECT * FROM jsonb_to_recordset($1::jsonb) AS input(key text,scan_id bigint,source_slug text,product_keys text[])
   ) SELECT r.key,s.captured_at,s.payload_json,s.source_meta_json,
-      previous.captured_at previous_captured_at,previous.payload_json previous_payload_json,previous.source_meta_json previous_source_meta_json
+      previous.captured_at previous_captured_at,previous.payload_json previous_payload_json,previous.source_meta_json previous_source_meta_json,
+      history.observations historical_observations
     FROM requested r JOIN home_internet_scans s ON s.id=r.scan_id AND s.source_slug=r.source_slug AND s.status='ok'
     LEFT JOIN LATERAL (SELECT p.captured_at,p.payload_json,p.source_meta_json FROM home_internet_scans p
       WHERE p.source_slug=s.source_slug AND p.status='ok' AND (p.captured_at,p.id)<(s.captured_at,s.id)
-      ORDER BY p.captured_at DESC,p.id DESC LIMIT 1) previous ON TRUE`,[JSON.stringify([...scans.values()])]);
+      ORDER BY p.captured_at DESC,p.id DESC LIMIT 1) previous ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT jsonb_agg(observation) observations FROM (
+        SELECT DISTINCT ON (product->>'product_key') product->>'product_key' product_key,
+          captured_at observed_at,MIN(captured_at) OVER (PARTITION BY product->>'product_key') first_observed_at,product
+        FROM (
+          SELECT p.id,p.captured_at,entry.product,entry.position FROM (
+            SELECT p.id,p.captured_at,p.payload_json,p.source_meta_json FROM home_internet_scans p
+            WHERE cardinality(r.product_keys)>0 AND p.source_slug=s.source_slug AND p.status='ok'
+              AND p.captured_at<s.captured_at AND p.captured_at>=s.captured_at-INTERVAL '${HOME_HISTORY_DAYS} days'
+            ORDER BY p.captured_at DESC,p.id DESC LIMIT ${HOME_HISTORY_SCAN_LIMIT}
+          ) p CROSS JOIN LATERAL jsonb_array_elements(
+            (CASE WHEN jsonb_typeof(p.payload_json)='array' THEN p.payload_json ELSE '[]'::jsonb END)||
+            (CASE WHEN jsonb_typeof(p.source_meta_json->'campaigns')='array' THEN p.source_meta_json->'campaigns' ELSE '[]'::jsonb END)
+          ) WITH ORDINALITY AS entry(product,position)
+          WHERE jsonb_typeof(entry.product)='object' AND entry.product->>'product_key'=ANY(r.product_keys)
+            AND (NULLIF(entry.product->>'source_slug','') IS NULL OR entry.product->>'source_slug'=s.source_slug)
+        ) matches
+        ORDER BY product->>'product_key',captured_at DESC,id DESC,position DESC
+      ) observation
+    ) history ON TRUE`,[JSON.stringify([...scans.values()])]);
   const evidence=new Map(result.rows.map(scan=>{
     const source=scans.get(scan.key).source_slug;
-    return [scan.key,{at:scan.captured_at,beforeAt:scan.previous_captured_at,after:scanProducts(scan,source),before:scanProducts({payload_json:scan.previous_payload_json,source_meta_json:scan.previous_source_meta_json},source)}];
+    return [scan.key,{at:scan.captured_at,beforeAt:scan.previous_captured_at,after:scanProducts(scan,source),
+      before:scanProducts({payload_json:scan.previous_payload_json,source_meta_json:scan.previous_source_meta_json},source),
+      prior:new Map((scan.historical_observations||[]).map(observation=>[observation.product_key,observation]))}];
   }));
   return rows.map((row,index)=>{
     const found=evidence.get(keys[index]);
@@ -120,7 +164,9 @@ async function homeEvidence(pool,rows){
     const before=row.change_type==='added'?null:safeSnapshot(found.before.get(row.product_key),HOME_FIELDS,found.beforeAt);
     const after=row.change_type==='removed'?null:safeSnapshot(found.after.get(row.product_key),HOME_FIELDS,found.at);
     const field=HOME_KEYS.get(row.field_name)||(HOME_FIELDS.includes(row.field_key)?row.field_key:null);
-    return attach(row,before,after,field);
+    const prior=row.change_type==='added'&&after?found.prior.get(row.product_key):null;
+    const priorObservation=prior?{observed_at:timestamp(prior.observed_at),product:safeSnapshot(prior.product,HOME_FIELDS,prior.observed_at)}:null;
+    return attach({...row,...(priorObservation?{prior_observation:priorObservation,first_seen_at:timestamp(prior.first_observed_at)}:{})},before,after,field);
   });
 }
 
@@ -133,7 +179,9 @@ export async function enrichDailyChanges(pool,{changes=[],homeChanges=[]}={}){
 
 // A tariff version is written only when its terms change. last_seen_at is the
 // successful re-observation time, so an unchanged offer can still be fresh.
-// However, a newer failed source check must not be disguised as fresh success.
+// Use only checks completed by the report cutoff. A concurrently running scan
+// must not hide prior completed evidence or leak partially written products.
+// A newer completed failure must not be disguised as fresh success.
 export async function loadDailyMobileCatalog(pool,{start,end}={}){
   const from=timestamp(start),to=timestamp(end);
   if(!from||!to||from>to)throw new RangeError('A valid daily catalogue interval is required');
@@ -141,13 +189,14 @@ export async function loadDailyMobileCatalog(pool,{start,end}={}){
   const result=await pool.query(`SELECT p.id,p.first_seen_at,p.last_seen_at,s.slug source_slug,s.name source_name,s.url source_url,to_jsonb(version) product
     FROM products p JOIN sources s ON s.id=p.source_id
     JOIN LATERAL (SELECT sc.status,sc.finished_at FROM scans sc
-      WHERE sc.source_id=p.source_id AND sc.started_at<=$2::timestamptz
+      WHERE sc.source_id=p.source_id AND sc.status<>'running' AND sc.started_at<=$2::timestamptz AND sc.finished_at<=$2::timestamptz
       ORDER BY sc.started_at DESC,sc.id DESC LIMIT 1) latest ON TRUE
     JOIN LATERAL (SELECT ${columns} FROM product_versions pv JOIN scans vs ON vs.id=pv.scan_id AND vs.source_id=p.source_id
+        AND vs.status='ok' AND vs.finished_at<=$2::timestamptz
       WHERE pv.product_id=p.id AND pv.captured_at<=$2::timestamptz
       ORDER BY pv.captured_at DESC,pv.id DESC LIMIT 1) version ON TRUE
     WHERE p.active=TRUE AND p.last_seen_at>=$1::timestamptz AND p.last_seen_at<=$2::timestamptz
-      AND latest.status='ok' AND (latest.finished_at IS NULL OR latest.finished_at<=$2::timestamptz)
+      AND latest.status='ok' AND latest.finished_at>=$1::timestamptz AND p.last_seen_at<=latest.finished_at
     ORDER BY s.id,p.id`,[from,to]);
   return result.rows.map(row=>({...safeSnapshot(row.product,MOBILE_FIELDS,row.last_seen_at),id:row.id,product_id:row.id,
     brand:'Telsim',provider:'Telsim',source_slug:row.source_slug,source_name:row.source_name,source_url:row.source_url,

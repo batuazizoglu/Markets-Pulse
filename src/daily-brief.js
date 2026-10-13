@@ -57,34 +57,113 @@ function unchangedPrice(rows){
     !rows.some(row=>fieldKind(row)==='price'&&numeric(row.old_value)!==numeric(row.new_value));
 }
 
+const COMMERCIAL_FIELDS={
+  name:'Paket Adı',price_try:'Fiyat',data_gb:'Data',bonus_data_gb:'Bonus Data',local_tr_minutes:'Ada İçi + TR Dakika',international_minutes:'Uluslararası Dakika',sms:'SMS',validity_days:'Geçerlilik (gün)',red_passport_days:'Red Pasaport (gün)',extras_json:'Ek Fayda / Koşul',
+  technology:'Teknoloji',speed_down_mbps:'Download Hızı',speed_up_mbps:'Upload Hızı',price_monthly_try:'Aylık Ücret',effective_monthly_try:'Efektif Aylık Ücret',total_price_try:'Toplam Ücret',price_status:'Fiyat Durumu',install_fee_try:'Kurulum Ücreti',data_limit_gb:'Kota',unlimited:'Limitsiz',duration_months:'Taahhüt / Ödeme Süresi',duration_days:'Ödeme Süresi (gün)',bonus_months:'Hediye Ay',bonus_days:'Hediye Gün',availability:'Kampanya durumu',expires_at:'Kampanya bitişi',campaign_text:'Kampanya koşulları',contract_months:'Taahhüt (ay)',commitment_months:'Taahhüt (ay)',contract_required:'Taahhüt gerekli',features:'Ek faydalar',conditions:'Koşullar'
+};
+const FIELD_KEYS=new Map(Object.entries(COMMERCIAL_FIELDS).map(([key,label])=>[label,key]));
+const MOBILE_CORE=['name','price_try','data_gb','bonus_data_gb','validity_days','local_tr_minutes','international_minutes','sms','red_passport_days','extras_json'];
+const HOME_CORE=['name','technology','speed_down_mbps','unlimited','price_monthly_try','total_price_try','effective_monthly_try','duration_months','duration_days','bonus_months','bonus_days','price_status'];
+const object=value=>value&&typeof value==='object'&&!Array.isArray(value);
+const sameValue=(a,b)=>numeric(a)!==null&&numeric(b)!==null?numeric(a)===numeric(b):JSON.stringify(a)===JSON.stringify(b);
+function fieldKey(row){return Object.hasOwn(COMMERCIAL_FIELDS,row.field_key)?row.field_key:FIELD_KEYS.get(row.field_name)}
+function completeSnapshot(product,domain){return object(product)&&(domain==='gsm'||domain==='mnp'?MOBILE_CORE:HOME_CORE).every(key=>Object.hasOwn(product,key))}
+function sameCommercial(before,after,domain){
+  if(!completeSnapshot(before,domain)||!completeSnapshot(after,domain))return false;
+  return Object.keys(COMMERCIAL_FIELDS).every(key=>Object.hasOwn(before,key)===Object.hasOwn(after,key)&&sameValue(before[key],after[key]));
+}
+function priorEvidence(row){
+  const prior=row.prior_observation;
+  return prior&&object(prior.product)&&Number.isFinite(time(prior.observed_at))&&time(prior.observed_at)<time(row.detected_at)&&(!prior.product.verified_at||time(prior.product.verified_at)===time(prior.observed_at))?prior:null;
+}
+function verifiedField(row){
+  const key=fieldKey(row),before=row.product_before,after=row.product_after;
+  return key&&object(before)&&object(after)&&Number.isFinite(time(before.verified_at))&&Number.isFinite(time(after.verified_at))&&time(before.verified_at)<time(after.verified_at)&&time(after.verified_at)<=time(row.detected_at)&&Object.hasOwn(before,key)&&Object.hasOwn(after,key)&&sameValue(row.old_value,before[key])&&sameValue(row.new_value,after[key]);
+}
+function numericImpact(row){
+  if(!verifiedField(row))return null;
+  const kind=fieldKind(row),key=fieldKey(row),before=numeric(row.old_value),after=numeric(row.new_value);
+  const unit=kind==='price'?'TL':kind==='speed'?'Mbps':['data_gb','bonus_data_gb','data_limit_gb'].includes(key)?'GB':null;
+  if(!unit||before===null||after===null||before<0||after<0||before===after)return null;
+  const delta=Math.round((after-before)*100)/100,percent=before>0?Math.round(delta/before*10000)/100:null;
+  const label=({data_gb:'Ana internet',bonus_data_gb:'Hediye internet',data_limit_gb:'İnternet kotası'}[key])||clean(row.field_name)||COMMERCIAL_FIELDS[key],direction=delta>0?'arttı':'azaldı';
+  return {label,before,after,delta,percent,unit,text:`${label} ${number(before)} → ${number(after)} ${unit}; ${number(Math.abs(delta))} ${unit} ${direction}${percent===null?'':` (%${number(Math.abs(percent))})`}.`,short:`${label.toLocaleLowerCase('tr-TR')} ${number(Math.abs(delta))} ${unit} ${direction}`,priority:kind==='price'?3:kind==='speed'?2:1};
+}
+function changeRowsBetween(row,before,after){
+  return Object.entries(COMMERCIAL_FIELDS).filter(([key])=>Object.hasOwn(before,key)&&Object.hasOwn(after,key)&&!sameValue(before[key],after[key])).map(([field_key,field_name])=>({...row,change_type:'field_changed',field_key,field_name,old_value:before[field_key],new_value:after[field_key],product_before:before,product_after:after}));
+}
+function summarizeFieldRows(rows){
+  const grouped=new Map(),out=[];
+  for(const row of rows){const key=fieldKey(row);if(row.change_type!=='field_changed'||!key){out.push(row);continue}if(!grouped.has(key))grouped.set(key,[]);grouped.get(key).push(row)}
+  for(const values of grouped.values()){
+    values.sort((a,b)=>time(a.detected_at)-time(b.detected_at));
+    const first=values[0],last=values.at(-1);
+    // Net wording requires every link in the observed field chain. Otherwise
+    // retain each observation; a missing baseline must never erase a change.
+    const continuous=values.every(verifiedField)&&values.every((row,index)=>!index||sameValue(values[index-1].new_value,row.old_value));
+    if(values.length>1&&continuous)out.push({...last,old_value:first.old_value,product_before:first.product_before,net_observation_count:values.length});
+    else out.push(...values);
+  }
+  return out.sort((a,b)=>time(b.detected_at)-time(a.detected_at));
+}
+
 function groupChanges(rows,fallback,start,end){
-  const groups=new Map(),seen=new Set();
+  const events=new Map(),seen=new Set();
   for(const row of rows){
     if(!fresh(row.detected_at,start,end-1))continue;
-    const title=reportChangeProduct(row),domain=detectDomain(row,fallback);
-    const identity=row.product_id??row.product_key??[row.source_slug,title].join('|');
-    const scan=row.scan_id??iso(row.detected_at);
-    const key=[domain,scan,identity].join(':');
+    const title=reportChangeProduct(row),domain=detectDomain(row,fallback),source=row.source_slug??row.source_id??row.source_url??row.brand??row.provider??'';
+    // A display name is not a safe identity: distinct durations may share it.
+    const identity=row.product_id!=null?'id:'+row.product_id:row.product_key?'key:'+row.product_key:'event:'+String(row.id??hash(JSON.stringify(row)));
+    const entity=JSON.stringify([domain,source,identity]),scan=row.scan_id??iso(row.detected_at),key=JSON.stringify([entity,scan]);
     const eventKey=JSON.stringify([key,row.id??null,row.change_type,row.field_key||row.field_name,row.old_value,row.new_value]);
     if(seen.has(eventKey))continue;seen.add(eventKey);
-    if(!groups.has(key))groups.set(key,{key,domain,title,rows:[]});
-    groups.get(key).rows.push(row);
+    if(!events.has(key))events.set(key,{key,entity,domain,title,rows:[]});events.get(key).rows.push(row);
   }
-  return [...groups.values()].map(group=>{
-    const rows=group.rows,row=rows[0],kinds=new Set(rows.map(fieldKind)),isOwned=owned(row.brand||row.provider||row.source_name);
-    const kind=rows.some(x=>x.change_type==='removed')?'removed':rows.some(x=>x.change_type==='added')?'added':'changed';
-    const flags=[];
-    if(kind==='changed'&&(kinds.has('benefit')||kinds.has('speed'))&&unchangedPrice(rows))flags.push('Fiyat aynı, teklif değişti');
-    if(kind==='changed'&&kinds.has('term')&&unchangedPrice(rows))flags.push('Fiyat aynı, süre / taahhüt değişti');
-    if(kind==='removed')flags.push('Kaldırılan paket');
-    if(kind==='added')flags.push('Yeni paket');
-    const priority=Math.max(...rows.map(x=>({critical:90,high:70,medium:45,low:20}[x.severity]||30)))+(group.domain==='mnp'?8:0)+(flags.some(x=>x.startsWith('Fiyat aynı'))?8:0)+(kind==='added'?5:0);
-    if(kind==='changed'&&priority>=70&&rows.some(x=>fresh(x.first_seen_at,0,start-1)||fresh(x.product_before?.verified_at,0,start-1)))flags.push('Devam eden konuda yeni gelişme');
-    let why=kind==='added'?'Yeni teklif, müşterinin seçebileceği paketleri değiştiriyor.':kind==='removed'?'Bu teklif güncel katalogdan kaldırılmış; satış iletişimindeki geçerliliği kontrol edilmeli.':kinds.has('price')?'Paketin fiyatı değişti; aynı fayda ve süreyle ödenen tutarı yeniden değerlendirmek gerekiyor.':kinds.has('benefit')||kinds.has('speed')?'Müşteriye sunulan fayda değişti; mevcut karşılaştırma ve iletişim yeniden değerlendirilmeli.':'Paketin kullanım veya satın alma koşulları değişti.';
+  const entities=new Map();
+  for(const event of events.values()){if(!entities.has(event.entity))entities.set(event.entity,[]);entities.get(event.entity).push(event)}
+  return [...entities.values()].map(groups=>{
+    groups.sort((a,b)=>time(a.rows[0].detected_at)-time(b.rows[0].detected_at)||a.key.localeCompare(b.key));
+    const group=groups.at(-1),allRows=groups.flatMap(x=>x.rows),row=group.rows[0],isOwned=owned(row.brand||row.provider||row.source_name);
+    const added=allRows.filter(x=>x.change_type==='added'),lastAdded=group.rows.find(x=>x.change_type==='added');
+    let kind=group.rows.some(x=>x.change_type==='removed')?'removed':lastAdded?'added':'changed',displayRows=allRows,observational=false;
+    const prior=lastAdded&&priorEvidence(lastAdded),knownReturn=lastAdded&&(prior||fresh(lastAdded.first_seen_at,0,time(lastAdded.detected_at)-1));
+    const firstNew=added.find(x=>!priorEvidence(x)&&!fresh(x.first_seen_at,0,time(x.detected_at)-1));
+    if(lastAdded&&knownReturn){
+      kind='returned';
+      const earlierChanges=allRows.filter(x=>x.change_type==='field_changed');
+      const equal=prior&&Number.isFinite(time(lastAdded.product_after?.verified_at))&&time(lastAdded.product_after.verified_at)<=time(lastAdded.detected_at)&&sameCommercial(prior.product,lastAdded.product_after,group.domain);
+      if(equal&&!earlierChanges.length&&!firstNew){kind='reobserved';observational=true;displayRows=[]}
+      else if(prior&&object(lastAdded.product_after)){
+        const difference=changeRowsBetween(lastAdded,prior.product,lastAdded.product_after);
+        displayRows=[...earlierChanges,...difference];
+        if(!displayRows.length)displayRows=[lastAdded];
+      }else displayRows=[...earlierChanges,lastAdded];
+    }else if(kind==='removed')displayRows=group.rows;
+    else if(kind==='changed')displayRows=allRows.filter(x=>x.change_type==='field_changed');
+    // A genuinely first observation earlier today remains first-seen even if
+    // the source lost and re-observed it within the same report window.
+    if(lastAdded&&firstNew&&prior){kind='added';observational=false;displayRows=[{...lastAdded,new_value:JSON.stringify(lastAdded.product_after||{})}]}
+    displayRows=summarizeFieldRows(displayRows);
+    const kinds=new Set(displayRows.map(fieldKind)),flags=[];
+    if(kind==='changed'&&(kinds.has('benefit')||kinds.has('speed'))&&unchangedPrice(displayRows))flags.push('Fiyat aynı, teklif değişti');
+    if(kind==='changed'&&kinds.has('term')&&unchangedPrice(displayRows))flags.push('Fiyat aynı, süre / taahhüt değişti');
+    if(kind==='removed')flags.push('Son kontrolde görünmeyen paket');
+    if(kind==='added')flags.push('İlk kez görülen paket');
+    if(kind==='returned'||kind==='reobserved')flags.push('Yeniden görülen paket');
+    if(groups.length>1)flags.push(`${groups.length} gözlem tek paket altında toplandı`);
+    let priority=(kind==='returned'||kind==='reobserved'?35:Math.max(...allRows.map(x=>({critical:90,high:70,medium:45,low:20}[x.severity]||30))))+(group.domain==='mnp'?8:0)+(flags.some(x=>x.startsWith('Fiyat aynı'))?8:0)+(kind==='added'?5:0);
+    if(kind==='changed'&&priority>=70&&allRows.some(x=>fresh(x.first_seen_at,0,start-1)||fresh(x.product_before?.verified_at,0,start-1)))flags.push('Devam eden konuda yeni gelişme');
+    const impacts=displayRows.map(numericImpact).filter(Boolean).sort((a,b)=>b.priority-a.priority),impact=impacts[0]||null;
+    if(kind==='returned'&&impact)priority=Math.max(priority,impact.unit==='TL'?90:70);
+    const returnedToBaseline=displayRows.length>0&&displayRows.every(x=>x.net_observation_count>1&&sameValue(x.old_value,x.new_value));
+    if(returnedToBaseline)flags.push('Gün içindeki değişim dönem başına döndü');
+    const directionalWhy=impact?(impact.unit==='TL'?`Bu ücret kalemi ${impact.delta<0?'düştü':'yükseldi'}; fayda, süre ve satın alma koşulları ayrıca değerlendirilmelidir.`:`Paketin ${impact.unit==='Mbps'?'hızı':'internet miktarı'} ${impact.delta<0?'azaldı':'arttı'}; teklif karşılaştırmasını güncelleyin.`):null;
+    let why=kind==='added'?'Bu paket izlenen kaynakta ilk kez kaydedildi; ilk gözlem tarihi piyasaya çıkış tarihi değildir.':kind==='removed'?'Paket son kaynak gözleminde görünmüyor; satıştan kaldırıldığı ayrıca teyit edilmeli.':kind==='returned'?'Daha önce izlenen paket yeniden görüldü; yeni piyasaya çıkış olarak değerlendirilmedi.':kind==='reobserved'?'Daha önce izlenen paket aynı kayıtlı koşullarla yeniden görüldü.':returnedToBaseline?'Gün içinde değişiklik kaydedildi; doğrulanmış son değerler dönem başındaki değerlere döndü.':impact?directionalWhy:kinds.has('price')?'Paketin fiyatı değişti; fayda, süre ve satın alma koşullarıyla birlikte değerlendirilmelidir.':kinds.has('benefit')||kinds.has('speed')?'Müşteriye sunulan fayda değişti; mevcut karşılaştırma ve iletişim yeniden değerlendirilmeli.':'Paketin kullanım veya satın alma koşulları değişti.';
+    if(kind==='returned'&&impact)why+=' '+directionalWhy;
     let action=group.domain==='mnp'?'Numara taşıma sayfası ve ilgili dijital iletişimde mevcut avantajlarımızı bu teklifin koşullarıyla karşılaştırın.':group.domain==='fixed'||group.domain==='fwa'?'Aynı hız, kota ve taahhüt koşullarını karşılaştırın; ev interneti teklif ve iletişimini gözden geçirin.':'İlgili paket sayfasını ve hedef kitle iletişimini güncel teklifle karşılaştırın.';
-    if(kind==='removed')action='Paketin kaynak sayfasını doğrulayın; geçersizleşen teklif bağlantılarını ve karşılaştırmaları güncelleyin.';
-    if(isOwned){why='Kendi teklifimizdeki değişiklik müşteri iletişimine doğru yansıtılmalı.';action='Web, uygulama ve dijital iletişimde paket bilgilerinin aynı olduğundan emin olun.';flags.push('Kendi markamız')}
-    return {id:'move-'+hash(group.key),domain:group.domain,label:labelFor(group.domain),title:clean(group.title,180),brand:clean(row.brand||row.provider||(group.domain==='gsm'||group.domain==='mnp'?'Telsim':row.source_name),120),at:latest(rows.map(x=>x.detected_at)),priority,kind,changes:rows.slice(0,6).map(displayChange),omitted_change_count:Math.max(0,rows.length-6),why,action,flags,owned:isOwned,source_url:safeUrl(row.product_url||row.source_url),detail_url:linkFor(group.domain),_rows:rows};
+    if(kind==='removed')action='Paketin kaynak sayfasını doğrulayın; satış durumu teyit edildikten sonra karşılaştırmaları güncelleyin.';
+    if(isOwned){why='Kendi teklifimizdeki gözlem müşteri iletişimine doğru yansıtılmalı.'+(impact?' '+directionalWhy:'');action='Web, uygulama ve dijital iletişimde paket bilgilerinin aynı olduğundan emin olun.';flags.push('Kendi markamız')}
+    return {id:'move-'+hash(group.entity),domain:group.domain,label:labelFor(group.domain),title:clean(group.title,180),brand:clean(row.brand||row.provider||(group.domain==='gsm'||group.domain==='mnp'?'Telsim':row.source_name),120),at:latest(allRows.map(x=>x.detected_at)),priority,kind,changes:displayRows.slice(0,6).map(displayChange),omitted_change_count:Math.max(0,displayRows.length-6),observation_count:groups.length,observational,impact,delta_summary:impact?.text||null,why,action,flags,owned:isOwned,source_url:safeUrl(row.product_url||row.source_url),detail_url:linkFor(group.domain),_rows:allRows};
   });
 }
 
@@ -272,7 +351,8 @@ export function buildDailyBrief(ctx={}){
   const end=time(ctx.period_end),start=time(ctx.period_start);
   if(!Number.isFinite(start)||!Number.isFinite(end)||start>=end)throw new TypeError('Daily brief requires a valid report period');
   const mobile=Array.isArray(ctx.daily_changes)?ctx.daily_changes:Array.isArray(ctx.changes)?ctx.changes:list(ctx.market?.moves).flatMap(move=>list(move.changes).map(change=>({...move,...change})));
-  const moves=[...groupChanges(mobile,'gsm',start,end),...groupChanges(list(ctx.daily_home?.fixed?.changes),'fixed',start,end),...groupChanges(list(ctx.daily_home?.fwa?.changes),'fwa',start,end)];
+  const observedMoves=[...groupChanges(mobile,'gsm',start,end),...groupChanges(list(ctx.daily_home?.fixed?.changes),'fixed',start,end),...groupChanges(list(ctx.daily_home?.fwa?.changes),'fwa',start,end)];
+  const moves=observedMoves.filter(move=>!move.observational),reobserved=observedMoves.filter(move=>move.observational);
   for(const move of moves){
     const comparison=comparisonFor(move,ctx,start,end);
     if(comparison)move.comparison=comparison;
@@ -283,22 +363,23 @@ export function buildDailyBrief(ctx={}){
   const highlights=[...moves,...adHighlights].sort(rank).slice(0,3).map(({_rows,...item})=>item);
   const observations=periodAdRows(ctx,start,end),statusUpdates=observations.filter(x=>x.analysis_json?.ad_status==='inactive').length;
   const unverified=observations.filter(x=>x.analysis_json?.ad_status!=='inactive'&&(x.analysis_json?.category==='review'||x.analysis_json?.review_required===true||!clean(x.analysis_json?.title)||!clean(x.analysis_json?.brand))).length;
-  const quiet=!moves.length&&!observations.length&&!expiring.length&&coverage.state==='complete';
-  const counts={moves:moves.length,fields:moves.reduce((sum,item)=>sum+item._rows.length,0),ads:adsAll.length,observed_ads:observations.length,unverified_ads:unverified,status_updates:statusUpdates,expiring:expiring.length};
-  const headline=highlights.length?`${highlights[0].brand}: ${highlights[0].title}`:expiring.length?`${expiring.length} kampanyanın bitişi yaklaşıyor`:unverified?'Yeni reklam kaydı var; teklif koşulları henüz doğrulanamadı':statusUpdates?'Reklam yayın durumunda güncelleme var':quiet?'Bugün yeni paket veya reklam değişikliği yok':'Güncel kontrol kapsamı tamamlanamadı';
-  let summary=highlights.length?`${counts.moves} paket hamlesi (${counts.fields} alan değişikliği) ve ${counts.ads} yeni veya güncellenen reklam kampanyası kaydedildi.`:expiring.length?`Önümüzdeki 72 saatte ${expiring.length} doğrulanmış kampanya bitişi var. Yeni doğrulanmış paket veya reklam teklifi kaydedilmedi.`:unverified?`${unverified} reklam kaydının teklif koşulları henüz doğrulanamadı; bu kayıtlar doğrulanmış teklif olarak özetlenmedi.`:statusUpdates?`${statusUpdates} reklam artık aktif görünmüyor. Yeni doğrulanmış teklif kaydedilmedi.`:quiet?'İzlenen kaynaklarda bu döneme ait yeni paket değişikliği veya reklam teklifi kaydedilmedi.':'Güncel kayıtlarda yeni gelişme yok; eksik kaynak kontrolleri nedeniyle piyasanın değişmediği sonucuna varılamaz.';
+  const quiet=!observedMoves.length&&!observations.length&&!expiring.length&&coverage.state==='complete';
+  const counts={moves:moves.length,reobserved:reobserved.length,package_observations:observedMoves.reduce((sum,item)=>sum+item.observation_count,0),fields:moves.reduce((sum,item)=>sum+item._rows.length,0),ads:adsAll.length,observed_ads:observations.length,unverified_ads:unverified,status_updates:statusUpdates,expiring:expiring.length};
+  const headline=highlights.length?`${highlights[0].brand}: ${highlights[0].title}${highlights[0].impact?' · '+highlights[0].impact.short:''}`:expiring.length?`${expiring.length} kampanyanın bitişi yaklaşıyor`:unverified?'Yeni reklam kaydı var; teklif koşulları henüz doğrulanamadı':statusUpdates?'Reklam yayın durumunda güncelleme var':reobserved.length?'İzlenen paketler aynı koşullarla yeniden görüldü':quiet?'Bugün yeni paket veya reklam değişikliği yok':'Güncel kontrol kapsamı tamamlanamadı';
+  let summary=highlights.length?[counts.moves?`${counts.moves} pakette gelişme`:null,counts.ads?`${counts.ads} yeni veya güncellenen reklam kampanyası`:null].filter(Boolean).join(' ve ')+' kaydedildi.':expiring.length?`Önümüzdeki 72 saatte ${expiring.length} doğrulanmış kampanya bitişi var. Yeni doğrulanmış paket veya reklam teklifi kaydedilmedi.`:unverified?`${unverified} reklam kaydının teklif koşulları henüz doğrulanamadı; bu kayıtlar doğrulanmış teklif olarak özetlenmedi.`:statusUpdates?`${statusUpdates} reklam artık aktif görünmüyor. Yeni doğrulanmış teklif kaydedilmedi.`:reobserved.length?`${reobserved.length} paket daha önce kaydedilen aynı koşullarla yeniden görüldü; yeni teklif olarak sayılmadı.`:quiet?'İzlenen kaynaklarda bu döneme ait yeni paket değişikliği veya reklam teklifi kaydedilmedi.':'Güncel kayıtlarda yeni gelişme yok; eksik kaynak kontrolleri nedeniyle piyasanın değişmediği sonucuna varılamaz.';
+  const observation_note=reobserved.length?`${reobserved.length} paket aynı kayıtlı koşullarla yeniden görüldü; bu gözlemler yeni teklif olarak sayılmadı. Kaynak geçmişindeki kayıtlar korunuyor.`:null;
   if((highlights.length||expiring.length)&&unverified)summary+=` Ayrıca ${unverified} reklam kaydının teklif koşulları henüz doğrulanamadı.`;
   if((highlights.length||expiring.length||unverified)&&statusUpdates)summary+=` ${statusUpdates} reklam artık aktif görünmüyor.`;
   // Never carry yesterday's important finding forward without a fresh event.
   const featured=new Set(highlights.map(x=>x.id));
   const watchlist=moves.filter(m=>!featured.has(m.id)&&m.flags.includes('Devam eden konuda yeni gelişme')).sort(rank).slice(0,3).map(({_rows,...item})=>item);
   const position_changes=list(ctx.score_deltas).filter(x=>numeric(x.delta)!==null&&Math.abs(numeric(x.delta))>=3&&numeric(x.current)!==null&&numeric(x.baseline)!==null).map(x=>({segment:clean(x.segment),delta:numeric(x.delta),current:numeric(x.current),baseline:numeric(x.baseline)}));
-  return {period_start:iso(ctx.period_start),period_end:iso(ctx.period_end),headline,summary,quiet,counts,coverage,highlights,ads,expiring,watchlist,position_changes};
+  return {period_start:iso(ctx.period_start),period_end:iso(ctx.period_end),headline,summary,quiet,observation_note,counts,coverage,highlights,ads,expiring,watchlist,position_changes};
 }
 
 export function dailyBriefSubject(ctx,brief=buildDailyBrief(ctx)){
   const date=new Intl.DateTimeFormat('tr-TR',{timeZone:'Asia/Famagusta',day:'2-digit',month:'2-digit'}).format(new Date(brief.period_end));
   const top=brief.highlights[0];
-  const topic=top?`${top.brand}: ${top.flags.includes('Fiyat aynı, teklif değişti')?'fiyat aynı, teklif değişti':top.kind==='added'?'yeni paket':top.kind==='removed'?'paket kaldırıldı':top.kind==='ad'?'reklam teklifi':top.changes[0]?.label||'paket değişikliği'} · ${top.title}`:brief.expiring.length?`${brief.expiring.length} kampanyanın bitişi yaklaşıyor`:brief.counts.unverified_ads?'Yeni reklamların teklif koşulları teyit bekliyor':brief.counts.status_updates?'Reklam yayın durumu güncellendi':brief.quiet?'Yeni değişiklik yok':'Kaynak kontrolleri eksik';
+  const topic=top?`${top.brand}: ${top.impact?top.impact.short:top.flags.includes('Fiyat aynı, teklif değişti')?'fiyat aynı, teklif değişti':top.kind==='added'?'ilk kez görülen paket':top.kind==='returned'?'yeniden görülen paket':top.kind==='removed'?'paket son kontrolde görünmüyor':top.kind==='ad'?'reklam teklifi':top.changes[0]?.label||'paket değişikliği'} · ${top.title}`:brief.expiring.length?`${brief.expiring.length} kampanyanın bitişi yaklaşıyor`:brief.counts.unverified_ads?'Yeni reklamların teklif koşulları teyit bekliyor':brief.counts.status_updates?'Reklam yayın durumu güncellendi':brief.counts.reobserved?'Aynı koşullarla yeniden görülen paketler':brief.quiet?'Yeni değişiklik yok':'Kaynak kontrolleri eksik';
   return `Markets Pulse | ${date} | ${clean(topic,125)}`;
 }

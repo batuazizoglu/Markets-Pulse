@@ -1,7 +1,7 @@
 import {createHash} from 'node:crypto';
 import {socialDirectory} from './isp-registry.js';
 import {adLibrarySource} from './ad-cloud-capture.js';
-import {providerConfig,startProviderRun,getProviderRun,getProviderItems,fetchProviderImage} from './ad-provider-client.js';
+import {providerConfig,providerHttpDiagnostics,startProviderRun,getProviderRun,getProviderItems,fetchProviderImage} from './ad-provider-client.js';
 import {normalizeProviderItem} from './ad-provider-normalize.js';
 
 const ACTIVE = ['creating','running','importing','downloading'];
@@ -52,11 +52,13 @@ export async function runProviderTick(pool,sources,{env=process.env,owner,assert
   const atomic=fn=>transaction(pool,owner,assertLease,fn);
   const stamp=()=>new Date(clock());
   const readExpired=r=>r.state==='running' ? +stamp()-+new Date(r.created_at)>2*3600000 : r.state==='importing' && r.read_failed_at && +stamp()-+new Date(r.read_failed_at)>2*3600000;
+  const operationFor=run=>run.state==='running'?'poll':run.state==='importing'?'dataset':'start';
   const markError=async(run,error,state='error')=>atomic(async db=>{
-    const code=safeCode(error),at=stamp();
+    const code=safeCode(error),at=stamp(),diagnostics=providerHttpDiagnostics(error);
     await db.query('UPDATE ad_provider_runs SET state=$2,last_error=$3,updated_at=$4,finished_at=$4 WHERE job_id=$1',[run.job_id,state,code,at]);
-    await db.query('UPDATE ad_cloud_jobs SET status=$2,note=$3,finished_at=$4 WHERE id=$1',[run.job_id,state==='start_unknown'?'blocked':'error',state==='start_unknown'?'Sağlayıcı başlatma yanıtı belirsiz; mükerrer ücret oluşmaması için yeni çalışma başlatılmadı.':'Sağlayıcı aktarımı tamamlanamadı: '+code+'. Arşivlenen kanıtlar korunuyor.',at]);
-    return {status:state,reason:code,job_id:run.job_id};
+    const http=diagnostics.http_status?` (HTTP ${diagnostics.http_status})`:'';
+    await db.query('UPDATE ad_cloud_jobs SET status=$2,note=$3,finished_at=$4 WHERE id=$1',[run.job_id,state==='start_unknown'?'blocked':'error',state==='start_unknown'?'Sağlayıcı başlatma yanıtı belirsiz'+http+'; mükerrer ücret oluşmaması için yeni çalışma başlatılmadı.':'Sağlayıcı aktarımı tamamlanamadı: '+code+http+'. Arşivlenen kanıtlar korunuyor.',at]);
+    return {status:state,reason:code,job_id:run.job_id,operation:operationFor(run),...diagnostics};
   });
   const retryRead=async(run,error)=>{
     const expired=readExpired(run);
@@ -66,13 +68,13 @@ export async function runProviderTick(pool,sources,{env=process.env,owner,assert
       return atomic(async db=>{
         const at=stamp(),code=expired?'PROVIDER_IMPORT_TIMEOUT':safeCode(error);
         await db.query("UPDATE ad_provider_runs SET state='downloading',coverage_denied=TRUE,coverage_complete=FALSE,last_error=$2,next_poll_at=$3,updated_at=$3 WHERE job_id=$1",[run.job_id,code,at]);
-        return {status:'downloading',job_id:run.job_id,reason:code};
+        return {status:'downloading',job_id:run.job_id,reason:code,operation:operationFor(run),...providerHttpDiagnostics(error)};
       });
     }
     return atomic(async db=>{
       const at=stamp(),retryAt=after(at,isRate(error)?delayFor(error):60000*Math.pow(2,run.poll_attempts));
       await db.query('UPDATE ad_provider_runs SET poll_attempts=poll_attempts+1,last_error=$2,next_poll_at=$3,updated_at=$4,read_failed_at=COALESCE(read_failed_at,$4) WHERE job_id=$1',[run.job_id,safeCode(error),retryAt,at]);
-      return {status:'waiting_provider',reason:safeCode(error),retry_at:retryAt.toISOString(),job_id:run.job_id};
+      return {status:'waiting_provider',reason:safeCode(error),retry_at:retryAt.toISOString(),job_id:run.job_id,operation:operationFor(run),...providerHttpDiagnostics(error)};
     });
   };
 
@@ -174,7 +176,7 @@ export async function runProviderTick(pool,sources,{env=process.env,owner,assert
   if(run.state==='downloading') {
     if(typeof persistCapture!=='function' || typeof normalizeImage!=='function')throw new Error('PROVIDER_CAPTURE_HELPER_REQUIRED');
     const deadline=Date.now()+90000;
-    let processed=0;
+    let processed=0,diagnostics={};
     for(;processed<3 && Date.now()<deadline-25000;processed++) {
       const asset=(await pool.query("SELECT * FROM ad_provider_assets WHERE job_id=$1 AND status IN ('pending','retry') AND attempts<3 AND available_at<=$2 ORDER BY asset_key LIMIT 1",[run.job_id,stamp()])).rows[0];
       if(!asset)break;
@@ -195,6 +197,7 @@ export async function runProviderTick(pool,sources,{env=process.env,owner,assert
         });
       } catch(error) {
         if(safeCode(error)==='CLOUD_LEASE_LOST')throw error;
+        diagnostics={reason:safeCode(error),operation:'media',...providerHttpDiagnostics(error)};
         const limited=isRate(error),terminal=isAuth(error) || (!limited && asset.attempts>=2) || /(?:URL_INVALID|TYPE_INVALID|TOO_LARGE|INVALID_JPEG|IMAGE_INVALID|DECODE|DIMENSIONS)/.test(safeCode(error));
         await atomic(async db=>{
           const at=stamp(),retryAt=after(at,limited?delayFor(error):60000*Math.pow(2,asset.attempts));
@@ -212,7 +215,7 @@ export async function runProviderTick(pool,sources,{env=process.env,owner,assert
     return atomic(async db=>{
       const at=stamp();
       await db.query("UPDATE ad_provider_assets SET status='error',last_error=COALESCE(last_error,'MEDIA_RETRY_EXHAUSTED'),updated_at=$2 WHERE job_id=$1 AND status='retry' AND attempts>=3 AND available_at<=$2",[run.job_id,at]);
-      return finish(db,run,at);
+      return {...await finish(db,run,at),...diagnostics};
     });
   }
   return {status:'idle'};

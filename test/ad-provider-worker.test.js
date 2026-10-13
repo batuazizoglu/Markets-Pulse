@@ -88,6 +88,53 @@ test('a persisted creation fence is never automatically repeated after process i
   } finally {await f.db.close();}
 });
 
+test('rejected paid starts report safe HTTP diagnostics, retain budget reservations and are not retried',async()=>{
+  let starts=0;
+  const f=await fixture({startProviderRun:async()=>{starts++;throw err('PROVIDER_PAYMENT_REQUIRED',{
+    http_status:402,error_category:'unsafe '+env.APIFY_TOKEN,response:{body:env.APIFY_TOKEN},url:'https://example.test/?token='+env.APIFY_TOKEN
+  });}});
+  try {
+    const outcome=await f.tick();
+    assert.equal(outcome.status,'error');assert.equal(outcome.reason,'PROVIDER_PAYMENT_REQUIRED');
+    assert.equal(outcome.http_status,402);assert.equal(outcome.error_category,'payment');assert.equal(outcome.operation,'start');
+    assert.equal((await f.target()).note.includes('HTTP 402'),true);assert.equal((await f.run()).last_error,'PROVIDER_PAYMENT_REQUIRED');
+    assert.equal(JSON.stringify(outcome).includes(env.APIFY_TOKEN),false);assert.equal(JSON.stringify(await f.target()).includes(env.APIFY_TOKEN),false);
+    assert.equal((await f.tick()).status,'idle');assert.equal(starts,1);
+    const budget=(await f.db.query('SELECT reserved_usd,starts FROM ad_provider_budget')).rows[0];
+    assert.equal(Number(budget.reserved_usd),0.10);assert.equal(budget.starts,1);assert.equal((await f.target()).attempts,1);
+  } finally {await f.db.close();}
+});
+
+test('unavailable create diagnostics preserve the ambiguous creation fence and reserved budget',async()=>{
+  let starts=0;
+  const f=await fixture({startProviderRun:async()=>{starts++;throw err('PROVIDER_UNAVAILABLE',{http_status:503,ambiguous:true});}});
+  try {
+    const outcome=await f.tick();
+    assert.equal(outcome.status,'start_unknown');assert.equal(outcome.http_status,503);assert.equal(outcome.error_category,'unavailable');assert.equal(outcome.operation,'start');
+    const original=await f.target();assert.match(original.note,/HTTP 503/);assert.equal(original.status,'blocked');
+    await f.db.query("INSERT INTO ad_cloud_jobs(batch_key,brand,source_json) VALUES('next-day-http',$1,$2::jsonb)",[original.brand,JSON.stringify(original.source_json)]);
+    assert.equal((await f.tick()).status,'idle');assert.equal(starts,1);
+    const next=(await f.db.query("SELECT attempts,status FROM ad_cloud_jobs WHERE batch_key='next-day-http'")).rows[0];
+    assert.deepEqual(next,{attempts:0,status:'queued'});
+    assert.equal(Number((await f.db.query('SELECT reserved_usd FROM ad_provider_budget')).rows[0].reserved_usd),0.10);
+  } finally {await f.db.close();}
+});
+
+test('poll diagnostics preserve three bounded read attempts without restarting a paid run',async()=>{
+  let polls=0;
+  const f=await fixture({getProviderRun:async()=>{polls++;throw err('PROVIDER_UNAVAILABLE',{http_status:503});}});
+  try {
+    assert.equal((await f.tick()).status,'running');f.advance(15000);
+    for(const delay of [60000,120000]) {
+      const outcome=await f.tick();assert.equal(outcome.status,'waiting_provider');assert.equal(outcome.http_status,503);
+      assert.equal(outcome.error_category,'unavailable');assert.equal(outcome.operation,'poll');f.advance(delay);
+    }
+    const final=await f.tick();assert.equal(final.status,'error');assert.equal(final.http_status,503);assert.equal(final.operation,'poll');
+    assert.equal(polls,3);assert.equal(f.stats().starts,1);assert.equal((await f.tick()).status,'idle');assert.equal(polls,3);
+    assert.equal((await f.target()).attempts,1);
+  } finally {await f.db.close();}
+});
+
 test('all creatives across paginated rows are preserved and duplicate rows do not inflate captures',async()=>{
   const f=await fixture({getProviderItems:async(id,{offset})=>offset===0 ? {items:[rawAd('999999',5)],total:2,offset:0,count:1} : {items:[rawAd('999999',5)],total:2,offset:1,count:1}});
   try {

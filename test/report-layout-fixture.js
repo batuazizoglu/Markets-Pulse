@@ -92,17 +92,18 @@ export function createDailyBriefLayoutFixtures(base){
   const fixedSources=[{slug:'fixture-fixed',name:'Örnek Fiber',url:'https://example.net/fiber/paketler',status:'ok',captured_at:checked}];
   const fwaSources=[{slug:'telsim-redbox',name:'Red Box',url:'https://example.org/redbox/paketler',status:'ok',captured_at:checked}];
   const sourceFields={source_id:1,source_slug:'telsim-paketler',source_name:'Telsim Paketler',source_url:mobileSources[0].url,provider:'Telsim',brand:'Telsim',detected_at:observed,scan_id:42};
-  const mnpBefore={id:101,name:'Numaranı Taşı 50 GB',price_try:999,data_gb:50,validity_days:30,commitment_months:12};
-  const mnpAfter={...mnpBefore,price_try:899,data_gb:60};
-  const gsmBefore={id:102,name:'Aile 40 GB',price_try:799,data_gb:40,validity_days:30};
-  const gsmAfter={...gsmBefore,data_gb:30};
+  const priorAt='2026-09-19T14:30:00.000Z';
+  const mnpBefore={id:101,name:'Numaranı Taşı 50 GB',price_try:999,data_gb:50,validity_days:30,commitment_months:12,verified_at:priorAt};
+  const mnpAfter={...mnpBefore,price_try:899,data_gb:60,verified_at:observed};
+  const gsmBefore={id:102,name:'Aile 40 GB',price_try:799,data_gb:40,validity_days:30,verified_at:priorAt};
+  const gsmAfter={...gsmBefore,data_gb:30,verified_at:observed};
   const mobileChanges=[
     {...sourceFields,id:101,product_id:101,product_name:mnpAfter.name,segment:'MNP / Numara Taşıma',change_type:'field_changed',field_name:'Fiyat',field_key:'price_try',old_value:'999',new_value:'899',severity:'high',product_before:mnpBefore,product_after:mnpAfter},
     {...sourceFields,id:102,product_id:101,product_name:mnpAfter.name,segment:'MNP / Numara Taşıma',change_type:'field_changed',field_name:'İnternet',field_key:'data_gb',old_value:'50',new_value:'60',severity:'high',product_before:mnpBefore,product_after:mnpAfter},
     {...sourceFields,id:103,product_id:102,product_name:gsmAfter.name,segment:'Genel',change_type:'field_changed',field_name:'İnternet',field_key:'data_gb',old_value:'40',new_value:'30',severity:'medium',product_before:gsmBefore,product_after:gsmAfter}
   ];
   const fixedProduct={product_key:'fixture-fixed|aile|12',provider:'Örnek Fiber',brand:'Örnek Fiber',name:'Aile Fiber 100 Mbps',source_slug:'fixture-fixed',source_url:fixedSources[0].url,product_url:'https://example.net/fiber/aile',product_family:'fixed',speed_down_mbps:100,effective_monthly_try:999,price_monthly_try:999,duration_months:12,unlimited:true,technology:'Fiber',availability:'active',expires_at:'2026-09-23',verified_at:checked,stale:false};
-  const fixedChanges=[{id:201,scan_id:52,product_key:fixedProduct.product_key,product_name:fixedProduct.name,provider:fixedProduct.provider,brand:fixedProduct.brand,source_slug:fixedProduct.source_slug,source_url:fixedProduct.source_url,detected_at:observed,change_type:'field_changed',field_name:'İndirme hızı',field_key:'speed_down_mbps',old_value:'50',new_value:'100',severity:'high',product_before:{...fixedProduct,speed_down_mbps:50},product_after:fixedProduct}];
+  const fixedChanges=[{id:201,scan_id:52,product_key:fixedProduct.product_key,product_name:fixedProduct.name,provider:fixedProduct.provider,brand:fixedProduct.brand,source_slug:fixedProduct.source_slug,source_url:fixedProduct.source_url,detected_at:observed,change_type:'field_changed',field_name:'İndirme hızı',field_key:'speed_down_mbps',old_value:'50',new_value:'100',severity:'high',product_before:{...fixedProduct,speed_down_mbps:50,verified_at:priorAt},product_after:{...fixedProduct,verified_at:observed}}];
   const rich={...base,sources:mobileSources,changes:mobileChanges,stats:stats(mobileChanges.length),
     benchmark:{...base.benchmark,generated_at:checked,kktcell_error:null,matches:[{match_status:'Primary',match_score:90,telsim:{...mnpAfter,source_url:mobileSources[0].url},kktcell:{name:'Turkcell 60 GB',price_try:949,data_gb:60,validity_days:30,commitment_months:12,source_url:'https://example.edu/turkcell/60gb'}}]},
     daily_home:{fixed:{products:[fixedProduct],sources:fixedSources,changes:fixedChanges,stats:stats(1),opportunities:[]},fwa:{products:[],sources:fwaSources,changes:[],stats:stats(0),comparison:{}}},
@@ -115,5 +116,7 @@ export function createDailyBriefLayoutFixtures(base){
   const limited={...quiet,sources:mobileSources.map(row=>({...row,last_status:'blocked',last_checked_at:'2026-09-19T04:00:00.000Z'})),
     daily_home:{fixed:{...quiet.daily_home.fixed,sources:fixedSources.map(row=>({...row,status:'blocked',captured_at:'2026-09-19T04:00:00.000Z'}))},fwa:quiet.daily_home.fwa},
     ad_report_data:{...quiet.ad_report_data,status:'partial',checked_at:'2026-09-19T04:00:00.000Z',coverage:quiet.ad_report_data.coverage.map(row=>({...row,status:'blocked',checked_at:'2026-09-19T04:00:00.000Z'}))}};
-  return {daily:rich,'daily-quiet':quiet,'daily-limited':limited};
+  const knownProduct={name:'Bilinen 50 GB',price_try:999,data_gb:50,bonus_data_gb:0,validity_days:30,local_tr_minutes:500,international_minutes:0,sms:100,red_passport_days:0,extras_json:[]};
+  const restored={...quiet,changes:[{...sourceFields,id:104,product_id:104,product_name:knownProduct.name,change_type:'added',first_seen_at:priorAt,new_value:knownProduct.name,product_after:{...knownProduct,verified_at:observed},prior_observation:{observed_at:priorAt,product:{...knownProduct,verified_at:priorAt}}}]};
+  return {daily:rich,'daily-quiet':quiet,'daily-limited':limited,'daily-restored':restored};
 }

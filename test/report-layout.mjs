@@ -72,7 +72,7 @@ try{
     console.log('REPORT_LAYOUT '+JSON.stringify(results.at(-1)));
   }
   const dailyFixtures=createDailyBriefLayoutFixtures(fixtures.daily);
-  for(const name of ['daily','daily-quiet','daily-limited','monthly','home','fwa']){
+  for(const name of ['daily','daily-quiet','daily-limited','daily-restored','monthly','home','fwa']){
     const ctx=dailyFixtures[name]||fixtures[name],isDaily=ctx.type==='daily',html=emailHtml(ctx.type,ctx,[{filename:`markets-pulse-${name}.pdf`}],REPORT_NAMES,REPORT_TZ,monthlyOverviewHtml,dailyBriefEmailHtml);
     await writeFile(`${output}/email-${name}.html`,html);
     for(const width of [700,390]){
@@ -96,6 +96,7 @@ try{
         textMinFont:Math.min(...Array.from(document.body.querySelectorAll('*')).filter(el=>Array.from(el.childNodes).some(node=>node.nodeType===Node.TEXT_NODE&&node.textContent.trim())&&el.getBoundingClientRect().height>0).map(el=>parseFloat(getComputedStyle(el).fontSize))),
         highlights:document.querySelectorAll('.brief-highlight').length,adCards:document.querySelectorAll('.brief-ad').length,
         changes:document.querySelectorAll('.brief-change-table').length,comparisons:document.querySelectorAll('.brief-comparison').length,
+        deltas:document.querySelectorAll('.brief-delta').length,observation:!!document.querySelector('.brief-observation-note'),
         quiet:!!document.querySelector('.brief-quiet'),coverage:!!document.querySelector('.brief-coverage'),
         text:document.body.textContent,htmlBytes:new TextEncoder().encode(document.documentElement.outerHTML).length,
         clippedImages:Array.from(document.images).filter(el=>{const box=el.getBoundingClientRect();return box.x<0||box.right>innerWidth+1}).length
@@ -117,12 +118,14 @@ try{
           assert.ok(metrics.adCards>0&&metrics.images>0,`email ${name} missing creative radar`);
           assert.ok(metrics.changes>0,`email ${name} missing before/after`);
           assert.ok(metrics.comparisons>0,`email ${name} missing comparable counter-offer`);
+          assert.equal(metrics.deltas,3,`email ${name} missing verified numeric summaries`);
         }else{
           assert.equal(metrics.highlights,0,`email ${name} repeats older priorities`);
           assert.equal(metrics.adCards,0,`email ${name} fabricates ad updates`);
           assert.equal(metrics.images,0,`email ${name} fabricates creative images`);
           if(name==='daily-quiet')assert.ok(metrics.quiet,`email ${name} missing verified quiet message`);
           else assert.equal(metrics.quiet,false,`email ${name} must not imply all checks are complete`);
+          if(name==='daily-restored')assert.ok(metrics.observation,`email ${name} missing reappearance explanation`);
         }
       }else{
         assert.ok(metrics.images>=5,`email ${name} missing illustrated ad cards ${width}`);

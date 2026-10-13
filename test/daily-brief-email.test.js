@@ -142,3 +142,31 @@ test('ad radar preserves dynamically discovered category labels safely in HTML a
   assert.equal(unsafeDom('.brief-ad-category img,[onerror]').length,0);
   assert.match(unsafeDom('.brief-ad-category').text(),/<img src=x onerror="alert\(1\)">Cihazlar/);
 });
+
+test('verified numeric changes have an explicit delta summary without implying unchanged benefits',()=>{
+  const ctx=context();
+  const before={price_try:999,data_gb:50,verified_at:'2026-10-05T03:00:00.000Z'};
+  const after={price_try:899,data_gb:60,verified_at:at};
+  ctx.changes=[change({product_before:before,product_after:after}),change({id:2,field_name:'Data',field_key:'data_gb',old_value:'50',new_value:'60',product_before:before,product_after:after})];
+  const $=load(dailyBriefEmailHtml(ctx)),text=dailyBriefPlainText(ctx);
+  assert.equal($('.brief-delta').length,1);
+  assert.match($('.brief-delta').text(),/100 TL azaldı/);
+  assert.match(text,/Değişimin özeti:.*100 TL azaldı/);
+  assert.doesNotMatch($('.brief-highlight').text(),/aynı fayda ve süreyle/);
+  assert.equal($('.brief-change-table tbody tr').length,2);
+});
+
+test('proved unchanged reappearances are explained without new-offer cards or a false quiet day',()=>{
+  const ctx=context();
+  const product={name:'Bilinen Paket',price_try:999,data_gb:50,bonus_data_gb:0,validity_days:30,local_tr_minutes:500,international_minutes:0,sms:100,red_passport_days:0,extras_json:[]};
+  const priorAt='2026-10-01T03:00:00.000Z';
+  ctx.changes=[change({change_type:'added',field_name:null,field_key:null,old_value:null,new_value:product.name,product_name:product.name,first_seen_at:priorAt,product_after:{...product,verified_at:at},prior_observation:{observed_at:priorAt,product:{...product,verified_at:priorAt}}})];
+  const $=load(dailyBriefEmailHtml(ctx)),text=dailyBriefPlainText(ctx);
+  assert.equal($('.brief-highlight').length,0);
+  assert.equal($('.brief-quiet').length,0);
+  assert.equal($('.brief-observation-note').length,1);
+  assert.match($('.brief-observation-note').text(),/yeni teklif olarak sayılmadı/);
+  assert.match(text,/GÖZLEM NOTU/);
+  assert.match(text,/yeni teklif olarak sayılmadı/);
+  assert.doesNotMatch(text,/alan değişikliği|0 pakette|0 yeni/);
+});

@@ -19,7 +19,7 @@ const LEGACY_SOURCES=[
   {slug:'lifecell-digital-superbox',provider:'KKTCELL',name:'Lifecell Digital Superbox',url:'https://www.lifecelldigital.com/paketler?altyapi=2',technology:'4.5G FWA',ownership_group:'Lifecell Digital Ltd.',parser:'lifecell-superbox-dynamic'},
   {slug:'extend-wdsl',provider:'Extend',name:'Extend WDSL',url:'https://www.extendbroadband.com/urunler-wdsl.php',technology:'WDSL',ownership_group:'Arınet Security & Internet Consultancy Ltd.',parser:'extend-table',revision:2},
   {slug:'extend-fiber',provider:'Extend',name:'Extend FiberNET',url:'https://www.extendbroadband.com/urunler-fibernet.php',technology:'Fiber',ownership_group:'Arınet Security & Internet Consultancy Ltd.',parser:'extend-table',revision:2},
-  {slug:'telsim-home',provider:'Telsim',name:'Vodafone Evde İnternet',url:'https://www.kktctelsim.com/tr/internet/evde-internet-ve-red-box/vodafone-evde-internet',technology:'WDSL / ADSL',ownership_group:'KKTC Telsim',parser:'telsim-home'},
+  {slug:'telsim-home',provider:'Telsim',name:'Vodafone Evde İnternet',url:'https://www.kktctelsim.com/tr/internet/evde-internet-ve-red-box/vodafone-evde-internet',technology:'WDSL / ADSL',ownership_group:'KKTC Telsim',parser:'telsim-home',revision:2},
   {slug:'telsim-redbox',provider:'Telsim',name:'Telsim Red Box',url:'https://www.kktctelsim.com/tr/internet/evde-internet-ve-red-box/red-box',technology:'5G FWA',ownership_group:'KKTC Telsim',parser:'redbox'},
   {slug:'freenet-home',provider:'FreeNet',name:'FreeNet Ev İnterneti',url:'https://freenetcyp.com/',technology:'WDSL',ownership_group:'FreeNet',parser:'freenet'},
   {slug:'fixnet-home',provider:'FixNet',name:'FixNet Broadband',url:'https://www.fixnetbroadband.com/',technology:'WDSL / Fiber',ownership_group:'FixNet Broadband',parser:'fixnet'},
@@ -126,31 +126,45 @@ function parseLifecellDigital(html,source){
 
 function parseTelsimHome(html,source){
   const $=cheerio.load(html);$('script,style,noscript,svg').remove();
-  const text=clean($.root().text());
-  const hits=[...text.matchAll(/Evde\s+(\d+)\b/ig)];
+  const headings='h1,h2,h3,h4,h5,h6';
+  const namePattern=/^Evde\s+(\d+)$/i;
+  const typePattern=/^(Tarifeye\s+Ek|Peşin(?:['’]e)?(?:\s+Özel)?)$/i;
   const out=[];
-  for(let i=0;i<hits.length;i++){
-    const start=hits[i].index||0,end=i+1<hits.length?(hits[i+1].index||text.length):text.length;
-    const seg=text.slice(Math.max(0,start-90),Math.min(text.length,end));
-    const speed=n(hits[i][1]);if(!speed)continue;
-    const type=/Tarifeye Ek/i.test(seg)?'Tarifeye Ek':/Peşin/i.test(seg)?'Peşin':'Evde İnternet';
-    const dm=seg.match(/(1|3|6|12)\s*Ay\s*(?:Peşin|Sözünüze|Paket)?/i)||seg.match(/(1|3|6|12)\s*Ay/i);
+  $(headings).filter((_,el)=>namePattern.test(clean($(el).text()))).each((_,el)=>{
+    const speed=n(clean($(el).text()).match(namePattern)[1]);if(!speed)return;
+    let card=null,type=null;
+    // The nearest shared container of the name and payment heading is one card.
+    // Never cross a second product heading or borrow a previous card's terms.
+    for(let node=$(el).parent();node.length&&!node.is('body,html');node=node.parent()){
+      if(node.find(headings).filter((_,h)=>namePattern.test(clean($(h).text()))).length!==1)break;
+      const types=node.find(headings).filter((_,h)=>typePattern.test(clean($(h).text())));
+      if(types.length===1&&/₺\s*\d/.test(node.text())){
+        card=node;type=/^Tarifeye/i.test(clean(types.text()))?'Tarifeye Ek':'Peşin';break;
+      }
+    }
+    if(!card)return;
+    // React's adjacent tags can otherwise turn `Evde 5` + `12 Ay` into `Evde 512`.
+    const spaced=card.clone();spaced.find('*').append(' ');
+    const seg=clean(spaced.text());
+    const dm=seg.match(/\b(1|3|6|12)\s*Ay\s*(?:Peşin|Sözünüze|Paket)/i)||seg.match(/\b(1|3|6|12)\s*Ay/i);
     const duration=dm?Number(dm[1]):1;
     const bm=seg.match(/\+\s*(\d+)\s*Ay\s*Hediye/i);const bonus=bm?Number(bm[1]):0;
     const pm=seg.match(/₺\s*(\d[\d.]*)\s*\/\s*ay/i);
     const tm=!pm?seg.match(/₺\s*(\d[\d.]*)/i):null;
     const price=pm?n(pm[1]):null,total=tm?n(tm[1]):null;
-    if(price==null&&total==null)continue;
+    if(price==null&&total==null)return;
     const tech=/ADSL/i.test(seg)?'ADSL':'WDSL';
+    // Keep established WDSL identities; ADSL has genuine same-speed/term variants.
+    const productKey=[source.slug,type,speed,duration,bonus,...(tech==='ADSL'?['ADSL']:[])].join('|');
     out.push(offer({
       source_slug:source.slug,provider:source.provider,brand:source.provider,product_family:'fixed',ownership_group:source.ownership_group,source_url:source.url,
       name:type+' Evde '+speed,technology:tech,speed_down_mbps:speed,speed_up_mbps:null,data_limit_gb:null,unlimited:true,
       duration_months:duration,bonus_months:bonus,price_monthly_try:price,total_price_try:total,
       install_fee_try:/Kurulum Ücretsiz/i.test(seg)?0:null,
       features:[type,/Kurulum Ücretsiz/i.test(seg)?'Kurulum ücretsiz':null,bonus?bonus+' ay hediye':null].filter(Boolean),
-      raw_text:seg.slice(0,700),product_key:[source.slug,type,speed,duration,bonus].join('|')
+      raw_text:seg.slice(0,700),product_key:productKey
     }));
-  }
+  });
   const uniq=new Map();for(const x of out)if(!uniq.has(x.product_key))uniq.set(x.product_key,x);return [...uniq.values()];
 }
 

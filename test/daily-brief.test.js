@@ -8,10 +8,10 @@ function context(){return {type:'daily',period_start:start,period_end:end,change
 const change=(extra={})=>({id:1,scan_id:20,product_id:7,product_name:'Süper 50',brand:'Telsim',detected_at:at,change_type:'field_changed',field_name:'Fiyat',old_value:'999',new_value:'899',severity:'high',source_url:'https://www.telsim.com.tr/paketler',...extra});
 const ad=(extra={})=>({event_type:'first_seen',observed_at:at,report_image:{sha256:'a'.repeat(64),selection:'creative'},analysis_json:{ad_id:'100000',page_id:'200000',brand:'Telsim',title:'Süper 50',category:'gsm',source_url:'https://www.facebook.com/ads/library/?id=100000',offer:{price_try:899,billing_period:'monthly',data_gb:50,commitment_months:12},visual_summary:'50 GB internet, aylık 899 TL',conditions:['Yeni abonelere özel'],uncertainties:[],...extra}});
 
-test('daily brief groups exact product + scan, filters the period, and counts fields without duplicate rows',()=>{
+test('daily brief groups exact products across scans, filters the period, and retains unknown-baseline fields without duplicate rows',()=>{
   const ctx=context();ctx.changes=[change(),change({id:2,field_name:'Data',old_value:'40',new_value:'50'}),change(),change({id:3,scan_id:21}),change({id:4,detected_at:end}),change({id:5,detected_at:'2026-10-05T05:59:59Z'})];
   const before=JSON.stringify(ctx),brief=buildDailyBrief(ctx);
-  assert.equal(brief.counts.moves,2);assert.equal(brief.counts.fields,3);assert.ok(brief.highlights.some(x=>x.changes.length===2));assert.equal(brief.highlights[0].changes[0].before,'999 TL');assert.equal(JSON.stringify(ctx),before);
+  assert.equal(brief.counts.moves,1);assert.equal(brief.counts.package_observations,2);assert.equal(brief.counts.fields,3);assert.equal(brief.highlights[0].changes.length,3);assert.equal(brief.highlights[0].changes[0].before,'999 TL');assert.equal(JSON.stringify(ctx),before);
   assert.equal(brief.watchlist.length,0);assert.match(dailyBriefSubject(ctx,brief),/06[./]10.*Telsim: Fiyat/);
 });
 
@@ -166,4 +166,68 @@ test('ongoing matters require a fresh material update and score deltas omit unch
 
 test('invalid report periods are rejected and subject cannot contain mail header control characters',()=>{
   assert.throws(()=>buildDailyBrief({}),/valid report period/);const ctx=context();ctx.changes=[change({product_name:'Test\r\nBcc: attacker@example.com'})];assert.ok(!/[\r\n]/.test(dailyBriefSubject(ctx)));
+});
+
+const oldAt='2026-10-04T04:00:00.000Z';
+function mobileSnapshot(extra={}){return {name:'Süper 50',price_try:899,data_gb:50,bonus_data_gb:0,validity_days:30,local_tr_minutes:1000,international_minutes:0,sms:1000,red_passport_days:0,extras_json:['12 ay taahhüt'],verified_at:at,...extra}}
+function homeSnapshot(extra={}){return {name:'Peşin Evde 2',technology:'WDSL',speed_down_mbps:2,speed_up_mbps:null,unlimited:true,data_limit_gb:null,price_monthly_try:700,total_price_try:8400,effective_monthly_try:700,duration_months:12,duration_days:null,bonus_months:0,bonus_days:0,price_status:'published',features:['Peşin'],verified_at:at,...extra}}
+function homeReturn(extra={}){const snapshot=homeSnapshot();return change({product_id:undefined,product_key:'telsim-home|Peşin|2|12|0',source_slug:'telsim-home',product_name:snapshot.name,change_type:'added',field_name:null,old_value:null,new_value:JSON.stringify(snapshot),severity:'critical',first_seen_at:oldAt,product_after:snapshot,prior_observation:{observed_at:oldAt,product:homeSnapshot({verified_at:oldAt})},...extra})}
+
+test('proven unchanged return is an observation, not a new offer or a quiet day',()=>{
+  const ctx=context();ctx.daily_home.fixed.changes=[homeReturn()];
+  const original=JSON.stringify(ctx),brief=buildDailyBrief(ctx);
+  assert.equal(brief.highlights.length,0);assert.equal(brief.counts.moves,0);assert.equal(brief.counts.reobserved,1);assert.equal(brief.quiet,false);
+  assert.match(brief.observation_note,/aynı kayıtlı koşullarla yeniden görüldü/);assert.match(brief.summary,/yeni teklif olarak sayılmadı/);assert.match(dailyBriefSubject(ctx),/yeniden görülen/);
+  assert.equal(JSON.stringify(ctx),original);
+});
+
+test('add/remove/add churn produces one current observation and never fills all priority cards',()=>{
+  const ctx=context();ctx.daily_home.fixed.changes=[
+    homeReturn({id:1,scan_id:1,detected_at:'2026-10-05T07:00:00Z',product_after:homeSnapshot({verified_at:'2026-10-05T07:00:00Z'})}),
+    homeReturn({id:2,scan_id:2,detected_at:'2026-10-05T12:00:00Z',change_type:'removed',product_after:undefined,prior_observation:undefined}),homeReturn({id:3,scan_id:3})
+  ];ctx.changes=[change({product_id:8,product_name:'Önemli GSM değişikliği'})];
+  const brief=buildDailyBrief(ctx);assert.equal(brief.counts.reobserved,1);assert.equal(brief.counts.moves,1);assert.equal(brief.counts.package_observations,4);assert.equal(brief.highlights.length,1);assert.equal(brief.highlights[0].title,'Önemli GSM değişikliği');
+});
+
+test('new observations and changed returns remain visible, with verified return deltas',()=>{
+  const ctx=context();ctx.daily_home.fixed.changes=[homeReturn({first_seen_at:at,prior_observation:undefined})];
+  let brief=buildDailyBrief(ctx);assert.equal(brief.highlights[0].kind,'added');assert.match(brief.highlights[0].why,/piyasaya çıkış tarihi değildir/);assert.equal(brief.counts.reobserved,0);
+  ctx.daily_home.fixed.changes=[homeReturn({product_after:homeSnapshot({price_monthly_try:600,total_price_try:7200,effective_monthly_try:600})})];
+  brief=buildDailyBrief(ctx);const item=brief.highlights[0];assert.equal(item.kind,'returned');assert.ok(item.flags.includes('Yeniden görülen paket'));assert.match(item.delta_summary,/100 TL azaldı/);assert.equal(item.impact.percent,-14.29);assert.match(dailyBriefSubject(ctx),/azaldı/);assert.doesNotMatch(dailyBriefSubject(ctx),/ilk kez/);assert.equal(brief.counts.reobserved,0);
+});
+
+test('missing, incomplete or future historical evidence cannot suppress a return',()=>{
+  const ctx=context();
+  for(const patch of [
+    {prior_observation:undefined},
+    {prior_observation:{observed_at:oldAt,product:{price_monthly_try:700,verified_at:oldAt}}},
+    {prior_observation:{observed_at:end,product:homeSnapshot({verified_at:end})}},
+    {product_after:homeSnapshot({verified_at:end})},
+    {product_after:homeSnapshot({features:['Peşin','Kurulum 500 TL']})}
+  ]){
+    ctx.daily_home.fixed.changes=[homeReturn(patch)];const brief=buildDailyBrief(ctx);assert.equal(brief.counts.reobserved,0,JSON.stringify(patch));assert.equal(brief.highlights.length,1);assert.equal(brief.highlights[0].kind,'returned');
+  }
+});
+
+test('same display title never merges distinct products or sources, and changed mobile returns use prior product identity',()=>{
+  const ctx=context();ctx.daily_home.fixed.changes=[homeReturn({prior_observation:undefined,product_key:'a'}),homeReturn({id:2,prior_observation:undefined,product_key:'b'}),homeReturn({id:3,prior_observation:undefined,product_key:'a',source_slug:'different-source'})];
+  assert.equal(buildDailyBrief(ctx).counts.moves,3);
+  ctx.daily_home.fixed.changes=[];ctx.changes=[change({change_type:'added',field_name:null,first_seen_at:oldAt,product_after:mobileSnapshot({price_try:799}),prior_observation:{observed_at:oldAt,product:mobileSnapshot({verified_at:oldAt})}})];
+  const brief=buildDailyBrief(ctx);assert.equal(brief.highlights[0].kind,'returned');assert.match(brief.highlights[0].delta_summary,/100 TL azaldı/);
+});
+
+test('continuous verified field chains show one net change, but uncertain baselines retain each observation',()=>{
+  const ctx=context(),first='2026-10-05T12:00:00.000Z';
+  ctx.changes=[change({id:1,scan_id:1,detected_at:first,old_value:'1000',new_value:'900',product_before:mobileSnapshot({price_try:1000,verified_at:oldAt}),product_after:mobileSnapshot({price_try:900,verified_at:first})}),change({id:2,scan_id:2,old_value:'900',new_value:'800',product_before:mobileSnapshot({price_try:900,verified_at:first}),product_after:mobileSnapshot({price_try:800})})];
+  let brief=buildDailyBrief(ctx),item=brief.highlights[0];assert.equal(brief.counts.moves,1);assert.equal(item.changes.length,1);assert.equal(item.changes[0].before,'1.000 TL');assert.equal(item.changes[0].after,'800 TL');assert.equal(item.impact.delta,-200);assert.equal(item.impact.percent,-20);assert.equal(item.observation_count,2);assert.match(dailyBriefSubject(ctx),/200 TL azaldı/);
+  delete ctx.changes[0].product_before;brief=buildDailyBrief(ctx);assert.equal(brief.highlights[0].changes.length,2);assert.equal(brief.counts.fields,2);
+  ctx.changes[0].product_before=mobileSnapshot({price_try:1000,verified_at:oldAt});ctx.changes[1].new_value='1000';ctx.changes[1].product_after=mobileSnapshot({price_try:1000});item=buildDailyBrief(ctx).highlights[0];assert.equal(item.impact,null);assert.ok(item.flags.includes('Gün içindeki değişim dönem başına döndü'));assert.match(item.why,/dönem başındaki değerlere döndü/);
+});
+
+test('numerical direction requires matching dated snapshots and never infers unchanged benefits or divides by zero',()=>{
+  const ctx=context();ctx.changes=[change({old_value:'0',new_value:'100',product_before:mobileSnapshot({price_try:0,verified_at:oldAt}),product_after:mobileSnapshot({price_try:100,data_gb:70})})];
+  let item=buildDailyBrief(ctx).highlights[0];assert.equal(item.impact.delta,100);assert.equal(item.impact.percent,null);assert.doesNotMatch(item.delta_summary,/%/);assert.doesNotMatch(item.why,/aynı fayda/);
+  ctx.changes[0].product_before.price_try=1;assert.equal(buildDailyBrief(ctx).highlights[0].impact,null);
+  ctx.changes=[change({field_name:'Data',old_value:'50',new_value:'40',product_before:mobileSnapshot({verified_at:oldAt}),product_after:mobileSnapshot({data_gb:40})})];item=buildDailyBrief(ctx).highlights[0];assert.match(item.delta_summary,/Ana internet 50 → 40 GB; 10 GB azaldı \(%20\)/);
+  ctx.changes[0].product_before.verified_at=end;assert.equal(buildDailyBrief(ctx).highlights[0].impact,null);
 });

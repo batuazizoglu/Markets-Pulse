@@ -4,6 +4,10 @@ const API = 'https://api.apify.com/v2';
 const RUN_ID = /^[A-Za-z0-9]{5,64}$/;
 const PAGE_ID = /^\d{5,30}$/;
 const RUN_STATES = new Set(['READY','RUNNING','SUCCEEDED','FAILED','TIMING-OUT','TIMED-OUT','ABORTING','ABORTED']);
+const HTTP_CODES = {
+  authentication:'AUTH_FAILED',access_denied:'ACCESS_DENIED',payment:'PAYMENT_REQUIRED',
+  validation:'REQUEST_INVALID',not_found:'NOT_FOUND',rate_limit:'RATE_LIMITED',unavailable:'UNAVAILABLE',http_error:'HTTP_ERROR'
+};
 
 function failure(code, details = {}) {
   return Object.assign(new Error(code), {code, ...details});
@@ -38,9 +42,20 @@ function retryDelay(value) {
   const delay = /^\d+(?:\.\d+)?$/.test(raw) ? Number(raw)*1000 : Date.parse(raw)-Date.now();
   return Number.isFinite(delay) && delay > 0 ? delay : 60000;
 }
+// Diagnostics are derived only from a numeric status, never a provider body, URL or header.
+export function providerHttpDiagnostics(error) {
+  const status=error?.http_status;
+  if(!Number.isInteger(status) || status<100 || status>599)return {};
+  const category=[401,407].includes(status)?'authentication':status===402?'payment':[403,451].includes(status)?'access_denied':
+    status===404?'not_found':status===429?'rate_limit':status===408 || status>=500?'unavailable':
+    [400,405,406,409,410,411,412,413,414,415,416,417,421,422,423,424,425,426,428,431].includes(status)?'validation':'http_error';
+  return {http_status:status,error_category:category};
+}
 function httpFailure(status, headers, prefix, ambiguous = false) {
-  const code = [401,403,407].includes(status) ? prefix+'_AUTH_FAILED' : status === 429 ? prefix+'_RATE_LIMITED' : prefix+'_HTTP_ERROR';
-  return failure(code,{http_status:status,...(status === 429 ? {retry_after_ms:retryDelay(headers?.get?.('retry-after'))} : {}),...(ambiguous ? {ambiguous:true} : {})});
+  const diagnostics=providerHttpDiagnostics({http_status:status});
+  const code=prefix==='PROVIDER' ? prefix+'_'+(HTTP_CODES[diagnostics.error_category] || 'HTTP_ERROR') :
+    [401,403,407].includes(status)?prefix+'_AUTH_FAILED':status===451?prefix+'_ACCESS_DENIED':status===429?prefix+'_RATE_LIMITED':prefix+'_HTTP_ERROR';
+  return failure(code,{...diagnostics,...(status === 429 ? {retry_after_ms:retryDelay(headers?.get?.('retry-after'))} : {}),...(ambiguous ? {ambiguous:true} : {})});
 }
 async function limitedBody(response, maximum, signal) {
   const declared = Number(response.headers?.get?.('content-length'));
@@ -87,8 +102,9 @@ async function apiRequest(path, {env,fetcher=fetch,method='GET',body,maxBytes=8*
       return {value,headers:response.headers};
     });
   } catch (error) {
-    const known = /^PROVIDER_(?:AUTH_FAILED|RATE_LIMITED|HTTP_ERROR)$/.test(error?.code || '');
-    if (known) throw error;
+    const known = Object.values(HTTP_CODES).some(code=>error?.code==='PROVIDER_'+code);
+    if (known) throw failure(error.code,{...providerHttpDiagnostics(error),...(error?.ambiguous===true?{ambiguous:true}:{}),
+      ...(error.code==='PROVIDER_RATE_LIMITED'?{retry_after_ms:Number.isFinite(error.retry_after_ms) && error.retry_after_ms>0?error.retry_after_ms:60000}:{})});
     const code = error?.code === 'REQUEST_TIMEOUT' ? 'PROVIDER_TIMEOUT' : error?.code === 'RESPONSE_TOO_LARGE' ? 'PROVIDER_RESPONSE_TOO_LARGE' : error?.code === 'PROVIDER_RESPONSE_INVALID' || error?.code === 'RESPONSE_BODY_INVALID' ? 'PROVIDER_RESPONSE_INVALID' : 'PROVIDER_CONNECTION_FAILED';
     throw failure(code,method==='POST' ? {ambiguous:true} : {});
   }
@@ -170,8 +186,8 @@ export async function fetchProviderImage(asset, {fetcher=fetch} = {}) {
             return {bytes,mime,url};
           }
         } catch (error) {
-          if (['MEDIA_AUTH_FAILED','MEDIA_RATE_LIMITED','MEDIA_URL_INVALID','MEDIA_REDIRECT_LIMIT','REQUEST_TIMEOUT'].includes(error?.code)) throw error;
-          lastError=failure(error?.code === 'RESPONSE_TOO_LARGE' ? 'MEDIA_TOO_LARGE' : error?.code==='MEDIA_TYPE_INVALID' ? 'MEDIA_TYPE_INVALID' : 'MEDIA_DOWNLOAD_FAILED');
+          if (['MEDIA_AUTH_FAILED','MEDIA_ACCESS_DENIED','MEDIA_RATE_LIMITED','MEDIA_URL_INVALID','MEDIA_REDIRECT_LIMIT','REQUEST_TIMEOUT'].includes(error?.code)) throw error;
+          lastError=failure(error?.code === 'RESPONSE_TOO_LARGE' ? 'MEDIA_TOO_LARGE' : error?.code==='MEDIA_TYPE_INVALID' ? 'MEDIA_TYPE_INVALID' : 'MEDIA_DOWNLOAD_FAILED',providerHttpDiagnostics(error));
         }
       }
       throw lastError;
