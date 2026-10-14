@@ -24,6 +24,7 @@ before(async()=>{
   await db.query('UPDATE scans SET finished_at=started_at');
   await db.query(`INSERT INTO products(id,source_id,identity_base,current_name,first_seen_at,last_seen_at) VALUES
     (1,1,'original','Renamed today',$1,$1),(2,2,'other-source','Other source',$1,$1),(3,1,'fresh','No prior version',$1,$1)`,[at]);
+  await db.query('UPDATE products SET created_at=first_seen_at');
   await db.query(`INSERT INTO product_versions(id,product_id,scan_id,captured_at,name,data_gb,bonus_data_gb,price_try,validity_days,extras_json,raw_text,product_hash) VALUES
     (11,1,11,'2026-10-05T07:00:00Z','Original mobile',20,5,500,30,'["Gift included"]','private raw previous','old'),
     (12,1,12,$1,'Original mobile',15,0,500,30,'["Gift removed"]','private raw event','event'),

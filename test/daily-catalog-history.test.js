@@ -14,8 +14,8 @@ const range={start:'2026-10-14T03:30:00.000Z',end:cutoff};
 const scan=async(id,source,started,finished,status='ok')=>db.query(
   'INSERT INTO scans(id,source_id,started_at,finished_at,status,http_status) VALUES($1,$2,$3,$4,$5,$6)',
   [id,source,started,finished,status,status==='error'?503:status==='ok'?200:null]);
-const product=async(id,source=1)=>db.query(`INSERT INTO products(id,source_id,identity_base,current_name,first_seen_at,last_seen_at)
-  VALUES($1,$2,$3,$3,'2026-10-14T03:00:00Z','2026-10-14T04:00:00Z')`,[id,source,'Plan '+id]);
+const product=async(id,source=1)=>db.query(`INSERT INTO products(id,source_id,identity_base,current_name,first_seen_at,last_seen_at,created_at)
+  VALUES($1,$2,$3,$3,'2026-10-14T03:00:00Z','2026-10-14T04:00:00Z','2026-10-14T03:00:00Z')`,[id,source,'Plan '+id]);
 const version=async(id,productId,scanId,at,price=999)=>db.query(`INSERT INTO product_versions
   (id,product_id,scan_id,captured_at,name,price_try,data_gb,validity_days,extras_json,product_hash)
   VALUES($1,$2,$3,$4,$5,$6,50,30,'["Taahhütsüz"]',$7)`,[id,productId,scanId,at,'Plan '+productId,price,'hash-'+id]);
@@ -91,6 +91,17 @@ test('later successful edits and active-state changes cannot rewrite a past repo
   await remove(3,12,'2026-10-15T04:00:00Z');
   await product(5);await version(15,5,12,'2026-10-15T04:00:00Z');
   assert.deepEqual(await read(),before);
+});
+
+test('a later recovered product cannot enter earlier reports through a backdated version',async()=>{
+  const before=await read();
+  await product(5);
+  await db.exec("UPDATE products SET created_at='2026-10-14T05:01:00Z' WHERE id=5");
+  await version(15,5,10,'2026-10-14T03:00:00Z'); // addRecoveredProduct preserves the old scan/time.
+  assert.deepEqual(await read(),before,'first_seen_at and captured_at cannot replace actual creation provenance');
+  const later={start:range.start,end:'2026-10-14T05:01:00Z'};
+  assert.deepEqual(ids(await loadDailyMobileCatalog(db,later)),[1,3,5,4],'recovered evidence is available from its creation time onward');
+  assert.equal((await sourceHealth(db,{cutoff:later.end}))[0].active_products,3);
 });
 
 test('historical daily context, email and PDF content remain identical after later scans',async()=>{

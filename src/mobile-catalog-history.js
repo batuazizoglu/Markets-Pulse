@@ -18,6 +18,7 @@ export const MOBILE_CATALOG_HISTORY_CTES=`
     SELECT p.id,p.source_id,version.first_seen_at,successful.started_at verified_at,
       to_jsonb(version) product
     FROM successful_checks successful JOIN products p ON p.source_id=successful.source_id
+      AND p.created_at<=$1::timestamptz
     JOIN LATERAL (
       SELECT pv.id,pv.product_id,pv.scan_id,pv.captured_at,
         ${MOBILE_FIELDS.map(key=>'pv.'+key).join(',')},pv.extras_json,
@@ -27,6 +28,8 @@ export const MOBILE_CATALOG_HISTORY_CTES=`
       WHERE pv.product_id=p.id AND pv.captured_at<=vs.finished_at
       ORDER BY vs.started_at DESC,vs.id DESC,pv.captured_at DESC,pv.id DESC LIMIT 1
     ) version ON TRUE
+    -- Recovery may insert a new product today with a version backdated to an
+    -- old scan. Its immutable creation time above prevents retroactive entry.
     WHERE NOT EXISTS (
       SELECT 1 FROM changes c JOIN completed_scans removed ON removed.id=c.scan_id
         AND removed.source_id=p.source_id AND removed.status='ok'
