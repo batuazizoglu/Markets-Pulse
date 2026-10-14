@@ -6,6 +6,7 @@ import { ENGINE_VERSION } from './comparable-engine.js';
 import { getHomeInternetMarket } from './home-internet.js';
 import {buildAdReportSection} from './report-ad-media.js';
 import {enrichDailyChanges,loadDailyMobileCatalog} from './daily-brief-evidence.js';
+import {MOBILE_CATALOG_HISTORY_CTES} from './mobile-catalog-history.js';
 
 export const REPORT_TZ = 'Asia/Famagusta';
 export const REPORT_NAMES = {
@@ -29,22 +30,15 @@ export async function sourceHealth(pool,{cutoff}={}) {
     // The 08:00 email and hourly scan start together. A running check does not
     // invalidate the last completed observation, and a later result cannot
     // leak into this report. Keep the latest completed failure visible too.
-    const r=await pool.query(`SELECT s.id,s.slug,s.name,s.url,s.enabled,
+    const r=await pool.query(`WITH ${MOBILE_CATALOG_HISTORY_CTES}
+      SELECT s.id,s.slug,s.name,s.url,s.enabled,
       latest.started_at last_checked_at,latest.status last_status,
       latest.http_status,latest.response_ms,latest.parsed_count,latest.error last_error,
       successful.started_at last_success_at,
-      (SELECT COUNT(*)::int FROM products p WHERE p.source_id=s.id AND p.active=TRUE) active_products
+      (SELECT COUNT(*)::int FROM historical_products p WHERE p.source_id=s.id) active_products
       FROM sources s
-      LEFT JOIN LATERAL (
-        SELECT sc.* FROM scans sc WHERE sc.source_id=s.id AND sc.status<>'running'
-          AND sc.started_at<=$1::timestamptz AND sc.finished_at<=$1::timestamptz
-        ORDER BY sc.started_at DESC,sc.id DESC LIMIT 1
-      ) latest ON TRUE
-      LEFT JOIN LATERAL (
-        SELECT sc.started_at FROM scans sc WHERE sc.source_id=s.id AND sc.status='ok'
-          AND sc.started_at<=$1::timestamptz AND sc.finished_at<=$1::timestamptz
-        ORDER BY sc.started_at DESC,sc.id DESC LIMIT 1
-      ) successful ON TRUE
+      LEFT JOIN latest_checks latest ON latest.source_id=s.id
+      LEFT JOIN successful_checks successful ON successful.source_id=s.id
       ORDER BY s.id`,[end.toISOString()]);
     return r.rows;
   }

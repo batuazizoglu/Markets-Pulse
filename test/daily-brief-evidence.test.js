@@ -148,7 +148,7 @@ test('daily mobile catalogue returns every fresh active product with the latest 
   const product=catalog.find(x=>Number(x.product_id)===1);
   assert.equal(product.name,'Original mobile');assert.equal(Number(product.price_try),500,'the future version is excluded');
   assert.equal(product.brand,'Telsim');assert.equal(product.provider,'Telsim');assert.equal(product.source_url,'https://example.test/mobile-a');
-  assert.equal(product.id,product.product_id);assert.equal(product.verified_at,at);assert.equal(product.first_seen_at,at);
+  assert.equal(product.id,product.product_id);assert.equal(product.verified_at,at);assert.equal(product.first_seen_at,'2026-10-05T07:00:00.000Z');
   assert.equal('raw_text' in product,false);assert.equal('product_hash' in product,false);assert.equal('contract_months' in product,false);
 });
 
@@ -160,15 +160,16 @@ test('daily catalogue does not fall back to older success when the latest source
   }finally{await db.query('DELETE FROM scans WHERE id=15')}
 });
 
-test('daily catalogue requires observed-in-window active products and a finished-in-window source check',async()=>{
+test('daily catalogue uses completed historical state rather than mutable product timestamps or active flags',async()=>{
   const range={start:'2026-10-05T07:30:00Z',end:'2026-10-06T07:30:00Z'};
+  const baseline=await loadDailyMobileCatalog(db,range);
   try{
     await db.query("UPDATE products SET last_seen_at='2026-10-05T07:00:00Z' WHERE id=3");
-    assert.deepEqual((await loadDailyMobileCatalog(db,range)).map(x=>Number(x.product_id)),[1,2]);
+    assert.deepEqual(await loadDailyMobileCatalog(db,range),baseline);
     await db.query("UPDATE products SET last_seen_at='2026-10-06T08:00:00Z' WHERE id=1");
-    assert.deepEqual((await loadDailyMobileCatalog(db,range)).map(x=>Number(x.product_id)),[2]);
+    assert.deepEqual(await loadDailyMobileCatalog(db,range),baseline);
     await db.query('UPDATE products SET active=FALSE WHERE id=2');
-    assert.deepEqual(await loadDailyMobileCatalog(db,range),[]);
+    assert.deepEqual(await loadDailyMobileCatalog(db,range),baseline);
     await db.query('UPDATE products SET active=TRUE,last_seen_at=$1',[at]);
     await db.query("UPDATE scans SET finished_at='2026-10-06T08:00:00Z' WHERE id=12");
     assert.deepEqual((await loadDailyMobileCatalog(db,range)).map(x=>Number(x.product_id)),[2]);
@@ -286,6 +287,7 @@ test('daily catalogue uses the latest completed source check when the scheduled 
     await db.query("UPDATE scans SET status='running',finished_at=NULL WHERE id=41");
     await db.query("UPDATE products SET last_seen_at='2026-10-06T07:30:00Z' WHERE id=1");
     catalog=await loadDailyMobileCatalog(db,range);
-    assert.deepEqual(catalog.map(x=>Number(x.product_id)),[3,2],'a partial in-flight product observation cannot be represented as a completed check');
+    assert.deepEqual(catalog.map(x=>Number(x.product_id)),[1,3,2],'a partial in-flight write must preserve the prior completed product');
+    assert.equal(catalog[0].verified_at,at,'freshness comes from the completed scan, not the in-flight observation');
   }finally{await db.exec('ROLLBACK')}
 });

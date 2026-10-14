@@ -102,7 +102,8 @@ test('daily, weekly and monthly reports derive analysis and statistics from one 
   const loaders={currentBenchmark:async()=>({overall_score:null,segment_scores:[]}),sourceHealth:async()=>[],getHomeInternetMarket:async()=>({products:[],sources:[],changes:[],opportunities:[]})};
   for(const type of ['daily','weekly','monthly']){
     let mobileReads=0;
-    const pool={query(sql,args){if(/FROM changes c\b/.test(sql))mobileReads++;return db.query(sql,args)}};
+    // Count full event reads, not the historical catalogue's removal lookup.
+    const pool={query(sql,args){if(/SELECT c\.\*,s\.slug source_slug/.test(sql))mobileReads++;return db.query(sql,args)}};
     const ctx=await buildReportContext(pool,type,{now:end},loaders);
     assert.equal(mobileReads,1,type);
     assert.equal(ctx.stats.total,ctx.market.change_count,type);
