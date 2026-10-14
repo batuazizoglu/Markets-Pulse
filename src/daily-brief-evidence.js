@@ -1,6 +1,6 @@
 import {TRACKED_FIELDS} from './config.js';
+import {MOBILE_FIELDS,MOBILE_CATALOG_HISTORY_CTES} from './mobile-catalog-history.js';
 
-const MOBILE_FIELDS=['name','data_gb','bonus_data_gb','local_tr_minutes','international_minutes','sms','validity_days','red_passport_days','price_try'];
 const HOME_FIELDS=['product_key','name','source_slug','source_url','product_url','provider','brand','product_family','market_segment','technology',
   'speed_down_mbps','speed_up_mbps','price_monthly_try','effective_monthly_try','total_price_try','price_status','install_fee_try',
   'data_limit_gb','unlimited','duration_months','duration_days','bonus_months','bonus_days','availability','expires_at','campaign_text',
@@ -177,28 +177,19 @@ export async function enrichDailyChanges(pool,{changes=[],homeChanges=[]}={}){
   return {changes:mobile,homeChanges:home};
 }
 
-// A tariff version is written only when its terms change. last_seen_at is the
-// successful re-observation time, so an unchanged offer can still be fresh.
-// Use only checks completed by the report cutoff. A concurrently running scan
-// must not hide prior completed evidence or leak partially written products.
-// A newer completed failure must not be disguised as fresh success.
+// Use the catalogue state of completed successful scans, including unchanged
+// versions and historical removals. A newer completed failure still prevents
+// fresh comparisons; running/later scans cannot change the prior catalogue.
 export async function loadDailyMobileCatalog(pool,{start,end}={}){
   const from=timestamp(start),to=timestamp(end);
   if(!from||!to||from>to)throw new RangeError('A valid daily catalogue interval is required');
-  const columns=['id','product_id','scan_id','captured_at',...MOBILE_FIELDS,'extras_json'].map(key=>'pv.'+key).join(',');
-  const result=await pool.query(`SELECT p.id,p.first_seen_at,p.last_seen_at,s.slug source_slug,s.name source_name,s.url source_url,to_jsonb(version) product
-    FROM products p JOIN sources s ON s.id=p.source_id
-    JOIN LATERAL (SELECT sc.status,sc.finished_at FROM scans sc
-      WHERE sc.source_id=p.source_id AND sc.status<>'running' AND sc.started_at<=$2::timestamptz AND sc.finished_at<=$2::timestamptz
-      ORDER BY sc.started_at DESC,sc.id DESC LIMIT 1) latest ON TRUE
-    JOIN LATERAL (SELECT ${columns} FROM product_versions pv JOIN scans vs ON vs.id=pv.scan_id AND vs.source_id=p.source_id
-        AND vs.status='ok' AND vs.finished_at<=$2::timestamptz
-      WHERE pv.product_id=p.id AND pv.captured_at<=$2::timestamptz
-      ORDER BY pv.captured_at DESC,pv.id DESC LIMIT 1) version ON TRUE
-    WHERE p.active=TRUE AND p.last_seen_at>=$1::timestamptz AND p.last_seen_at<=$2::timestamptz
-      AND latest.status='ok' AND latest.finished_at>=$1::timestamptz AND p.last_seen_at<=latest.finished_at
-    ORDER BY s.id,p.id`,[from,to]);
-  return result.rows.map(row=>({...safeSnapshot(row.product,MOBILE_FIELDS,row.last_seen_at),id:row.id,product_id:row.id,
+  const result=await pool.query(`WITH ${MOBILE_CATALOG_HISTORY_CTES}
+    SELECT p.*,s.slug source_slug,s.name source_name,s.url source_url
+    FROM historical_products p JOIN sources s ON s.id=p.source_id
+    JOIN latest_checks latest ON latest.source_id=s.id
+    WHERE latest.status='ok' AND p.verified_at>=$2::timestamptz
+    ORDER BY s.id,p.id`,[to,from]);
+  return result.rows.map(row=>({...safeSnapshot(row.product,MOBILE_FIELDS,row.verified_at),id:row.id,product_id:row.id,
     brand:'Telsim',provider:'Telsim',source_slug:row.source_slug,source_name:row.source_name,source_url:row.source_url,
     first_seen_at:timestamp(row.first_seen_at)}));
 }
