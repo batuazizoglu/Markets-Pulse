@@ -1,0 +1,77 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {PGlite} from '@electric-sql/pglite';
+import {createHash} from 'node:crypto';
+import {SCHEMA_SQL} from '../src/schema.js';
+import {recordAdStatus,retireMissingAds} from '../src/ad-live.js';
+import {getAdVisuals,getPendingAdVisuals,importAdFeed} from '../src/ad-visual.js';
+import {persistCloudCapture} from '../src/ad-cloud.js';
+
+const now=new Date(),at=hours=>new Date(+now-hours*3600000).toISOString(),page='164143610515';
+const jpeg=Buffer.from([255,216,255,224,255,217]),hash=createHash('sha256').update(jpeg).digest('hex');
+const ad=(id,status='active',hours=1)=>({key:`${page}:${id}:1`,page_id:page,ad_id:id,variant_id:'1',brand:'Telsim',category:'home',ad_status:status,observed_at:at(hours),title:id,conditions:[],offer:{},images:[{sha256:hash,captured_at:at(hours)}]});
+async function seed(db,a){await db.query('INSERT INTO ad_visual_items(ad_key,brand,category,first_seen_at,observed_at,meaning_hash,analysis_json) VALUES($1,$2,$3,$4,$4,$5,$6)',[a.key,a.brand,a.category,a.observed_at,'seed',a]);}
+async function setup(){const db=new PGlite();await db.exec(SCHEMA_SQL);return db;}
+
+test('only fresh explicit active observations enter rows, totals, brand filters and keyset pages',async()=>{
+  const db=await setup();
+  try{
+    for(const a of [ad('100001'),ad('100002'),ad('100003','inactive'),ad('100004','unknown'),ad('100005','active',72),ad('100006','active',-1)])await seed(db,a);
+    const first=await getAdVisuals(db,{now,limit:1});assert.equal(first.total,2);assert.equal(first.groups.home,2);assert.equal(first.brand_groups.Telsim.home,2);assert.equal(first.pagination.total,2);assert.equal(first.rows[0].key,ad('100001').key);
+    const next=await getAdVisuals(db,{now,limit:1,cursor:first.pagination.next_cursor});assert.equal(next.rows[0].key,ad('100002').key);assert.equal(next.pagination.has_more,false);
+    await recordAdStatus(db,{...ad('100001','inactive'),observed_at:at(0)});
+    await recordAdStatus(db,{...ad('100002','unknown'),observed_at:at(0)});
+    assert.equal((await getAdVisuals(db,{now,brand:'Telsim'})).total,0);
+    assert.equal((await db.query('SELECT count(*)::int n FROM ad_visual_items')).rows[0].n,6);
+  }finally{await db.close();}
+});
+
+test('unchanged capture refreshes source status without resetting AI or reviving it through reanalysis',async()=>{
+  const db=await setup(),a=ad('200001','active',72);
+  try{
+    await seed(db,a);
+    const job=(await db.query('INSERT INTO ad_cloud_jobs(batch_key,brand,source_json) VALUES($1,$2,$3) RETURNING *',['live-replay','Telsim',{page_id:page}])).rows[0];
+    const candidate={...a,evidence:[{bytes:jpeg,sha256:hash,captured_at:a.observed_at}]};
+    await persistCloudCapture(db,candidate,job);
+    await db.query("UPDATE ad_cloud_candidates SET status='analyzed',attempts=2,review_round=1,analysis_json='{}'");
+    const before=(await db.query('SELECT * FROM ad_cloud_candidates')).rows[0];
+    await persistCloudCapture(db,{...candidate,observed_at:at(1)},job);
+    assert.deepEqual((await db.query('SELECT * FROM ad_cloud_candidates')).rows[0],before);
+    assert.equal((await getAdVisuals(db,{now})).total,1);
+    await persistCloudCapture(db,{...candidate,ad_status:'inactive',observed_at:at(0)},job);
+    assert.equal((await getAdVisuals(db,{now})).total,0);
+    await recordAdStatus(db,{...a,observed_at:at(1)}); // delayed active response cannot undo a newer inactive status
+    const reanalyzed={...a,ai_analysis:{status:'completed',analyzed_at:at(0),pass:2,model:'test'}};
+    await importAdFeed(db,{producer:'cloud-vision',run:{id:'live-old-reanalysis',checked_at:at(0),status:'partial',coverage:[]},ads:[reanalyzed],schedule:{}},{reanalysis:true});
+    assert.equal((await getAdVisuals(db,{now})).total,0);
+    assert.equal((await db.query('SELECT ad_status FROM ad_live_status')).rows[0].ad_status,'inactive');
+  }finally{await db.close();}
+});
+
+test('complete source scans retire missing ads across variants but older scans and other pages cannot override presence',async()=>{
+  const db=await setup();
+  try{
+    for(const a of [ad('300001'),ad('300002'),{...ad('300003'),page_id:'12345678'}]){await seed(db,a);await recordAdStatus(db,a);}
+    await retireMissingAds(db,page,['300001'],at(0));
+    assert.deepEqual((await getAdVisuals(db,{now})).rows.map(x=>x.ad_id).sort(),['300001','300003']);
+    await recordAdStatus(db,{...ad('300002'),observed_at:new Date(+now+1000).toISOString()});
+    await retireMissingAds(db,page,[],at(0));
+    assert.deepEqual((await getAdVisuals(db,{now})).rows.map(x=>x.ad_id).sort(),['300002','300003']);
+    await db.exec(SCHEMA_SQL); // restart migration must not resurrect an inactive ad from archived JSON
+    assert.deepEqual((await getAdVisuals(db,{now})).rows.map(x=>x.ad_id).sort(),['300002','300003']);
+  }finally{await db.close();}
+});
+
+test('unanalysed media uses the same live policy and newer creative evidence hides the old analysed image',async()=>{
+  const db=await setup();
+  try{
+    const job=(await db.query("INSERT INTO ad_cloud_jobs(batch_key,brand,source_json) VALUES('pending-live','Telsim','{}') RETURNING *")).rows[0];
+    await db.query('INSERT INTO ad_visual_evidence(sha256,jpeg) VALUES($1,$2)',[hash,jpeg]);
+    for(const a of [ad('400001'),ad('400002','inactive'),ad('400003','unknown'),ad('400004','active',72)]){
+      await db.query('INSERT INTO ad_cloud_candidates(ad_key,job_id,fingerprint,payload,observed_at) VALUES($1,$2,$3,$4,$5)',[a.key,job.id,'seed',a,a.observed_at]);
+    }
+    const pending=await getPendingAdVisuals(db,{now});assert.equal(pending.total,1);assert.equal(pending.pagination.total,1);assert.equal(pending.rows[0].ad_id,'400001');
+    await seed(db,ad('400001','active',2));
+    assert.equal((await getAdVisuals(db,{now})).total,0);assert.equal((await getPendingAdVisuals(db,{now})).total,1);
+  }finally{await db.close();}
+});

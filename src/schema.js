@@ -245,6 +245,13 @@ CREATE TABLE IF NOT EXISTS ad_report_image_assets (
   height INTEGER NOT NULL CHECK(height BETWEEN 1 AND 1280),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+CREATE TABLE IF NOT EXISTS ad_live_status (
+  page_id TEXT NOT NULL,
+  ad_id TEXT NOT NULL,
+  ad_status TEXT NOT NULL CHECK(ad_status IN ('active','inactive','unknown')),
+  checked_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY(page_id,ad_id)
+);
 CREATE TABLE IF NOT EXISTS ad_visual_items (
   ad_key TEXT PRIMARY KEY,
   brand TEXT NOT NULL,
@@ -338,6 +345,16 @@ CREATE TABLE IF NOT EXISTS ad_cloud_candidates (
 );
 CREATE INDEX IF NOT EXISTS idx_ad_cloud_candidates_queue ON ad_cloud_candidates(status,available_at);
 CREATE INDEX IF NOT EXISTS idx_ad_cloud_pending_archive ON ad_cloud_candidates(observed_at DESC,ad_key) WHERE status IN ('pending','retry','error');
+-- Seed legacy source observations once. Later AI reanalysis never refreshes presence.
+INSERT INTO ad_live_status(page_id,ad_id,ad_status,checked_at)
+SELECT DISTINCT ON (page_id,ad_id) page_id,ad_id,
+  CASE WHEN ad_status IN ('active','inactive') THEN ad_status ELSE 'unknown' END,checked_at
+FROM (
+  SELECT analysis_json->>'page_id' page_id,analysis_json->>'ad_id' ad_id,analysis_json->>'ad_status' ad_status,observed_at checked_at FROM ad_visual_items
+  UNION ALL SELECT payload->>'page_id',payload->>'ad_id',payload->>'ad_status',observed_at FROM ad_cloud_candidates
+) observations WHERE page_id ~ '^[0-9]{5,30}$' AND ad_id ~ '^[0-9]{5,30}$'
+ORDER BY page_id,ad_id,checked_at DESC,ad_status DESC
+ON CONFLICT(page_id,ad_id) DO NOTHING;
 CREATE TABLE IF NOT EXISTS ad_cloud_capture_links (
   job_id BIGINT NOT NULL REFERENCES ad_cloud_jobs(id),
   ad_key TEXT NOT NULL,

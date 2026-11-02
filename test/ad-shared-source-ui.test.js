@@ -33,7 +33,7 @@ test('shared advertiser sources project canonical status and archive without dup
     await select(alias);await dom.window.AdVisualUI.mountHome();
     assert.equal(d.querySelector('#ad-visual-section .av-source-focus b').textContent,alias);
     assert.match(d.querySelector('.av-source-focus').textContent,/Ortak reklam hesabı: KKTCELL/);
-    assert.match(d.querySelector('.av-source-focus').textContent,/Arşivdeki analiz: 2/);
+    assert.match(d.querySelector('.av-source-focus').textContent,/Aktif reklam analizi: 2/);
     assert.equal(d.querySelector('#ad-visual-section .av-card h3').textContent,'Home');
     assert.equal(d.querySelector('#hiAdVisualMount .av-card h3').textContent,'Home');
     assert.match(d.querySelector('#ad-visual-section .av-pagination').textContent,/1 \/ 1/);

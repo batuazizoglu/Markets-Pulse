@@ -1,4 +1,5 @@
 import {createHash} from 'node:crypto';
+import {AD_ACTIVE_MAX_AGE_HOURS,liveAdWindow,liveAdSql,recordAdStatus} from './ad-live.js';
 import {isDeepStrictEqual} from 'node:util';
 import {socialDirectory,verifiedFixedIspPageId} from './isp-registry.js';
 import {proposeStoredCategory} from './ad-category-evidence.js';
@@ -136,6 +137,7 @@ export async function importAdFeed(pool,feed,{fetcher=fetch,reanalysis=false,exi
     for(const [hash,bytes] of assets)await client.query('INSERT INTO ad_visual_evidence(sha256,jpeg) VALUES($1,$2) ON CONFLICT DO NOTHING',[hash,bytes]);
     for(const supplied of feed.ads){
       const ad={...supplied};
+      if(feed.producer==='chatgpt-browser-visual'&&!reanalysis)await recordAdStatus(client,ad);
       const prior=(await client.query('SELECT meaning_hash,observed_at,analysis_json FROM ad_visual_items WHERE ad_key=$1 FOR UPDATE',[ad.key])).rows[0];
       const sameObservation=prior&&+new Date(prior.observed_at)===+new Date(ad.observed_at);
       const categoryRevision=sameObservation&&reanalysis&&ad.category_assignment&&prior.analysis_json.category==='review'&&
@@ -206,39 +208,42 @@ function pageInput({limit=400,brand='',category='',cursor}={},categories=AD_CATE
   return {limit:Number(limit),brand,category,after};
 }
 const pendingMediaWhere="c.status IN ('pending','retry','error') AND NOT EXISTS (SELECT 1 FROM ad_visual_items a WHERE a.ad_key=c.ad_key AND a.observed_at>=c.observed_at) AND EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.payload->'images')='array' THEN c.payload->'images' ELSE '[]'::jsonb END) image JOIN ad_visual_evidence e ON e.sha256=image->>'sha256')";
-async function pendingMediaCounts(pool){
-  const result=await pool.query("SELECT c.payload->>'brand' brand,count(*)::int count FROM ad_cloud_candidates c WHERE "+pendingMediaWhere+" GROUP BY c.payload->>'brand'");
+async function pendingMediaCounts(pool,now=new Date()){
+  const live=liveAdSql('c','payload');
+  const result=await pool.query("SELECT c.payload->>'brand' brand,count(*)::int count FROM ad_cloud_candidates c "+live.join+" WHERE "+pendingMediaWhere+" AND "+live.where+" GROUP BY c.payload->>'brand'",liveAdWindow(now));
   return {total:result.rows.reduce((n,row)=>n+row.count,0),brand_totals:Object.fromEntries(result.rows.map(row=>[row.brand,row.count]))};
 }
-export async function getPendingAdVisuals(pool,{limit=50,...options}={}){
+export async function getPendingAdVisuals(pool,{limit=50,now=new Date(),...options}={}){
   const {brand,after,limit:pageLimit}=pageInput({...options,limit,category:'review'});
   if(pageLimit>100){const error=new Error('Bir sayfada en fazla 100 görsel alınabilir');error.status=400;throw error}
-  const params=[],where=[pendingMediaWhere];
+  const live=liveAdSql('c','payload'),params=liveAdWindow(now),where=[pendingMediaWhere,live.where];
   if(brand){params.push(brand);where.push("c.payload->>'brand'=$"+params.length)}
   if(after){params.push(after.t,after.k);where.push('(c.observed_at<$'+(params.length-1)+'::timestamptz OR (c.observed_at=$'+(params.length-1)+'::timestamptz AND c.ad_key>$'+params.length+'))')}
   params.push(pageLimit+1);
   const [result,counts]=await Promise.all([
-    pool.query('SELECT c.ad_key,c.payload,c.status,c.observed_at,to_char(c.observed_at AT TIME ZONE \'UTC\',\'YYYY-MM-DD"T"HH24:MI:SS.US"Z"\') cursor_time FROM ad_cloud_candidates c WHERE '+where.join(' AND ')+' ORDER BY c.observed_at DESC,c.ad_key ASC LIMIT $'+params.length,params),pendingMediaCounts(pool)
+    pool.query('SELECT c.ad_key,c.payload,c.status,c.observed_at,'+live.checked+' activity_checked_at,to_char(c.observed_at AT TIME ZONE \'UTC\',\'YYYY-MM-DD"T"HH24:MI:SS.US"Z"\') cursor_time FROM ad_cloud_candidates c '+live.join+' WHERE '+where.join(' AND ')+' ORDER BY c.observed_at DESC,c.ad_key ASC LIMIT $'+params.length,params),pendingMediaCounts(pool,now)
   ]);
   const hasMore=result.rows.length>pageLimit,page=result.rows.slice(0,pageLimit),last=page.at(-1);
   const hashes=[...new Set(page.flatMap(row=>(row.payload.images||[]).map(image=>image.sha256)).filter(hash=>/^[a-f0-9]{64}$/.test(hash)))];
   const stored=new Set((await pool.query('SELECT sha256 FROM ad_visual_evidence WHERE sha256=ANY($1::text[])',[hashes])).rows.map(row=>row.sha256));
   return {rows:page.map(row=>{
     const p=row.payload;let source='';try{source=socialUrl(p.source_url)}catch{}
-    return {key:row.ad_key,brand:clean(p.brand,120),ad_id:clean(p.ad_id,30),page_id:clean(p.page_id,30),variant_id:clean(p.variant_id,40),observed_at:row.observed_at,status:row.status,media_kind:p.media_kind==='video_preview'?'video_preview':'image',ad_text:clean(p.ad_text,5000),source_url:source,images:(p.images||[]).filter(image=>stored.has(image.sha256)).slice(0,3).map(image=>({sha256:image.sha256,captured_at:image.captured_at}))};
+    return {key:row.ad_key,brand:clean(p.brand,120),ad_id:clean(p.ad_id,30),page_id:clean(p.page_id,30),variant_id:clean(p.variant_id,40),ad_status:'active',activity_checked_at:row.activity_checked_at,observed_at:row.observed_at,status:row.status,media_kind:p.media_kind==='video_preview'?'video_preview':'image',ad_text:clean(p.ad_text,5000),source_url:source,images:(p.images||[]).filter(image=>stored.has(image.sha256)).slice(0,3).map(image=>({sha256:image.sha256,captured_at:image.captured_at}))};
   }),pagination:{limit:pageLimit,total:brand?(counts.brand_totals[brand]||0):counts.total,has_more:hasMore,next_cursor:hasMore?Buffer.from(JSON.stringify({v:1,t:last.cursor_time,k:last.ad_key,brand,category:'review'})).toString('base64url'):null,brand:brand||null},...counts};
 }
 export async function getAdVisuals(pool,{now=new Date(),...options}={}){
   const categories=await getAdCategories(pool);
-  const {limit,brand,category,after}=pageInput(options,categories),params=[],where=[];
+  const live=liveAdSql('a');
+  const currentCreative="NOT EXISTS (SELECT 1 FROM ad_cloud_candidates newer WHERE newer.ad_key=a.ad_key AND newer.observed_at>a.observed_at)";
+  const {limit,brand,category,after}=pageInput(options,categories),params=liveAdWindow(now),where=[live.where,currentCreative];
   if(brand){params.push(brand);where.push('a.brand=$'+params.length)}
   if(category){params.push(category);where.push('a.category=$'+params.length)}
   if(after){params.push(after.t,after.k);where.push('(a.observed_at<$'+(params.length-1)+'::timestamptz OR (a.observed_at=$'+(params.length-1)+'::timestamptz AND a.ad_key>$'+params.length+'))')}
   params.push(limit+1);
   const [data,sync,counts,pendingMedia]=await Promise.all([
-    pool.query('SELECT a.ad_key,a.first_seen_at,a.observed_at,to_char(a.observed_at AT TIME ZONE \'UTC\',\'YYYY-MM-DD"T"HH24:MI:SS.US"Z"\') cursor_time,a.analysis_json,c.status ai_queue_status,c.analyzed_at,c.review_round FROM ad_visual_items a LEFT JOIN ad_cloud_candidates c ON c.ad_key=a.ad_key '+(where.length?'WHERE '+where.join(' AND ')+' ':'')+'ORDER BY a.observed_at DESC,a.ad_key ASC LIMIT $'+params.length,params),
+    pool.query('SELECT a.ad_key,a.first_seen_at,a.observed_at,'+live.checked+' activity_checked_at,to_char(a.observed_at AT TIME ZONE \'UTC\',\'YYYY-MM-DD"T"HH24:MI:SS.US"Z"\') cursor_time,a.analysis_json,c.status ai_queue_status,c.analyzed_at,c.review_round FROM ad_visual_items a '+live.join+' LEFT JOIN ad_cloud_candidates c ON c.ad_key=a.ad_key WHERE '+where.join(' AND ')+' ORDER BY a.observed_at DESC,a.ad_key ASC LIMIT $'+params.length,params),
     pool.query('SELECT * FROM ad_visual_sync WHERE id=1'),
-    pool.query('SELECT brand,category,count(*)::int count FROM ad_visual_items GROUP BY brand,category'),pendingMediaCounts(pool)
+    pool.query('SELECT a.brand,a.category,count(*)::int count FROM ad_visual_items a '+live.join+' WHERE '+live.where+' AND '+currentCreative+' GROUP BY a.brand,a.category',liveAdWindow(now)),pendingMediaCounts(pool,now)
   ]);
   const status=sync.rows[0]||{};
   const stale=t=>!t||+now-+new Date(t)>48*3600000;
@@ -249,9 +254,9 @@ export async function getAdVisuals(pool,{now=new Date(),...options}={}){
     brandGroups[row.brand]||=Object.fromEntries(Object.keys(categories).map(k=>[k,0]));brandGroups[row.brand][row.category]=row.count;
     if((!brand||row.brand===brand)&&(!category||row.category===category))total+=row.count;
   }
-  const rows=page.map(x=>({...x.analysis_json,first_seen_at:x.first_seen_at,stale:stale(x.observed_at),ai_queue_status:x.ai_queue_status||null,
+  const rows=page.map(x=>({...x.analysis_json,ad_status:'active',activity_checked_at:x.activity_checked_at,first_seen_at:x.first_seen_at,stale:false,ai_queue_status:x.ai_queue_status||null,
     ai_analysis:x.analysis_json.ai_analysis||(x.analyzed_at?{status:'completed',analyzed_at:x.analyzed_at,pass:x.ai_queue_status==='analyzed'?(x.review_round||0)+1:Math.max(1,x.review_round||0)}:null)}));
-  return {generated_at:now.toISOString(),categories,rows,
+  return {generated_at:now.toISOString(),categories,rows,visibility:{active_only:true,max_observation_age_hours:AD_ACTIVE_MAX_AGE_HOURS},
     groups,brand_groups:brandGroups,total:Object.values(groups).reduce((sum,n)=>sum+n,0),pending_media:pendingMedia,
     pagination:{limit,total,has_more:hasMore,next_cursor:hasMore?Buffer.from(JSON.stringify({v:1,t:last.cursor_time,k:last.ad_key,brand,category})).toString('base64url'):null,brand:brand||null,category:category||null},
     monitoring:{...status,stale:stale(status.checked_at),status:status.last_error?'sync_error':!status.checked_at?'pending':stale(status.checked_at)?'stale':status.status,

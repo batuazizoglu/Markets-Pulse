@@ -3,6 +3,7 @@ import {socialDirectory} from './isp-registry.js';
 import {adLibrarySource} from './ad-cloud-capture.js';
 import {providerConfig,providerHttpDiagnostics,startProviderRun,getProviderRun,getProviderItems,fetchProviderImage} from './ad-provider-client.js';
 import {normalizeProviderItem} from './ad-provider-normalize.js';
+import {recordAdStatus,retireMissingAds} from './ad-live.js';
 
 const ACTIVE = ['creating','running','importing','downloading'];
 const ID = /^\d{5,30}$/;
@@ -39,6 +40,10 @@ async function finish(db,run,now) {
     (complete ? 'Sağlayıcının bildirdiği sonuçlar tamamlandı.' : 'Kaynak kapsamının tamamı doğrulanmadı; sonuçlar kısmi olarak gösteriliyor.');
   await db.query('UPDATE ad_provider_runs SET state=$2,updated_at=$3,finished_at=$3,coverage_complete=$4 WHERE job_id=$1',[run.job_id,state,now,complete]);
   await db.query('UPDATE ad_cloud_jobs SET status=$2,note=$3,finished_at=$4 WHERE id=$1',[run.job_id,jobStatus,note,now]);
+  if(complete){
+    const seen=(await db.query('SELECT DISTINCT ad_id FROM ad_provider_assets WHERE job_id=$1',[run.job_id])).rows.map(row=>row.ad_id);
+    await retireMissingAds(db,run.source_json.page_id,seen,run.created_at);
+  }
   return {...tally,status:state,job_id:run.job_id,coverage_complete:complete};
 }
 
@@ -156,11 +161,12 @@ export async function runProviderTick(pool,sources,{env=process.env,owner,assert
         if(row.complete===true)complete=true;
         if(row.kind==='summary')continue;
         if(row.kind!=='ad' || row.page_id!==String(run.source_json.page_id) || !ID.test(row.ad_id) || !Array.isArray(row.assets) || row.assets.length>1000) {rejected++;lastError=row.error || 'PROVIDER_ITEM_INVALID';denied=true;continue;}
+        await recordAdStatus(db,{...row,observed_at:run.created_at});
         for(const asset of row.assets) {
           if(!/^[a-zA-Z0-9_-]{1,40}$/.test(asset.variant_id || '') || !['image','video_preview'].includes(asset.kind) || !Array.isArray(asset.urls)) {rejected++;lastError='PROVIDER_ASSET_INVALID';continue;}
           const key=[row.page_id,row.ad_id,asset.variant_id].join(':'),missing=!asset.urls.length;
           const payload={brand:run.brand,page_id:row.page_id,ad_id:row.ad_id,variant_id:asset.variant_id,source_url:adLibrarySource(run.source_json),
-            ad_status:row.ad_status,started_on:row.started_on,ad_text:asset.ad_text || row.ad_text || '',has_video:asset.kind==='video_preview',media_kind:asset.kind,media:{kind:asset.kind,urls:asset.urls}};
+            ad_status:row.ad_status,status_observed_at:run.created_at,started_on:row.started_on,ad_text:asset.ad_text || row.ad_text || '',has_video:asset.kind==='video_preview',media_kind:asset.kind,media:{kind:asset.kind,urls:asset.urls}};
           await db.query(`INSERT INTO ad_provider_assets(job_id,asset_key,page_id,ad_id,variant_id,payload,source_url,media_kind,status,last_error,created_at,updated_at,available_at)
             VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11,$11,$11) ON CONFLICT(job_id,asset_key) DO NOTHING`,
           [run.job_id,key,row.page_id,row.ad_id,asset.variant_id,JSON.stringify(payload),asset.urls[0] || null,asset.kind,missing?'missing':'pending',missing?'MEDIA_URL_MISSING':null,at]);
