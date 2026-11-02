@@ -7,16 +7,18 @@ import {SCHEMA_SQL} from '../src/schema.js';
 import {getAdVisuals,getPendingAdVisuals,registerAdVisualRoutes} from '../src/ad-visual.js';
 import {HOME_INTERNET_SOURCES} from '../src/home-internet.js';
 
+const at=new Date(Date.now()-3600000).toISOString().split('.')[0]+'.123456Z';
+
 async function archive(){
   const db=new PGlite();await db.exec(SCHEMA_SQL);
   const rows=Array.from({length:551},(_,i)=>({
     key:'164143610515:'+String(100000+i)+':1',ad_id:String(100000+i),page_id:'164143610515',variant_id:'1',
     brand:i>=450&&i<520||i===550?'Nethouse':'Telsim',category:i<520?'home':i===550?'mnp':'gsm',
-    observed_at:'2026-09-20T00:00:00.123Z',title:'Görsel '+i,visual_summary:'İncelenmiş reklam',
-    category_evidence:'Evde internet',images:[{sha256:'a'.repeat(64),captured_at:'2026-09-20T00:00:00.123Z'}]
+    ad_status:'active',observed_at:at,title:'Görsel '+i,visual_summary:'İncelenmiş reklam',
+    category_evidence:'Evde internet',images:[{sha256:'a'.repeat(64),captured_at:at}]
   }));
   await db.query(`INSERT INTO ad_visual_items(ad_key,brand,category,first_seen_at,observed_at,meaning_hash,analysis_json)
-    SELECT value->>'key',value->>'brand',value->>'category','2026-09-20T00:00:00.123456Z','2026-09-20T00:00:00.123456Z','seed',value FROM jsonb_array_elements($1::jsonb)`,[JSON.stringify(rows)]);
+    SELECT value->>'key',value->>'brand',value->>'category','${at}','${at}','seed',value FROM jsonb_array_elements($1::jsonb)`,[JSON.stringify(rows)]);
   return db;
 }
 
@@ -52,11 +54,11 @@ test('pending evidence has bounded pages, only stored media, and an unclassified
   const db=await archive();
   const job=(await db.query("INSERT INTO ad_cloud_jobs(batch_key,brand,source_json) VALUES('pending-gallery','Nethouse','{}') RETURNING id")).rows[0].id;
   await db.query('INSERT INTO ad_visual_evidence(sha256,jpeg) VALUES($1,$2)',['b'.repeat(64),Buffer.from([255,216,255,217])]);
-  const candidates=Array.from({length:65},(_,i)=>({key:'pending:'+String(100000+i),brand:i<55?'Nethouse':'Telsim',ad_id:String(200000+i),variant_id:String(i+1),source_url:'https://www.facebook.com/ads/library/?id='+String(200000+i),media_kind:i===0?'video_preview':'image',ad_text:'<script>source()</script>',secret:'must not leak',media_url:'https://cdn.example/private?token=secret',images:[{sha256:'b'.repeat(64),captured_at:'2026-09-20T00:00:00Z'},{sha256:'c'.repeat(64)}]}));
+  const candidates=Array.from({length:65},(_,i)=>({key:'pending:'+String(100000+i),page_id:'164143610515',ad_status:'active',brand:i<55?'Nethouse':'Telsim',ad_id:String(200000+i),variant_id:String(i+1),source_url:'https://www.facebook.com/ads/library/?id='+String(200000+i),media_kind:i===0?'video_preview':'image',ad_text:'<script>source()</script>',secret:'must not leak',media_url:'https://cdn.example/private?token=secret',images:[{sha256:'b'.repeat(64),captured_at:at},{sha256:'c'.repeat(64)}]}));
   const known=(await db.query('SELECT ad_key,analysis_json FROM ad_visual_items ORDER BY ad_key LIMIT 1')).rows[0];
   const all=[...candidates,{...candidates[0],key:'missing-evidence',images:[{sha256:'c'.repeat(64)}]},{...candidates[0],key:known.ad_key}];
   await db.query(`INSERT INTO ad_cloud_candidates(ad_key,job_id,fingerprint,payload,status,observed_at)
-    SELECT value->>'key',$1,'seed',value,CASE WHEN value->>'key'='pending:100001' THEN 'error' ELSE 'pending' END,'2026-09-20T00:00:00.123456Z' FROM jsonb_array_elements($2::jsonb)`,[job,JSON.stringify(all)]);
+    SELECT value->>'key',$1,'seed',value,CASE WHEN value->>'key'='pending:100001' THEN 'error' ELSE 'pending' END,'${at}' FROM jsonb_array_elements($2::jsonb)`,[job,JSON.stringify(all)]);
   const dom=new JSDOM('<main class="shell"><div id="hiAdVisualMount"></div></main>',{url:'https://www.marketspulse.cloud/#ads',runScripts:'outside-only'}),requests=[];
   dom.window.fetch=async url=>{requests.push(url);const parsed=new URL(url,'https://www.marketspulse.cloud');return {ok:true,json:async()=>parsed.pathname.endsWith('/pending')?getPendingAdVisuals(db,Object.fromEntries(parsed.searchParams)):getAdVisuals(db,Object.fromEntries(parsed.searchParams))}};
   const settled=async()=>{await new Promise(r=>setTimeout(r,0));await dom.window.AdVisualUI.load()};
@@ -110,7 +112,7 @@ test('UI exposes the full archive with bounded load-more and server filters whil
     await dom.window.AdVisualUI.mountHome();assert.equal(d.querySelectorAll('#hiAdVisualMount .av-card').length,520);
     const brand=d.querySelector('#ad-visual-section [data-av-brand]');brand.value='Nethouse';brand.dispatchEvent(new dom.window.Event('change',{bubbles:true}));await settled();
     assert.equal(d.querySelectorAll('#ad-visual-section .av-card').length,70);assert.equal(d.querySelectorAll('#hiAdVisualMount .av-card').length,70);
-    assert.match(requests.at(-1),/brand=Nethouse/);assert.match(d.querySelector('.av-source-focus').textContent,/Arşivdeki analiz: 71/);
+    assert.match(requests.at(-1),/brand=Nethouse/);assert.match(d.querySelector('.av-source-focus').textContent,/Aktif reklam analizi: 71/);
     await dom.window.AdVisualUI.setCategory('mnp');assert.equal(d.querySelectorAll('#ad-visual-section .av-card').length,1);assert.equal(d.querySelectorAll('#hiAdVisualMount .av-card').length,70);
     await dom.window.AdVisualUI.load(true);assert.equal(d.querySelector('[data-av-brand]').value,'Nethouse');assert.equal(d.querySelector('[data-av-category="mnp"]').getAttribute('aria-pressed'),'true');
     assert.equal(d.querySelectorAll('#ad-visual-section .av-card').length,1);assert.equal(d.querySelectorAll('#hiAdVisualMount .av-card').length,70);

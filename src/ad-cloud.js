@@ -1,4 +1,5 @@
 import {randomUUID,createHash} from 'node:crypto';
+import {recordAdStatus,retireMissingAds} from './ad-live.js';
 import {socialDirectory,verifiedFixedIspPageId} from './isp-registry.js';
 import {captureCloudAds,adLibrarySource} from './ad-cloud-capture.js';
 import {captureTransportStatus} from './ad-capture-proxy.js';
@@ -230,6 +231,7 @@ export async function persistCloudCapture(db,candidate,job){
   const {evidence,...payload}=candidate;
   payload.images=evidence.map(x=>({sha256:x.sha256,path:'evidence/'+x.sha256+'.jpg',captured_at:x.captured_at,...(['creative','ad_card'].includes(x.role)?{role:x.role}:{})}));
   const fingerprint=hash(JSON.stringify({images:payload.images.map(x=>x.sha256),text:payload.ad_text}));
+  await recordAdStatus(db,candidate);
   for(const image of evidence)await db.query('INSERT INTO ad_visual_evidence(sha256,jpeg) VALUES($1,$2) ON CONFLICT DO NOTHING',[image.sha256,image.bytes]);
   await db.query(`INSERT INTO ad_cloud_candidates(ad_key,job_id,fingerprint,payload,observed_at) VALUES($1,$2,$3,$4::jsonb,$5)
     ON CONFLICT(ad_key) DO UPDATE SET job_id=EXCLUDED.job_id,
@@ -412,6 +414,7 @@ export function createCloudWorker(pool,sources,{capture=captureCloudAds,analyze=
         await transaction(pool,async db=>{
           await assertLease(db,owner);
           await db.query('UPDATE ad_cloud_jobs SET status=$1,note=$2,finished_at=NOW(),available_at=$4 WHERE id=$3',[status,String(scan.note||'').slice(0,2000),job.id,availableAt]);
+          if(status==='no_ads'&&!scan.captured)await retireMissingAds(db,job.source_json.page_id,[],job.started_at);
           if(limited)await db.query('UPDATE ad_cloud_control SET capture_after=$1 WHERE id=1',[availableAt]);
         });
         log('[ad-cloud-capture]',JSON.stringify({brand:job.brand,transport:transport.mode,proxy_id:scan.proxy_id||null,proxy_attempts:tried.length,status,http_status:scan.http_status||null,reason:scan.reason||null,captured:scan.captured||0,retry_at:status==='retry'?availableAt.toISOString():null}));

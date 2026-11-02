@@ -5,6 +5,7 @@ import {SCHEMA_SQL} from '../src/schema.js';
 import {HOME_INTERNET_SOURCES} from '../src/home-internet.js';
 import {queueCloudReview,persistCloudCapture} from '../src/ad-cloud.js';
 import {runProviderTick,getProviderStatus} from '../src/ad-provider-worker.js';
+import {recordAdStatus} from '../src/ad-live.js';
 
 const env={AD_CAPTURE_PROVIDER:'apify',APIFY_TOKEN:'synthetic-provider-token',APIFY_MAX_RUN_USD:'0.10',APIFY_DAILY_BUDGET_USD:'0.20'};
 const jpeg=Buffer.from([255,216,255,224,0,0,255,217]);
@@ -36,6 +37,28 @@ async function fixture(overrides={}) {
 }
 async function toImport(f) {assert.equal((await f.tick()).status,'running');f.advance(15000);assert.equal((await f.tick()).status,'importing');}
 async function toDownload(f) {await toImport(f);assert.equal((await f.tick()).status,'downloading');}
+
+test('only a complete active-ad provider result retires ads absent from its result',async()=>{
+  for(const complete of [true,false]){
+    const f=await fixture({getProviderItems:async()=>({items:[{pageID:'164143610515',totalCount:0,isResultComplete:complete}],total:1,offset:0,count:1})});
+    try{
+      await recordAdStatus(f.db,{page_id:'164143610515',ad_id:'888888',ad_status:'active',observed_at:new Date(Date.now()-3600000)});
+      await toDownload(f);await f.tick();
+      assert.equal((await f.db.query('SELECT ad_status FROM ad_live_status')).rows[0].ad_status,complete?'inactive':'active');
+    }finally{await f.db.close();}
+  }
+});
+
+test('provider inactivity is applied before media downloading and is not refreshed by a delayed download',async()=>{
+  const f=await fixture({getProviderItems:async()=>({items:[{...rawAd(),isActive:false}],total:1,offset:0,count:1})});
+  try{
+    await recordAdStatus(f.db,{page_id:'164143610515',ad_id:'999999',ad_status:'active',observed_at:new Date(Date.now()-3600000)});
+    await toDownload(f);
+    const observed=(await f.db.query('SELECT * FROM ad_live_status')).rows[0];assert.equal(observed.ad_status,'inactive');
+    f.advance(600000);await f.tick();
+    assert.deepEqual((await f.db.query('SELECT * FROM ad_live_status')).rows[0],observed);
+  }finally{await f.db.close();}
+});
 
 test('missing configuration leaves jobs and budgets unchanged and status exposes no credentials',async()=>{
   const f=await fixture();

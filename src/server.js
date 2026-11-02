@@ -22,7 +22,7 @@ import { registerAuth, bootstrapInitialUsers } from './auth.js';
 import { registerEvidenceRoutes } from './evidence-archive.js';
 import { reportDays } from './report-data.js';
 import {registerSocialWatchRoutes} from './social-watch.js';
-import {registerAdVisualRoutes} from './ad-visual.js';
+import {registerAdVisualRoutes,getAdVisuals} from './ad-visual.js';
 import {createCloudWorker,getCloudStatus,registerCloudRoutes} from './ad-cloud.js';
 import {registerReportMediaRoutes} from './report-ad-media.js';
 
@@ -295,6 +295,9 @@ const adCloudTick=createCloudWorker(pool,HOME_INTERNET_SOURCES);
 const runAdCloud=()=>adCloudTick().catch(()=>console.error('[ad-cloud-worker] database unavailable'));
 setInterval(runAdCloud,60000).unref();
 setTimeout(runAdCloud,15000);
+setTimeout(()=>Promise.all([getAdVisuals(pool,{limit:1}),pool.query('SELECT count(*)::int count FROM ad_visual_items')])
+  .then(([data,archive])=>console.log('[ad-live-visibility]',JSON.stringify({active:data.total,hidden:archive.rows[0].count-data.total,pending_active_media:data.pending_media.total,max_observation_age_hours:data.visibility.max_observation_age_hours})))
+  .catch(()=>console.error('[ad-live-visibility] status unavailable')),2000);
 setTimeout(warmKktcellCatalog,1500);
 setTimeout(()=>scanAll().catch(e=>console.error('startup scan failed',e)),5000);
 setTimeout(()=>captureBenchmarkHistory(false).catch(e=>console.error('startup benchmark history failed',e)),25000);

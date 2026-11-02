@@ -58,7 +58,7 @@ test('Postgres import deduplicates repeated runs, versions actual changes and ke
     await importAdFeed(db,blocked,{fetcher});
     const data=await getAdVisuals(db);assert.equal(data.rows.length,1);assert.equal(data.rows[0].offer.price_try,549);assert.equal(data.monitoring.status,'blocked');
     assert.equal((await db.query('SELECT * FROM ad_visual_versions')).rows.length,2);
-    const stale=await getAdVisuals(db,{now:new Date(+start+72*3600000)});assert.equal(stale.rows[0].stale,true);assert.equal(stale.monitoring.status,'stale');
+    const stale=await getAdVisuals(db,{now:new Date(+start+72*3600000)});assert.equal(stale.rows.length,0);assert.equal(stale.total,0);assert.equal(stale.monitoring.status,'stale');
     assert.equal((await importAdFeed(db,feed,{fetcher})).older,true);
     const report=await getAdReport(db,iso(0),iso(3));assert.equal(report.rows.length,2);
     assert.equal((await getAdReport(db,iso(0),iso(3),{category:'home'})).rows.length,0);

@@ -26,8 +26,8 @@ export function standardAdVisuals(data){
       ['pending','retry','error'].some(status=>Number(cloud.candidates?.[status])>0)||
       (cloud.sources||[]).some(source=>['blocked','error','retry','queued','running','unverified'].includes(source.status))))||
     Boolean(provider?.enabled&&(provider.configured===false||(provider.runs||[]).some(run=>run.coverage_complete!==true)));
-  const {generated_at,categories,groups,brand_groups,total,pagination}=data;
-  return {generated_at,categories,groups,brand_groups,total,pagination,
+  const {generated_at,categories,groups,brand_groups,total,pagination,visibility}=data;
+  return {generated_at,categories,groups,brand_groups,total,pagination,visibility,
     rows:(data.rows||[]).map(publishedAdRow),
     source_directory:(data.source_directory||[]).map(({brand,page_id,capture_brand,ad_library_url,country,facebook,instagram})=>({brand,page_id,capture_brand,ad_library_url,country,facebook,instagram})),
     display_status:{incomplete,updated_at:monitoring.checked_at||null}};

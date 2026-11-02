@@ -19,7 +19,7 @@ const cloud={worker_online:true,vision_configured:true,candidates:{pending:1},ca
 
 before(async()=>{
   db=new PGlite();await db.exec(SCHEMA_SQL);
-  const ad={key:adKey,brand:'Telsim',category:'gsm',title:'Published package',observed_at:seen,offer:{price_try:499},images:[{sha256:hash}],taxonomy_version:'internal-taxonomy',ai_analysis:{status:'completed',model:'internal-model',pass:2}};
+  const ad={key:adKey,page_id:'164143610515',ad_id:'123456789',ad_status:'active',brand:'Telsim',category:'gsm',title:'Published package',observed_at:seen,offer:{price_try:499},images:[{sha256:hash}],taxonomy_version:'internal-taxonomy',ai_analysis:{status:'completed',model:'internal-model',pass:2}};
   await db.query("INSERT INTO ad_visual_items(ad_key,brand,category,first_seen_at,observed_at,meaning_hash,analysis_json) VALUES($1,'Telsim','gsm',$2,$2,'fixture',$3::jsonb)",[adKey,seen,JSON.stringify(ad)]);
   await db.query("INSERT INTO ad_visual_versions(ad_key,observed_at,event_type,analysis_json) VALUES($1,$2,'first_seen',$3::jsonb)",[adKey,seen,JSON.stringify(ad)]);
   await db.query('INSERT INTO ad_visual_evidence(sha256,jpeg) VALUES($1,$2)',[hash,Buffer.from([255,216,255,217])]);

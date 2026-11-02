@@ -57,7 +57,7 @@ test('disabled provider history cannot replace current blocking and archive coun
   const dom=await dashboard({brand_groups:{Nethouse:{home:20}},cloud:{sources:[{brand:'Nethouse',status:'blocked',captured:3,note:'HTTP 403'}],capture_provider:{provider:'apify',enabled:false,configured:false,runs:[{brand:'Nethouse',state:'complete',ads:0,coverage_complete:true,updated_at:at}]}}});
   try{
     const d=dom.window.document,filter=d.querySelector('[data-av-brand]');filter.value='Nethouse';filter.dispatchEvent(new dom.window.Event('change',{bubbles:true}));
-    assert.match(d.querySelector('.av-source-focus').textContent,/Kaynağa erişilemiyor/);assert.match(d.querySelector('.av-source-focus').textContent,/Arşivdeki analiz: 20/);
+    assert.match(d.querySelector('.av-source-focus').textContent,/Kaynağa erişilemiyor/);assert.match(d.querySelector('.av-source-focus').textContent,/Aktif reklam analizi: 20/);
     assert.doesNotMatch(d.querySelector('.av-source-focus').textContent,/reklam bulunamadı|analiz sonucu henüz yayınlanmadı/);
   }finally{dom.window.close()}
 });
