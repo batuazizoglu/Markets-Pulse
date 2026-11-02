@@ -271,11 +271,12 @@ export async function analyzeNextCloudCandidate(pool,sources,owner,{env=process.
   const r=await pool.query("SELECT * FROM ad_cloud_candidates WHERE status IN ('pending','retry') AND attempts<3 AND available_at<=NOW() ORDER BY observed_at,ad_key LIMIT 1");
   if(!r.rows.length)return {status:'idle'};
   const candidate=r.rows[0];
-  const images=[];for(const img of candidate.payload.images){
-    const bytes=(await pool.query('SELECT jpeg FROM ad_visual_evidence WHERE sha256=$1',[img.sha256])).rows[0]?.jpeg;
-    if(!bytes||hash(Buffer.from(bytes))!==img.sha256)throw new Error('CLOUD_EVIDENCE_MISSING');images.push(Buffer.from(bytes));
-  }
   try{
+    const images=[];for(const img of candidate.payload.images||[]){
+      const bytes=(await pool.query('SELECT jpeg FROM ad_visual_evidence WHERE sha256=$1',[img.sha256])).rows[0]?.jpeg;
+      if(!bytes||hash(Buffer.from(bytes))!==img.sha256)throw new Error('CLOUD_EVIDENCE_MISSING');images.push(Buffer.from(bytes));
+    }
+    if(!images.length)throw new Error('CLOUD_EVIDENCE_MISSING');
     let analysis=candidate.analysis_json;
     if(!analysis){
       const day=localCloudTime().day;
@@ -294,7 +295,7 @@ export async function analyzeNextCloudCandidate(pool,sources,owner,{env=process.
     return {status:'analyzed',brand:candidate.payload.brand,ad_id:candidate.payload.ad_id,category:analysis.category,category_evidence_missing:analysis.category_evidence==='Kategori için açık ve doğrulanabilir ifade bulunamadı.',pass:analysis.ai_analysis?.pass||1};
   }catch(e){
     const code=/^(VISION_[A-Z0-9_]+|CLOUD_[A-Z0-9_]+)$/.test(e.message)?e.message:'VISION_VALIDATION_ERROR';
-    await pool.query("UPDATE ad_cloud_candidates SET status=CASE WHEN attempts>=3 THEN 'error' ELSE 'retry' END,last_error=$1 WHERE ad_key=$2",[code,candidate.ad_key]);
+    await pool.query("UPDATE ad_cloud_candidates SET status=CASE WHEN attempts>=3 OR $1='CLOUD_EVIDENCE_MISSING' THEN 'error' ELSE 'retry' END,last_error=$1 WHERE ad_key=$2",[code,candidate.ad_key]);
     return {status:'error',code};
   }
 }
@@ -304,7 +305,7 @@ export async function getCloudStatus(pool,{env=process.env,sources=[]}={}){
     pool.query('SELECT heartbeat_at,vision_day,vision_calls,capture_after,scheduled_day FROM ad_cloud_control WHERE id=1'),
     pool.query("SELECT DISTINCT ON (brand) brand,status,captured,note,created_at,finished_at,available_at FROM ad_cloud_jobs WHERE status<>'imported' ORDER BY brand,created_at DESC,id DESC"),
     pool.query('SELECT status,count(*)::int count,MAX(analyzed_at) last_analyzed_at FROM ad_cloud_candidates GROUP BY status'),
-    pool.query('SELECT last_error FROM ad_cloud_candidates WHERE last_error IS NOT NULL ORDER BY observed_at DESC LIMIT 1'),
+    pool.query("SELECT last_error,count(*)::int count FROM ad_cloud_candidates WHERE last_error IS NOT NULL AND status IN ('error','retry') GROUP BY last_error ORDER BY count DESC,last_error"),
     getProxyPoolStatus(pool,{env}),getProviderStatus(pool,{env})]);
   const row=control.rows[0]||{},heartbeat=row.heartbeat_at;
   return {mode:'cloud',schedule:{...CLOUD_SCHEDULE,last_scheduled_day:row.scheduled_day||null,verified_pages_count:verifiedCloudSources(sources).length},capture_transport:transport,capture_provider:provider,vision_configured:config.configured,
@@ -312,7 +313,7 @@ export async function getCloudStatus(pool,{env=process.env,sources=[]}={}){
     message:!config.configured?'Bulut taraması etkin. Görsel analiz için sunucu API bağlantısı eksik; kaydedilen görseller kuyrukta bekler.':errors.rows.length?'Son görsel analizi tamamlanamadı. Kayıtlar kuyrukta korunuyor; servis bağlantısı ve kota kontrol edilmeli.':'Görseller sunucuda analiz edilir.',
     worker_heartbeat:heartbeat||null,worker_online:Boolean(heartbeat&&Date.now()-+new Date(heartbeat)<180000),
     calls_today:row.vision_day===localCloudTime().day?row.vision_calls:0,daily_limit:config.dailyLimit,capture_after:row.capture_after||null,
-    candidates:Object.fromEntries(counts.rows.map(x=>[x.status,x.count])),sources:jobs.rows};
+    candidates:Object.fromEntries(counts.rows.map(x=>[x.status,x.count])),errors:errors.rows.map(x=>({code:/^(VISION_|CLOUD_)[A-Z0-9_]+$/.test(x.last_error)?x.last_error:'VISION_VALIDATION_ERROR',count:x.count})),sources:jobs.rows};
 }
 export function createCloudWorker(pool,sources,{capture=captureCloudAds,analyze=analyzeCloudImage,env=process.env,log=console.log,providerTick=runProviderTick}={}){
   let running=false,reportedSources=false;
@@ -420,7 +421,7 @@ export function createCloudWorker(pool,sources,{capture=captureCloudAds,analyze=
       const analysis=await analyzeNextCloudCandidate(pool,sources,owner,{env,analyze});
       const status=await getCloudStatus(pool,{env,sources});
       if(!reportedSources){log('[ad-cloud-source-status]',JSON.stringify(status.sources.map(s=>({brand:s.brand,status:s.status,http_status:Number(s.note?.match(/HTTP (\d{3})/)?.[1])||null}))));reportedSources=true}
-      log('[ad-cloud-worker]',JSON.stringify({mode:'cloud',capture_transport:transport.mode,capture_configured:transport.configured,capture_code:transport.code,proxy_count:status.capture_transport.proxy_count||0,proxy_available:status.capture_transport.available_count||0,scan_waiting:scan?.status?.startsWith('waiting')?scan.reason:null,analysis:analysis.status,code:analysis.code||null,brand:analysis.brand||null,category:analysis.category||null,category_evidence_missing:analysis.category_evidence_missing??null,pass:analysis.pass||null,vision_configured:status.vision_configured,candidates:status.candidates,calls_today:status.calls_today,scheduled_day:status.schedule.last_scheduled_day}));
+      log('[ad-cloud-worker]',JSON.stringify({mode:'cloud',capture_transport:transport.mode,capture_configured:transport.configured,capture_code:transport.code,proxy_count:status.capture_transport.proxy_count||0,proxy_available:status.capture_transport.available_count||0,scan_waiting:scan?.status?.startsWith('waiting')?scan.reason:null,analysis:analysis.status,code:analysis.code||null,brand:analysis.brand||null,category:analysis.category||null,category_evidence_missing:analysis.category_evidence_missing??null,pass:analysis.pass||null,vision_configured:status.vision_configured,candidates:status.candidates,errors:status.errors,calls_today:status.calls_today,scheduled_day:status.schedule.last_scheduled_day}));
       return {scan,analysis};
     }catch(e){log('[ad-cloud-worker]',JSON.stringify({status:'error',code:/^CLOUD_[A-Z_]+$/.test(e.message)?e.message:'WORKER_ERROR'}));return {status:'error'}}
     finally{try{if(lease)await pool.query('UPDATE ad_cloud_control SET lease_owner=NULL,lease_until=NULL,heartbeat_at=NOW() WHERE id=1 AND lease_owner=$1',[owner])}finally{running=false}}

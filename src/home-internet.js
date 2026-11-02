@@ -569,11 +569,13 @@ async function fetchPublicPricingDynamic(source){
     const browser=await getLifecellBrowser();page=await browser.newPage();
     await page.setUserAgent(UA);
     page.setDefaultTimeout(15000);
+    // Always obtain a complete response rather than rejecting a valid cached 304.
+    await page.setCacheEnabled(false);
     if(source.parser==='alemnet-dynamic')await page.evaluateOnNewDocument(()=>{
       localStorage.removeItem('packagesData');localStorage.removeItem('packagesTimestamp');
     });
     const response=await page.goto(source.url,{waitUntil:'domcontentloaded',timeout:30000});
-    if(!response?.ok())throw new Error('HTTP '+response?.status());
+    if(!response?.ok()&&response?.status()!==304)throw new Error('HTTP '+response?.status());
     let products=[];
     if(source.parser==='alemnet-dynamic'){
       stage='paket fiyatlarının yüklenmesi';

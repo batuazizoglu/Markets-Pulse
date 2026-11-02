@@ -16,6 +16,23 @@ function observation(source){const at=new Date().toISOString();return {brand:sou
 function vision(){return {category:'mnp',category_evidence:'Numaranızı taşıyın',title:'Numara taşıma 25 GB',visible_text:'25 GB 799 TL',visual_summary:'Kırmızı fiyat kutusu',conditions:[],uncertainties:[],offer:{price_try:799,previous_price_try:null,data_gb:25,bonus_data_gb:null,minutes:null,speed_mbps:null,commitment_months:null,billing_period:'unknown'},field_evidence:{price_try:'799 TL',previous_price_try:'',data_gb:'25 GB',bonus_data_gb:'',minutes:'',speed_mbps:'',commitment_months:'',billing_period:''}}}
 const ambiguousCapture=async(source,save)=>{await save({...observation(source),ad_text:'Marka tanıtımı'});return {status:'partial',captured:1,note:'Saklanan belirsiz kare'}};
 const capture=async(source,save)=>{if(!source.page_id)return {status:'unverified',captured:0,note:'Sayfa kimliği yok'};await save(observation(source));return {status:'partial',captured:1,note:'Gerçek tarayıcı yerine izole test görüntüsü'}};
+test('missing evidence cannot poison the queue or consume a paid model call',async()=>{
+  const db=await dbFixture();let calls=0;
+  try{
+    await queueCloudReview(db,HOME_INTERNET_SOURCES,{manual:true});
+    await createCloudWorker(db,HOME_INTERNET_SOURCES,{capture,env:{},log:()=>{}})();
+    const original=(await db.query('SELECT * FROM ad_cloud_candidates LIMIT 1')).rows[0];
+    await db.query("UPDATE ad_cloud_candidates SET payload=jsonb_set(payload,'{images}','[]'),observed_at=NOW()-INTERVAL '1 day'");
+    await db.query("INSERT INTO ad_cloud_candidates(ad_key,job_id,fingerprint,payload,observed_at) VALUES($1,$2,$3,$4::jsonb,NOW())",['healthy-next',original.job_id,original.fingerprint,JSON.stringify(original.payload)]);
+    const failed=await analyzeNextCloudCandidate(db,HOME_INTERNET_SOURCES,'test-owner',{env,analyze:async()=>{calls++}});
+    assert.deepEqual(failed,{status:'error',code:'CLOUD_EVIDENCE_MISSING'});assert.equal(calls,0);
+    const state=await getCloudStatus(db,{env});assert.equal(state.candidates.error,1);
+    assert.deepEqual(state.errors,[{code:'CLOUD_EVIDENCE_MISSING',count:1}]);
+    await db.query("UPDATE ad_cloud_control SET lease_owner='test-owner',lease_until=NOW()+INTERVAL '10 minutes'");
+    const next=await analyzeNextCloudCandidate(db,HOME_INTERNET_SOURCES,'test-owner',{env,analyze:async c=>{calls++;return normalizeVision(vision(),c)}});
+    assert.equal(next.status,'analyzed');assert.equal(calls,1);
+  }finally{await db.close()}
+});
 
 test('cloud scheduling persists daily deduplication, rotates competitors and throttles manual scans',async()=>{
   assert.deepEqual(localCloudTime(new Date('2026-09-18T03:00:00Z')),{day:'2026-09-18',hour:6});

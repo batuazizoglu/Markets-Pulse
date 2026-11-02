@@ -210,6 +210,9 @@ export function buildBenchmark(telsimRows,kktcellRows,overrides=[],{sources=[]}=
     history_note:'Motor geçişinden önceki skorlar saklanır; yeni motorla birleştirilmez. Dönem değişimi için aynı motorun tarihçesi birikir.',
     segments,counts,total_matches:matches.length,overall_score,segment_scores,segment_summary,matches,secondary_matches,
     matching:{engine_counts:review.engine_counts,effective_counts:review.effective_counts,override_count:review.override_count,
+      stale_overrides:review.rows.filter(x=>x.override?.stale).map(x=>({telsim_product_id:x.telsim_product_id,telsim_name:x.telsim.name,
+        kktcell_product_key:x.override.kktcell_product_key,reason:'Saved peer is absent or no longer eligible',
+        candidates:x.candidates.slice(0,3).map(c=>({key:c.product.key,name:c.product.name,score:c.score}))})),
       stale_override_count:review.rows.filter(x=>x.override?.stale).length,catalog:review.catalog,segment_coverage:review.segment_coverage}};
 }
 

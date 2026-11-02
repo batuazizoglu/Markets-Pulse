@@ -70,6 +70,20 @@ export function parseNetonline(html,source){
 }
 function haypem(html,source){
   const $=document(html),out=[];
+  // Current site publishes each technology in its own tabular panel.
+  $('#paketler .panel').each((_,panel)=>{
+    const title=clean($(panel).find('h3').first().text());
+    const technology=/apartman/i.test(title)?'Apartman WDSL':/platinium/i.test(title)?'WDSL Plus':title;
+    for(const row of tables($.html(panel),{...source,technology}))out.push({...row,
+      name:title+' '+row.speed_down_mbps+' Mbps',unlimited:/fiber/i.test(title)?null:true,
+      features:['KDV dahil','Kurulum ve altyapı uygunluğu kaynak koşullarına tabidir']});
+    if(/fiber/i.test(title))$(panel).find('tbody tr').each((__,tr)=>{
+      const raw=clean($(tr).text()),speed=n(raw.match(/(\d+)\s*Mbps/i)?.[1]);
+      if(speed&&/iletişim/i.test(raw))out.push(base(source,{name:title+' '+speed+' Mbps',technology,
+        speed_down_mbps:speed,price_status:'quote',raw_text:raw}));
+    });
+  });
+  if(out.length)return out;
   $('.card').each((_,card)=>{
     const h=clean($(card).find('h3').first().text()),section=clean($(card).closest('section').find('h2').first().text());
     const speed=n((h.match(/(\d+)\s*(?:Mbps|$)/i)||[])[1]);if(!speed)return;
@@ -188,6 +202,16 @@ function surface(html,source){
 }
 function primenet(html,source){
   const $=document(html),out=[];
+  $('article.pricecard').each((_,el)=>{
+    const raw=clean($(el).text()),name=clean($(el).find('h3').text());
+    const speed=n($(el).find('.speed').text().match(/(\d+(?:[.,]\d+)?)\s*Mbit/i)?.[1]);
+    const term=clean($(el).find('.period').text()).match(/^(\d+)\s*(?:\+\s*(\d+))?\s*Ay$/i);
+    const price=n($(el).find('.price').text()),technology=clean($(el).find('.pkgtype').text()).toUpperCase();
+    if(!name||!speed||!term||!(price>0)||!['WDSL','ADSL','VDSL'].includes(technology))return;
+    out.push(base(source,{name,technology,speed_down_mbps:speed,duration_months:Number(term[1]),
+      bonus_months:Number(term[2]||0),total_price_try:price,unlimited:/Kotasız|Sınırsız/i.test(raw)?true:null,raw_text:raw}));
+  });
+  if(out.length)return out;
   $('.w-pricing-item').each((_,el)=>{
     const raw=clean($(el).text()),title=clean($(el).find('.w-pricing-item-title').text()),speed=n(raw.match(/(\d+)\s*MBit/i)?.[1]);
     if(!speed)return;const tech=/ADSL/i.test(title)?'ADSL':'WDSL',name=tech==='ADSL'?'ADSL '+speed+' Mbps':title;
@@ -214,6 +238,23 @@ function goldsurf(html,source){
     for(const p of raw.matchAll(/(\d+)\s*Aylık\s+([\d.,]+)\s*TL/gi))out.push(base(source,{name,technology:'WDSL',duration_months:Number(p[1]),total_price_try:n(p[2]),raw_text:raw}));
   }
   for(const m of text.matchAll(/(\d+)\s*Mbit\s+12 Ay\s*₺\s*([\d.,]+)/gi))out.push(base(source,{name:'ADSL '+m[1]+' Mbps',technology:'ADSL',speed_down_mbps:Number(m[1]),duration_months:12,total_price_try:n(m[2]),raw_text:m[0]}));
+  return out;
+}
+function joker(html,source){
+  const $=document(html),out=[];
+  $('a[href*="/apply?"]').each((_,a)=>{
+    const url=new URL($(a).attr('href'),source.url),id=url.searchParams.get('package'),duration=Number(url.searchParams.get('duration'));
+    if(url.origin!==new URL(source.url).origin||!id||![1,3,6,12].includes(duration))return;
+    const card=$(a).parents().filter((__,el)=>$(el).find('h3').length===1).first();
+    const name=clean(card.find('h3').text()),raw=clean(card.text());
+    const speedText=raw.split('Yükleme Hızı')[1]||'';
+    const speeds=[...speedText.matchAll(/(\d+)\s*Mbps/gi)].map(m=>Number(m[1]));
+    const price=raw.match(/₺\s*([\d.,]+)\s*\/\s*(\d+)\s*ay/i);
+    if(!name||!price||Number(price[2])!==duration||speeds.length<2||!(n(price[1])>0))return;
+    out.push(base(source,{name,technology:'WDSL',speed_down_mbps:speeds[0],speed_up_mbps:speeds[1],
+      duration_months:duration,total_price_try:n(price[1]),unlimited:/Sınırsız|Kotasız/i.test(raw)?true:null,
+      product_key:[source.slug,id,duration].join('|'),raw_text:raw}));
+  });
   return out;
 }
 export function parseServices(html,source){
@@ -259,6 +300,18 @@ function cypking(html,source){
       unlimited:true,duration_months:Number(term[2]),bonus_months:Number(term[3]||0),total_price_try:n(term[1]),
       features:[m[3]?'Yoğun olmayan saat hızı: '+m[3]+' Mbps':null,'Kaynak hızları MB D / MB U olarak gösteriyor'].filter(Boolean),raw_text:m[0]}));
   }
+  if(!out.length)$('#pricing .card-glow').each((_,el)=>{
+    const name=clean($(el).find('h3').first().text()),raw=clean($(el).text());
+    const speed=raw.match(/(\d+)\s*MB\s*D\s*\/\s*(?:(\d+)\s*MB\s*Off-Peak\s*\/\s*)?(\d+)\s*MB\s*U/i);
+    if(!/^(APT|KING LUX|CYP İŞ)\s*\d+\s*MB$/i.test(name)||!speed)return;
+    // The redesigned public cards publish speeds but no price or term.
+    // Do not carry an old price onto an unpriced current offer.
+    if(/[\d.,]+\s*(?:TL|₺)/i.test(raw))return;
+    out.push(base(source,{name,technology:name.startsWith('APT')?'Apartman WDSL':'WDSL',
+      market_segment:name.startsWith('CYP')?'business':'residential',speed_down_mbps:Number(speed[1]),speed_up_mbps:Number(speed[3]),
+      unlimited:/Unlimited Data/i.test(raw)?true:null,price_status:'not_published',
+      features:[speed[2]?'Yoğun olmayan saat hızı: '+speed[2]+' Mbps':null,'Güncel kaynakta fiyat ve dönem yayımlanmıyor'].filter(Boolean),raw_text:raw}));
+  });
   return out;
 }
 
@@ -292,7 +345,7 @@ function extendBusiness(html,source){
 
 export function parseISP(html,source){
   const parser={'towernet-bundle':parseTowernetBundle,'extend-business':extendBusiness,'extend-pricing':extendPricing,
-    xrealnet,comtech,'netonline-business':netonlineBusiness,cypking,netonline:parseNetonline,haypem,surface,primenet,royalnet,goldsurf,enson:tables,analiz:tables,'isp-table':tables,services:parseServices};
+    xrealnet,comtech,'netonline-business':netonlineBusiness,cypking,joker,netonline:parseNetonline,haypem,surface,primenet,royalnet,goldsurf,enson:tables,analiz:tables,'isp-table':tables,services:parseServices};
   const rows=(parser[source.parser]||(()=>[]))(html,source);
   return [...new Map(rows.map(r=>[r.product_key||[r.source_slug,r.technology,r.name,r.duration_months,r.duration_days,r.bonus_months,r.bonus_days].join('|'),r])).values()];
 }
