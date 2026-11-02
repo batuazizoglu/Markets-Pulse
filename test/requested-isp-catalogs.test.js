@@ -8,6 +8,33 @@ import {SCHEMA_SQL} from '../src/schema.js';
 const source=slug=>HOME_INTERNET_SOURCES.find(s=>s.slug===slug);
 const table=(heading,headers,cells)=>'<table><tr><th>Hız</th>'+headers.map(x=>'<th>'+x+'</th>').join('')+'</tr><tr><th>'+heading+'</th>'+cells.map(x=>'<td>'+x+'</td>').join('')+'</tr></table>';
 const campaign=(name,date,body='Koşullar')=>'<div class="group"><span>'+date+'</span><h3>'+name+'</h3><p>'+body+'</p></div>';
+test('redesigned Haypem panels keep technologies, period totals and quote-only Fiber separate',()=>{
+  const html='<section id="paketler"><div class="panel"><h3>WDSL</h3>'+table('10 Mbps',['1 Ay','12 Ay'],['1.100₺','11.000₺'])+'</div>'+
+    '<div class="panel"><h3>VDSL</h3>'+table('15 Mbps',['1 Ay'],['900₺'])+'</div>'+
+    '<div class="panel"><h3>Fiber</h3><table><tbody><tr><th>100 Mbps</th><td>Fiyat için iletişime geçin</td></tr></tbody></table></div></section>';
+  const rows=parserFor(source('haypem-home'),html).products;
+  assert.deepEqual(rows.map(x=>[x.technology,x.duration_months,x.total_price_try]),[['WDSL',1,1100],['WDSL',12,11000],['VDSL',1,900],['Fiber',null,null]]);
+  assert.equal(rows[1].effective_monthly_try,916.67);assert.equal(rows[3].price_status,'quote');
+});
+test('PrimeNet current price cards preserve gifted months and do not borrow adjacent prices',()=>{
+  const card=(name,price,period)=>`<article class="pricecard"><div class="pkgtype">WDSL</div><h3>${name}</h3><div class="speed">6 Mbit</div><div class="price">${price}</div><p class="period">${period}</p><li>Kotasız</li></article>`;
+  const rows=parserFor(source('primenet-home'),card('PRIME 6 MBIT WDSL','4.350 ₺','6+1 Ay')+card('Incomplete','','1 Ay')).products;
+  assert.equal(rows.length,1);assert.equal(rows[0].duration_months,6);assert.equal(rows[0].bonus_months,1);
+  assert.equal(rows[0].total_price_try,4350);assert.equal(rows[0].effective_monthly_try,621.43);
+});
+test('CypKing unpriced current cards retain business eligibility without inventing price or term',()=>{
+  const rows=parserFor(source('cypking-home'),'<section id="pricing"><div class="card-glow"><h3>CYP İŞ 26 MB</h3><p>26 MB D / 12 MB Off-Peak / 10 MB U</p><li>Unlimited Data</li></div><div class="card-glow"><h3>APT 7 MB</h3><p>7 MB D / 2 MB U</p></div></section>').products;
+  assert.equal(rows.length,2);assert.equal(rows[0].market_segment,'business');assert.equal(rows[1].market_segment,'residential');
+  assert.deepEqual(rows.map(x=>[x.speed_down_mbps,x.speed_up_mbps]),[[26,10],[7,2]]);
+  assert.ok(rows.every(x=>x.price_status==='not_published'&&x.total_price_try===null&&x.duration_months===null));
+});
+test('Joker reads only the selected priced term and deduplicates responsive cards',()=>{
+  const card=(id,name,price)=>`<article><h3>${name}</h3><p>İndirme Hızı Yükleme Hızı 20Mbps 10Mbps</p><button>1 Ay</button><button>12 Ay</button><p>₺${price}/ 1 ay</p><div><a href="/tr/apply?package=${id}&duration=1">Seç</a></div></article>`;
+  const html=card('standard-20','NET 20 Mbps','1.525')+card('turbo-20','TURBO 20/10','2.500');
+  const rows=parserFor(source('bassam-wael-home'),html+html).products;
+  assert.equal(rows.length,2);assert.deepEqual(rows.map(x=>x.total_price_try),[1525,2500]);
+  assert.ok(rows.every(x=>x.duration_months===1&&x.speed_down_mbps===20&&x.speed_up_mbps===10));
+});
 test('all requested catalogs are configured with explicit current or legacy addresses',()=>{
   const paths={
     'extend-wdsl':'/urunler-wdsl.php','extend-vdsl':'/urunler-vdsl.php','extend-fiber':'/urunler-fibernet.php','extend-gamepack':'/urunler-gamepack.php',

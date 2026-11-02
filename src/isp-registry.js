@@ -431,6 +431,7 @@ export const EXTRA_HOME_SOURCES = [
     "name": "Haypem • WDSL / Fiber / ADSL / VDSL",
     "url": "https://www.haypem.com/",
     "parser": "haypem",
+    "revision": 2,
     "company_ids": [
       "haypem"
     ],
@@ -455,6 +456,7 @@ export const EXTRA_HOME_SOURCES = [
     "name": "Primenet • WDSL / ADSL",
     "url": "https://www.primenet.com.tr/bireysel-internet-cozumleri/",
     "parser": "primenet",
+    "revision": 2,
     "company_ids": [
       "primenet"
     ],
@@ -553,6 +555,7 @@ export const EXTRA_HOME_SOURCES = [
     "name": "Cypking • WDSL / ADSL / VDSL",
     "url": "https://cypking.net/#pricing",
     "parser": "cypking",
+    "revision": 2,
     "company_ids": [
       "cypking"
     ],
@@ -711,7 +714,8 @@ export const EXTRA_HOME_SOURCES = [
     "provider": "Joker ISP",
     "name": "Joker ISP • Sabit Genişbant",
     "url": "https://www.jokerisp.com/",
-    "parser": "services",
+    "parser": "joker",
+    "revision": 2,
     "company_ids": [
       "bassam-wael"
     ],

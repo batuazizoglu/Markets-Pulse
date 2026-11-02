@@ -4,6 +4,7 @@ import {parseAmount as n, normalizeOffer as offer} from './isp-economics.js';
 import {parseISP, socialLinks, parseAlemPackages, parseFixnetCampaigns} from './isp-parsers.js';
 import {ISP_SCOPE, ISP_COMPANIES, EXTRA_HOME_SOURCES, LEGACY_COMPANIES, companyCoverage, socialDirectory} from './isp-registry.js';
 import {competitiveWindow} from './competitive-changes.js';
+import {withOfficialSourceTransport} from './official-source-transport.js';
 const PARSER_VERSION='home-isp-2';
 const compatibleSnapshot=(row,source)=>row?.source_meta_json?.parser_version===PARSER_VERSION&&
   (row.source_meta_json.source_revision||1)===(source.revision||1);
@@ -32,6 +33,7 @@ export const HOME_INTERNET_SOURCES=[
   ...LEGACY_SOURCES.map(s=>({...s,company_ids:LEGACY_COMPANIES[s.slug]||[]})),
   ...EXTRA_HOME_SOURCES
 ];
+const officialSourceHosts=new Set(HOME_INTERNET_SOURCES.flatMap(s=>[new URL(s.url).hostname,new URL(s.fetch_url||s.url).hostname]));
 
 const TRACK_FIELDS=[
   ['speed_down_mbps','Download Hızı','high'],
@@ -569,11 +571,13 @@ async function fetchPublicPricingDynamic(source){
     const browser=await getLifecellBrowser();page=await browser.newPage();
     await page.setUserAgent(UA);
     page.setDefaultTimeout(15000);
+    // Always obtain a complete response rather than rejecting a valid cached 304.
+    await page.setCacheEnabled(false);
     if(source.parser==='alemnet-dynamic')await page.evaluateOnNewDocument(()=>{
       localStorage.removeItem('packagesData');localStorage.removeItem('packagesTimestamp');
     });
     const response=await page.goto(source.url,{waitUntil:'domcontentloaded',timeout:30000});
-    if(!response?.ok())throw new Error('HTTP '+response?.status());
+    if(!response?.ok()&&response?.status()!==304)throw new Error('HTTP '+response?.status());
     let products=[];
     if(source.parser==='alemnet-dynamic'){
       stage='paket fiyatlarının yüklenmesi';
@@ -632,15 +636,17 @@ export async function fetchSource(source){
     }else if(source.parser==='alemnet-dynamic'||source.parser==='fixnet-dynamic'){
       result=await serialBrowserFetch(()=>fetchPublicPricingDynamic(source));
     }else{
+      result=await withOfficialSourceTransport(source,officialSourceHosts,async dispatcher=>{
       let url=source.fetch_url||source.url,res;
       const host=new URL(url).hostname.replace(/^www\./,'');
       const signal=AbortSignal.timeout(20000);
       for(let i=0;i<5;i++){
-        res=await fetch(url,{headers:{'user-agent':UA,'accept':'text/html,application/xhtml+xml','accept-language':'tr-TR,tr;q=0.9,en;q=0.7'},redirect:'manual',signal});
+        res=await fetch(url,{headers:{'user-agent':UA,'accept':'text/html,application/xhtml+xml','accept-language':'tr-TR,tr;q=0.9,en;q=0.7'},redirect:'manual',signal,dispatcher});
         httpStatus=res.status;
         if(res.status>=300&&res.status<400){
           const next=new URL(res.headers.get('location')||'',url);
-          if(!['http:','https:'].includes(next.protocol)||next.hostname.replace(/^www\./,'')!==host)throw new Error('Beklenmeyen alan adına yönlendirme; kaynak doğrulaması gerekli');
+          if(!['http:','https:'].includes(next.protocol)||next.hostname.replace(/^www\./,'')!==host||next.username||next.password||
+            (dispatcher&&(next.protocol!=='https:'||(next.port&&next.port!=='443'))))throw new Error('Beklenmeyen alan adına yönlendirme; kaynak doğrulaması gerekli');
           await res.body?.cancel();url=next.href;continue;
         }
         break;
@@ -654,14 +660,15 @@ export async function fetchSource(source){
         for(const asset of assets){
           const assetUrl=new URL(asset,url);
           if(assetUrl.hostname.replace(/^www\./,'')!==host)continue;
-          const script=await fetch(assetUrl,{signal,redirect:'error'});
+          const script=await fetch(assetUrl,{signal,redirect:'error',dispatcher});
           if(!script.ok)throw new Error('Paket veri dosyası HTTP '+script.status);
           const js=await script.text();if(js.length>8_000_000)throw new Error('Paket veri dosyası beklenen boyutu aşıyor');
           parserHtml+='\n<script>'+js+'</script>';
         }
       }
       const parsed=parserFor(source,parserHtml);
-      result={ok:true,http_status:res.status,response_ms:Date.now()-t0,products:parsed.products,meta:{...parsed.meta,social_links:socialLinks(html,source.url)}};
+      return {ok:true,http_status:res.status,response_ms:Date.now()-t0,products:parsed.products,meta:{...parsed.meta,social_links:socialLinks(html,source.url)}};
+      });
     }
     result.meta={...result.meta,parser_version:PARSER_VERSION,source_revision:source.revision||1};
     result.products=(result.products||[]).map(p=>({...p,product_url:new URL(p.product_url||source.url,source.url).href,company_ids:source.company_ids,market_segment:source.market_segment||p.market_segment||'residential'}));
