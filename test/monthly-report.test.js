@@ -14,7 +14,8 @@ import {dailyBriefEmailHtml} from '../src/daily-brief-email.js';
 let fixture,ctx;
 const end=new Date(),start=new Date(end.getTime()-30*86400000);
 before(async()=>{
-  fixture=await createEvidenceFixture({count:120});const {pool}=fixture;
+  // Keep evidence in the rolling window regardless of the calendar date of CI.
+  fixture=await createEvidenceFixture({count:120,anchor:new Date(+end-86400000)});const {pool}=fixture;
   await pool.query('DELETE FROM changes'); // Only this isolated, synthetic database.
   await pool.query(`INSERT INTO changes(source_id,scan_id,detected_at,change_type,field_name,old_value,new_value,severity)
     SELECT 1,1,$1::timestamptz,'field_changed','Fiyat','499','599','high' FROM generate_series(1,901)`,[new Date(end.getTime()-3600000).toISOString()]);
