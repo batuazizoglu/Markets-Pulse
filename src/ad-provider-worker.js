@@ -30,6 +30,21 @@ async function counts(db,jobId) {
     COUNT(*) FILTER(WHERE status='error')::int errors
     FROM ad_provider_assets WHERE job_id=$1`,[jobId])).rows[0];
 }
+export function providerCoverageReasons(run,tally){
+  if(run.state==='complete')return [];
+  const reasons=[];
+  if(run.limit_reached)reasons.push('limit_reached');
+  if(run.coverage_denied)reasons.push('supplier_incomplete');
+  if(!run.source_exhausted)reasons.push('dataset_incomplete');
+  if(run.rows_rejected)reasons.push('rejected_rows');
+  if(tally.pending)reasons.push('media_pending');
+  if(tally.missing||tally.errors)reasons.push('media_missing');
+  if(run.expected_ads==null)reasons.push('expected_count_missing');
+  else if(Number(run.expected_ads)!==Number(tally.ads))reasons.push('count_mismatch');
+  if(!run.coverage_complete&&!reasons.length)reasons.push('supplier_confirmation_missing');
+  return reasons;
+}
+
 async function finish(db,run,now) {
   const tally=await counts(db,run.job_id);
   if(tally.pending){await db.query('UPDATE ad_provider_runs SET updated_at=$2 WHERE job_id=$1',[run.job_id,now]);return {...tally,status:'downloading',job_id:run.job_id};}
@@ -44,7 +59,7 @@ async function finish(db,run,now) {
     const seen=(await db.query('SELECT DISTINCT ad_id FROM ad_provider_assets WHERE job_id=$1',[run.job_id])).rows.map(row=>row.ad_id);
     await retireMissingAds(db,run.source_json.page_id,seen,run.created_at);
   }
-  return {...tally,status:state,job_id:run.job_id,coverage_complete:complete};
+  return {...tally,status:state,job_id:run.job_id,coverage_complete:complete,expected_ads:run.expected_ads,coverage_reasons:complete?[]:providerCoverageReasons(run,tally)};
 }
 
 /** One bounded provider operation per tick; external runs are never restarted by polling. */
@@ -245,5 +260,5 @@ export async function getProviderStatus(pool,{env=process.env,now=new Date()}={}
     daily_budget_usd:config.dailyBudgetUsd,reserved_today_usd:Number(budget.rows[0]?.reserved_usd || 0),starts_today:budget.rows[0]?.starts || 0,
     runs:runs.rows.map(r=>({job_id:r.job_id,brand:r.brand,page_id:r.page_id,state:r.state,ads:r.ads,assets:r.assets,captured:r.captured,pending:r.pending,missing:r.missing,errors:r.errors,
       rows_imported:r.rows_imported,rows_rejected:r.rows_rejected,source_exhausted:r.source_exhausted,coverage_complete:r.state==='complete',limit_reached:r.limit_reached,
-      last_error:r.last_error,updated_at:r.updated_at}))};
+      expected_ads:r.expected_ads,coverage_reasons:providerCoverageReasons(r,r),last_error:r.last_error,updated_at:r.updated_at}))};
 }

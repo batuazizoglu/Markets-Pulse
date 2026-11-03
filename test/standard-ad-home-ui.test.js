@@ -68,7 +68,7 @@ test('standard ads retain published filters, evidence and review without technic
     assert.match(d.querySelector('.av-card').textContent,/24\.09\.2026|24\.09\.26/);
     assert.ok(d.querySelector('.av-card a[href*="view_all_page_id=127496543986832"]'));
     assert.ok(d.querySelector('.av-card img[src*="/api/ad-visuals/evidence/"]'));
-    assert.match(d.querySelector('.av-status').textContent,/Bazı reklamlar henüz hazır değil/);
+    assert.match(d.querySelector('.av-status').textContent,/Kaynak kapsamı veya bazı görsellerin güncelliği henüz doğrulanmadı/);
     assert.match(d.querySelector('.av-status').textContent,/Son güncelleme:.*24\.09\.2026|Son güncelleme:.*24\.09\.26/);
     noAdminPanels(d,'.av-pending,.av-cloud,.av-coverage');
     assert.equal(d.querySelector('[data-av-scan],[data-av-analyze],[data-av-provider-status]'),null);

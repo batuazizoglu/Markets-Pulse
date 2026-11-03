@@ -12,7 +12,7 @@ function link(url,label){
 }
 function term(x){return x.duration_days?x.duration_days+' gün'+(x.bonus_days?' + '+x.bonus_days+' gün hediye':''):x.duration_months?x.duration_months+' ay'+(x.bonus_months?' + '+x.bonus_months+' ay hediye':''):'Süre yayımlanmıyor'}
 const price=x=>x.effective_monthly_try!=null?money(x.effective_monthly_try):x.price_status==='quote'?'Teklif ile':'Fiyat yayımlanmıyor';
-const statusText={tracked:'İzleniyor',partial:'Kısmi kapsam',stale:'Son doğrulanmış veri',website_unverified:'Site doğrulanamadı',unavailable:'Erişim / ayrıştırma sorunu',discovery:'Paket doğrulaması gerekli',source_needed:'Kaynak gerekli',pending:'İlk tarama bekleniyor',ok:'Sağlıklı',error:'Erişim sorunu',parse_error:'Paket okunamadı'};
+const statusText={shared:'Ortak katalog',archived:'Arşiv kaynak',tracked:'İzleniyor',partial:'Kısmi kapsam',stale:'Son doğrulanmış veri',website_unverified:'Site doğrulanamadı',unavailable:'Erişim / ayrıştırma sorunu',discovery:'Paket doğrulaması gerekli',source_needed:'Kaynak gerekli',pending:'İlk tarama bekleniyor',ok:'Sağlıklı',error:'Erişim sorunu',parse_error:'Paket okunamadı'};
 // Stable categories describe the recorded field, independently of source severity.
 const changeCategories=[
   {id:'all',label:'Tüm kategoriler',icon:'◫'},
@@ -264,7 +264,7 @@ function renderCoverage(){
   $('hiScopeNote').innerHTML=esc(state.data.scope?.note||'')+' '+link(state.data.scope?.report_url,'BTHK raporu')+' • '+link(state.data.scope?.directory_url,'Resmî firma rehberi');
   $('hiCompanies').innerHTML=companies.map(c=>'<tr><td><b>'+esc(c.legal_name)+'</b><small>'+esc(c.brands.join(' • '))+'</small></td><td>'+ (c.website?link(c.website,'Web sitesi'):'Site doğrulanamadı')+'<div class="hi-source-links">'+c.sources.map(s=>link(s.url,s.name)).join('<br>')+'</div></td><td><span class="status '+(['tracked','partial'].includes(c.status)?'ok':'warn')+'">'+esc(statusText[c.status]||c.status)+'</span></td><td>'+num(c.current_products)+' güncel<br><small>'+num(c.priced_products)+' fiyatlı</small></td></tr>').join('');
   $('hiSourceCount').textContent=state.data.sources.length+' kaynak';
-  $('hiSources').innerHTML=state.data.sources.map(s=>'<div class="hi-source"><div><b>'+link(s.url,s.name)+'</b><small>'+esc(s.ownership_group||'')+'</small>'+(s.coverage_note?'<small>'+esc(s.coverage_note)+'</small>':'')+(s.error?'<small class="hi-source-error">'+esc(s.error)+'</small>':'')+'</div><div class="hi-source-meta"><span class="status '+(s.status==='ok'?'ok':'warn')+'">'+esc(statusText[s.status]||s.status)+'</span><small>'+(s.kind==='campaigns'?num(s.campaign_count||0)+' kampanya':num(s.parsed_count)+' teklif')+(s.retained_count?' • '+s.retained_count+' eski kayıt korunuyor':'')+'</small><small>'+dt(s.captured_at)+'</small></div></div>').join('');
+  $('hiSources').innerHTML=state.data.sources.map(s=>'<div class="hi-source"><div><b>'+link(s.url,s.name)+'</b><small>'+esc(s.ownership_group||'')+'</small>'+(s.coverage_note?'<small>'+esc(s.coverage_note)+'</small>':'')+(s.error?'<small class="hi-source-error">'+esc(s.error)+'</small>':'')+'</div><div class="hi-source-meta"><span class="status '+(['ok','shared'].includes(s.status)?'ok':'warn')+'">'+esc(statusText[s.status]||s.status)+'</span><small>'+(s.retired?'Güncel katalogda yok':s.catalog_source?num(s.shared_count||0)+' ortak teklif • tekrar sayılmaz':s.kind==='campaigns'?num(s.campaign_count||0)+' kampanya':num(s.parsed_count)+' teklif')+(s.retained_count?' • '+s.retained_count+' eski kayıt korunuyor':'')+'</small><small>'+dt(s.captured_at)+'</small></div></div>').join('');
 }
 function renderCampaigns(){
   const rows=state.data.campaigns||[],labels={active:'Aktif',expired:'Süresi doldu',unconfirmed:'Geçerlilik teyidi gerekli'};
@@ -311,7 +311,7 @@ function render(){
   $('home-internet-section').querySelectorAll('[data-family]').forEach(b=>{b.classList.toggle('active',b.dataset.family===state.family);b.setAttribute('aria-pressed',String(b.dataset.family===state.family))});
   renderKpis();renderChanges();populateFilters();renderProducts();renderCompare();renderCampaigns();renderCoverage();renderSocial();renderObservations();
   const times=[...state.data.sources.filter(x=>isAdmin()||x.status==='ok').map(x=>x.captured_at),...state.data.products.map(x=>x.verified_at)].filter(Boolean).sort();$('hiUpdated').textContent=(isAdmin()?'Son tarama ':'Son güncelleme ')+dt(times.at(-1));
-  $('hiFreshness').textContent=!isAdmin()&&(state.data.products.some(x=>x.stale)||state.data.sources.some(x=>x.status!=='ok'))?'Bazı paketlerin güncelliği henüz doğrulanamadı. Son bilinen teklifler gösteriliyor.':'';
+  $('hiFreshness').textContent=!isAdmin()&&(state.data.products.some(x=>x.stale)||state.data.sources.some(x=>!['ok','shared','archived'].includes(x.status)))?'Bazı paketlerin güncelliği henüz doğrulanamadı. Son bilinen teklifler gösteriliyor.':'';
   setView(state.view);
 }
 function setView(view){

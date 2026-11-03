@@ -14,8 +14,8 @@ const trackedRecords=(products,meta)=>[...(products||[]),...(meta?.campaigns||[]
 const UA='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152 Safari/537.36';
 
 const LEGACY_SOURCES=[
-  {slug:'kktcell-home',provider:'Turkcell Ev İnterneti',name:'Kuzey Kıbrıs Turkcell Ev İnterneti',url:'https://www.kktcell.com/internet-paketleri?type=turkcell-ev-interneti',technology:'Ev İnterneti',ownership_group:'Kuzey Kıbrıs Turkcell',parser:'kktcell'},
-  {slug:'kktcell-superbox',provider:'KKTCELL',name:'Kuzey Kıbrıs Turkcell Superbox',url:'https://www.kktcell.com/internet-paketleri?type=superbox',technology:'4.5G FWA',ownership_group:'Kuzey Kıbrıs Turkcell',parser:'kktcell-superbox'},
+  {slug:'kktcell-home',provider:'Turkcell Ev İnterneti',name:'Kuzey Kıbrıs Turkcell Ev İnterneti',url:'https://www.lifecelldigital.com/paketler?altyapi=1&cat=other',aliases:['https://www.kktcell.com/internet-paketleri?type=turkcell-ev-interneti'],catalog_source:'lifecell-digital-home',coverage_note:'Eski Turkcell kategori sayfası boş. Güncel sabit internet paketleri Lifecell Digital resmî kataloğundan ortak izleniyor; teklifler bir kez sayılır.',technology:'Ev İnterneti',ownership_group:'Kuzey Kıbrıs Turkcell',parser:'kktcell'},
+  {slug:'kktcell-superbox',provider:'KKTCELL',name:'Kuzey Kıbrıs Turkcell Superbox',url:'https://www.kktcell.com/internet-paketleri',aliases:['https://www.kktcell.com/internet-paketleri?type=superbox'],revision:2,coverage_note:'Güncel Superbox sayfasında yayımlanan popüler paketler izleniyor. Tam katalog Lifecell Digital kaynağında ayrıca izlenir.',technology:'4.5G FWA',ownership_group:'Kuzey Kıbrıs Turkcell',parser:'kktcell-superbox'},
   {slug:'lifecell-digital-home',provider:'Turkcell Ev İnterneti',name:'Lifecell Digital Ev İnterneti',url:'https://www.lifecelldigital.com/paketler?altyapi=1&cat=other',technology:'WDSL / Fiber / Sabit Genişbant',ownership_group:'Lifecell Digital Ltd.',parser:'lifecell-dynamic'},
   {slug:'lifecell-digital-superbox',provider:'KKTCELL',name:'Lifecell Digital Superbox',url:'https://www.lifecelldigital.com/paketler?altyapi=2',technology:'4.5G FWA',ownership_group:'Lifecell Digital Ltd.',parser:'lifecell-superbox-dynamic'},
   {slug:'extend-wdsl',provider:'Extend',name:'Extend WDSL',url:'https://www.extendbroadband.com/urunler-wdsl.php',technology:'WDSL',ownership_group:'Arınet Security & Internet Consultancy Ltd.',parser:'extend-table',revision:2},
@@ -63,6 +63,27 @@ function parseKktcell(html,source){
   const $=cheerio.load(html);$('script,style,noscript,svg').remove();
   const superboxOnly=source.parser==='kktcell-superbox';
   const out=[],seen=new Set();
+  // The current Superbox hub uses separate title, price and commitment fields.
+  // 4.5G/5G is a radio generation, not an advertised Mbps speed.
+  if(superboxOnly&&$('.c-home-superbox-pack').length){
+    $('.c-home-superbox-pack').each((_,el)=>{
+      const card=$(el),name=clean(card.find('.c-h-pack-title').text()),raw=clean(card.text());
+      const price=n(clean(card.find('.active-price > span').first().text()));
+      const benefits=clean(card.find('.c-h-pack-benefits').text());
+      const duration=benefits.match(/(\d+)\s*Ay\s*Taahhüt/i),speed=benefits.match(/(\d+(?:[.,]\d+)?)\s*Mbps/i);
+      if(!/^Superbox\b/i.test(name)||!(price>0)||!duration||!(Number(duration[1])>0))return;
+      const product_url=card.attr('href'),id=new URL(product_url,source.url).searchParams.get('priceId');
+      const key=[source.slug,id||name,Number(duration[1])].join('|');
+      if(seen.has(key))return;seen.add(key);
+      out.push(offer({source_slug:source.slug,provider:'KKTCELL',brand:'Superbox',product_family:'fwa',ownership_group:source.ownership_group,
+        source_url:source.url,product_url,name,technology:/5G/i.test(benefits)&&!/4\.5G/i.test(benefits)?'5G FWA':'4.5G FWA',
+        speed_down_mbps:speed?n(speed[1]):null,speed_up_mbps:null,data_limit_gb:null,unlimited:/Sınırsız/i.test(name)?true:null,
+        duration_months:Number(duration[1]),bonus_months:0,price_monthly_try:price,install_fee_try:null,
+        features:['Popüler paket seçkisi; tam katalog ayrıca izlenir'],raw_text:raw,
+        product_key:key}));
+    });
+    return out;
+  }
   $('a').each((_,el)=>{
     const raw=clean($(el).text());
     if(!raw||raw.length<12||raw.length>1200)return;
@@ -734,7 +755,7 @@ export async function scanHomeInternet(pool,{sources=HOME_INTERNET_SOURCES,fetch
   try{
     await cleanupHomeInternetMigrationNoise(pool);
     const results=[];
-    const pending=[...sources].sort((a,b)=>Number(a.parser.includes('dynamic'))-Number(b.parser.includes('dynamic')));
+    const pending=sources.filter(s=>!s.catalog_source&&!s.retired).sort((a,b)=>Number(a.parser.includes('dynamic'))-Number(b.parser.includes('dynamic')));
     async function worker(){for(;;){
       const source=pending.shift();if(!source)return;
       let fetched=await fetcher(source);
@@ -764,7 +785,7 @@ export async function scanHomeInternet(pool,{sources=HOME_INTERNET_SOURCES,fetch
     const failure=completed.find(x=>x.status==='rejected');if(failure)throw failure.reason;
     const scanProducts=results.flatMap(x=>x.products||[]);
     console.log('[home-internet-summary]',JSON.stringify({
-      total:scanProducts.length,companies:ISP_COMPANIES.length,sources:results.length,healthy_sources:results.filter(x=>x.ok).length,
+      total:scanProducts.length,companies:ISP_COMPANIES.length,sources:results.length,shared_sources:sources.filter(s=>s.catalog_source).length,archived_sources:sources.filter(s=>s.retired).length,healthy_sources:results.filter(x=>x.ok).length,
       priced:scanProducts.filter(x=>x.effective_monthly_try>0).length,brands:new Set(scanProducts.map(x=>x.provider)).size,
       fixed:scanProducts.filter(x=>(x.product_family||'fixed')==='fixed').length,
       fwa:scanProducts.filter(x=>x.product_family==='fwa').length,
@@ -831,6 +852,11 @@ export function marketPayload(scans,changes,lastGood=[],{days=30,now=new Date()}
   const bySlug=new Map(scans.map(r=>[r.source_slug,r]));
   const good=new Map(lastGood.map(r=>[r.source_slug,r]));
   for(const source of HOME_INTERNET_SOURCES){
+    if(source.retired){
+      sources.push({...source,status:'archived',parsed_count:0,retained_count:0,captured_at:bySlug.get(source.slug)?.captured_at||null,error:null});
+      continue;
+    }
+    if(source.catalog_source)continue;
     const row=bySlug.get(source.slug);
     const usable=row?.status==='ok'&&compatibleSnapshot(row,source);
     const fallback=good.get(source.slug);
@@ -840,7 +866,8 @@ export function marketPayload(scans,changes,lastGood=[],{days=30,now=new Date()}
     if(source.kind==='campaigns')campaigns.push(...(snapshot?.source_meta_json?.campaigns||[]).map(c=>({...c,
       availability:c.expires_at&&c.expires_at<today?'expired':c.availability,
       stale:!!stale,verified_at:snapshot.captured_at})));
-    products.push(...payload.map(x=>({...x,company_ids:source.company_ids,market_segment:source.market_segment||x.market_segment||'residential',
+    const company_ids=[...new Set([...(source.company_ids||[]),...HOME_INTERNET_SOURCES.filter(s=>s.catalog_source===source.slug).flatMap(s=>s.company_ids||[])])];
+    products.push(...payload.map(x=>({...x,company_ids,market_segment:source.market_segment||x.market_segment||'residential',
       stale:!!stale,verified_at:snapshot.captured_at,market_score:scoreOffer({...x,stale})})));
     sources.push({...source,captured_at:row?.captured_at||null,
       last_success_at:snapshot?.captured_at||null,status:row?.status||'pending',
@@ -848,6 +875,13 @@ export function marketPayload(scans,changes,lastGood=[],{days=30,now=new Date()}
       campaign_count:source.kind==='campaigns'?(snapshot?.source_meta_json?.campaigns||[]).length:0,
       retained_count:!usable?payload.length:0,meta:{...row?.source_meta_json,social_links:row?.source_meta_json?.social_links||snapshot?.source_meta_json?.social_links||[]},error:row?.error||null});
   }
+  for(const source of HOME_INTERNET_SOURCES.filter(s=>s.catalog_source)){
+    const canonical=sources.find(s=>s.slug===source.catalog_source);
+    sources.push({...source,status:canonical?.status==='ok'?'shared':canonical?.status||'pending',
+      parsed_count:0,shared_count:canonical?.parsed_count||0,retained_count:0,captured_at:canonical?.captured_at||null,
+      last_success_at:canonical?.last_success_at||null,error:canonical?.error||null,meta:{catalog_source:source.catalog_source}});
+  }
+  sources.sort((a,b)=>HOME_INTERNET_SOURCES.findIndex(s=>s.slug===a.slug)-HOME_INTERNET_SOURCES.findIndex(s=>s.slug===b.slug));
   const companies=companyCoverage(sources,products);
   const priced=products.filter(x=>!x.stale&&x.market_segment!=='business'&&x.effective_monthly_try>0);
   const speedBased=priced.filter(x=>x.speed_down_mbps>0);

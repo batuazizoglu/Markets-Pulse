@@ -18,6 +18,7 @@ import { generateEvidencePack } from './evidence-pack.js';
 import { getReportEmailStatus, sendReportEmail } from './report-email.js';
 import { sendPersonalReportEmail } from './manual-report-email.js';
 import { getHomeInternetMarket, loadHomeInternetChanges, scanHomeInternet, HOME_INTERNET_SOURCES } from './home-internet.js';
+import {getProviderStatus} from './ad-provider-worker.js';
 import { registerAuth, bootstrapInitialUsers } from './auth.js';
 import { registerEvidenceRoutes } from './evidence-archive.js';
 import { reportDays } from './report-data.js';
@@ -298,6 +299,8 @@ setTimeout(runAdCloud,15000);
 setTimeout(()=>Promise.all([getAdVisuals(pool,{limit:1}),getAdVisuals(pool,{limit:1,view:'archive'})])
   .then(([data,archive])=>console.log('[ad-live-visibility]',JSON.stringify({active:data.total,archived:archive.total,pending_active_media:data.pending_media.total,max_observation_age_hours:data.visibility.max_observation_age_hours})))
   .catch(()=>console.error('[ad-live-visibility] status unavailable')),2000);
+setTimeout(()=>getProviderStatus(pool).then(data=>console.log('[ad-provider-coverage]',JSON.stringify({runs:data.runs})))
+  .catch(()=>console.error('[ad-provider-coverage] status unavailable')),2500);
 setTimeout(warmKktcellCatalog,1500);
 setTimeout(()=>scanAll().catch(e=>console.error('startup scan failed',e)),5000);
 setTimeout(()=>captureBenchmarkHistory(false).catch(e=>console.error('startup benchmark history failed',e)),25000);

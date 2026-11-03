@@ -104,7 +104,7 @@ export const ISP_COMPANIES = [
     "brand": "Flytom",
     "id": "flytom",
     "legal_name": "Flytom Networks Ltd.",
-    "website": "https://www.flytom.net/",
+    "website": "https://flynet.net/",
     "website_status": "verified"
   },
   {
@@ -354,7 +354,7 @@ export const EXTRA_HOME_SOURCES = [
   {slug:'broadmax-apartment',provider:'Broadmax',name:'Broadmax • Apartman',url:'https://www.broadmax.net/hizmetler-apartman',fetch_url:'https://www.broadmax.net/?page=customer&action=hizmetler-apartman',aliases:['https://www.broadmax.net/apartman-fiyat2/'],coverage_note:'Apartman paketleri güncel resmî katalogdan alınıyor.',parser:'netonline',technology:'Apartman WDSL',company_ids:['broadmax'],ownership_group:'Broadmax İletişim Ltd.'},
   {slug:'multimax-apartment',provider:'Multimax',name:'Multimax • Ev / Apartman',url:'https://www.mmcyp.com/hizmetler-apartman',fetch_url:'https://www.mmcyp.com/?page=customer&action=hizmetler-apartman',aliases:['https://www.mmcyp.com/ev-apartman.php'],coverage_note:'Eski ev-apartman.php adresi 404 dönüyor; güncel Apartman kataloğu izleniyor.',parser:'netonline',technology:'Apartman WDSL',company_ids:['netonline'],ownership_group:'Netonline Bilişim Şti. Ltd.'},
   {slug:'multimax-plus',provider:'Multimax',name:'Multimax • WDSL Plus',url:'https://www.mmcyp.com/hizmetler-wdsl-plus',fetch_url:'https://www.mmcyp.com/?page=customer&action=hizmetler-wdsl-plus',parser:'netonline',technology:'WDSL Plus',company_ids:['netonline'],ownership_group:'Netonline Bilişim Şti. Ltd.'},
-  {slug:'multimax-ozgur',provider:'Multimax',name:'Multimax • Özgür Paketler (eski kaynak)',url:'https://www.mmcyp.com/ozgur-paketler.php',coverage_note:'Özgür Paketler bağlantısı 404 dönüyor. Güncel eşdeğeri doğrulanamadı; Plus paketleri ayrı bir kategoridir.',parser:'isp-table',technology:'WDSL',company_ids:['netonline'],ownership_group:'Netonline Bilişim Şti. Ltd.'},
+  {slug:'multimax-ozgur',provider:'Multimax',name:'Multimax • Özgür Paketler (arşiv)',retired:true,url:'https://www.mmcyp.com/ozgur-paketler.php',coverage_note:'Özgür Paketler bağlantısı 404 dönüyor. Güncel eşdeğeri doğrulanamadı; Plus paketleri ayrı bir kategoridir.',parser:'isp-table',technology:'WDSL',company_ids:['netonline'],ownership_group:'Netonline Bilişim Şti. Ltd.'},
   {slug:'multimax-business',provider:'Multimax',name:'Multimax • Kurumsal',url:'https://www.mmcyp.com/kurumsal',fetch_url:'https://www.mmcyp.com/?page=customer&action=kurumsal',aliases:['https://www.mmcyp.com/kurumsal-paketler.php'],coverage_note:'Eski kurumsal-paketler.php adresi 404 dönüyor. Güncel sayfada dedike bağlantı hizmeti var; hız ve fiyat yayımlanmıyor.',parser:'netonline-business',technology:'Dedike',market_segment:'business',company_ids:['netonline'],ownership_group:'Netonline Bilişim Şti. Ltd.'},
   {slug:'comtech-wireless',provider:'Comtech',name:'Comtech • Wireless',url:'http://www.comtechmax.com/comtech_wireless.html',parser:'comtech',technology:'WDSL',company_ids:['comtech'],ownership_group:'Comtech Ticaret Ltd.'},
   {slug:'fixnet-campaigns',provider:'FixNet',name:'FixNet • Kampanyalar',url:'https://www.fixnetbroadband.com/kampanyalar',parser:'fixnet-campaigns',kind:'campaigns',technology:'Kampanya',company_ids:['fixnet'],ownership_group:'Fixnet Broadband Ltd.'},
@@ -738,8 +738,11 @@ export const EXTRA_HOME_SOURCES = [
     "slug": "flytom-home",
     "provider": "Flytom",
     "name": "Flytom • Sabit Genişbant",
-    "url": "https://www.flytom.net/",
-    "parser": "services",
+    "url": "https://flynet.net/",
+    "aliases": ["https://www.flytom.net/"],
+    "coverage_note": "Eski alan adı Flynet adresine yönleniyor; resmî sitede FLYTOM NETWORKS LTD. unvanı ve aynı telefon doğrulandı. Fiyat görseli otomatik fiyat verisi sayılmaz.",
+    "parser": "flynet",
+    "revision": 2,
     "company_ids": [
       "flytom"
     ],
@@ -760,6 +763,8 @@ export const EXTRA_HOME_SOURCES = [
   },
   {
     "slug": "vodafone-evde-home",
+    "catalog_source": "telsim-home",
+    "coverage_note": "vodafoneevde.com Red Spot hizmetini tanıtıyor. Ev interneti tarifeleri Telsim resmî kataloğundan ortak izleniyor; teklifler bir kez sayılır.",
     "provider": "Vodafone Evde",
     "name": "Vodafone Evde • Sabit Genişbant",
     "url": "https://www.vodafoneevde.com/",
@@ -795,10 +800,11 @@ export const LEGACY_COMPANIES = {
 export function companyCoverage(sources, products) {
   return ISP_COMPANIES.map(c => {
     const matched=sources.filter(s=>(s.company_ids||[]).includes(c.id));
+    const monitored=matched.filter(s=>!s.retired);
     const rows=products.filter(p=>(p.company_ids||[]).includes(c.id));
     const current=rows.filter(p=>!p.stale);
     const status=!c.website?'website_unverified':!matched.length?'source_needed':
-      matched.some(s=>s.status==='ok'&&s.parsed_count>0)?(matched.every(s=>s.status==='ok')?'tracked':'partial'):
+      monitored.some(s=>['ok','shared'].includes(s.status)&&(s.parsed_count>0||s.shared_count>0))?(monitored.every(s=>['ok','shared'].includes(s.status))?'tracked':'partial'):
       rows.length?'stale':matched.some(s=>s.status==='discovery')?'discovery':
       matched.every(s=>s.status==='pending')?'pending':'unavailable';
     return {...c,brands:[...new Set([c.brand,...matched.map(s=>s.provider)])],

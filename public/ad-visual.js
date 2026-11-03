@@ -24,7 +24,8 @@ function categoryEntries(labels=categoryLabels()){
 }
 function selectableCategory(category){return categoryEntries().some(([key])=>key===category)}
 function categoryLabel(row,labels){return labels[row.category]||categoryName(row.category_label)||coreLabels.review}
-function providerCounters(run){return '<p data-av-provider-counts>Bulunan reklam: '+count(run.ads)+' • Keşfedilen görsel / varyant: '+count(run.assets)+' • Kaydedilen: '+count(run.captured)+' • Bekleyen: '+count(run.pending)+' • Medyası eksik: '+count(run.missing)+' • İndirme hatası: '+count(run.errors)+'</p><p>'+esc(run.coverage_complete===true?'Sağlayıcı kapsamı tam olarak doğruladı.':run.limit_reached?'Sağlayıcı sınırına ulaşıldı; kapsam kısmi.':'Kapsamın tam olduğu doğrulanmadı; sıfır sonuç reklam olmadığı anlamına gelmez.')+'</p>'}
+const coverageReasonLabels={limit_reached:'Sağlayıcı sınırına ulaşıldı',supplier_incomplete:'Sağlayıcı sonuçların eksik olduğunu bildirdi',dataset_incomplete:'Veri aktarımı tamamlanmadı',rejected_rows:'Doğrulanamayan kayıtlar var',media_pending:'Görsel aktarımı sürüyor',media_missing:'Eksik veya indirilemeyen görseller var',expected_count_missing:'Sağlayıcı toplam reklam sayısını bildirmedi',count_mismatch:'Bildirilen toplam ile alınan reklam sayısı farklı',supplier_confirmation_missing:'Sağlayıcı tam kapsam onayı vermedi'};
+function providerCounters(run){return '<p data-av-provider-counts>Bulunan reklam: '+count(run.ads)+' • Keşfedilen görsel / varyant: '+count(run.assets)+' • Kaydedilen: '+count(run.captured)+' • Bekleyen: '+count(run.pending)+' • Medyası eksik: '+count(run.missing)+' • İndirme hatası: '+count(run.errors)+'</p><p>'+esc(run.coverage_complete===true?'Sağlayıcı kapsamı tam olarak doğruladı.':run.limit_reached?'Sağlayıcı sınırına ulaşıldı; kapsam kısmi.':(run.coverage_reasons||[]).map(r=>coverageReasonLabels[r]).filter(Boolean).join(' • ')||'Kapsamın tam olduğu doğrulanmadı; sıfır sonuç reklam olmadığı anlamına gelmez.')+'</p>'}
 function safeLink(url){try{const u=new URL(url);return u.protocol==='https:'&&!u.username&&!u.password&&['facebook.com','www.facebook.com','instagram.com','www.instagram.com'].includes(u.hostname)?u.href:'#'}catch{return '#'}}
 function imageUrl(hash){return /^[a-f0-9]{64}$/.test(hash||'')?'/api/ad-visuals/evidence/'+hash+'.jpg':''}
 function captureBrand(brand,data=state.data){
@@ -77,7 +78,7 @@ function simpleStatus(data,sources){
   const m=data.monitoring||{},c=data.cloud?.candidates||{},display=data.display_status;
   const incomplete=display?display.incomplete:count(data.pending_media?.total)>0||count(c.pending)+count(c.retry)+count(c.error)>0||['partial','blocked','error','unverified','pending','stale','sync_error'].includes(m.status)||sources.some(source=>['partial','blocked','error','retry','unverified','not_scanned','waiting_config','queued','running','start_unknown'].includes(source.status));
   const updated=display?.updated_at||m.checked_at||(data.rows||[]).map(row=>row.observed_at).filter(Boolean).sort().at(-1);
-  return (incomplete?'<span>Bazı reklamlar henüz hazır değil. Hazır olanları aşağıda görebilirsiniz.</span>':'')+(updated?'<span>Son güncelleme: '+stamp(updated)+'</span>':'');
+  return (incomplete?'<span>Kaynak kapsamı veya bazı görsellerin güncelliği henüz doğrulanmadı. Doğrulanan reklamlar aşağıda gösterilir.</span>':'')+(updated?'<span>Son güncelleme: '+stamp(updated)+'</span>':'');
 }
 function offerText(o={}){
   return [o.price_try==null?'Fiyat okunamadı':money(o.price_try)+(o.billing_period==='monthly'?' / ay':o.billing_period==='unknown'?' • Dönem doğrulanmadı':''),
