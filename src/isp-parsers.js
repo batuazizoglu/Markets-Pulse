@@ -257,6 +257,22 @@ function joker(html,source){
   });
   return out;
 }
+function flynet(html,source){
+  const $=document(html),out=[];
+  // The public site identifies three package families. Its price list is an
+  // image: never infer a numeric price, a single speed or a term from a range.
+  $('h1,h2,h3,h4').each((_,h)=>{
+    const name=clean($(h).text());if(!/^(FLY|PRO|ULTRA) Paket$/i.test(name))return;
+    let container=$(h).parent();
+    for(let i=0;i<4&&!container.find('li').length;i++)container=container.parent();
+    if(container.find('h1,h2,h3,h4').length!==1)return;
+    const raw=clean(container.text());if(!/Mbps/i.test(raw))return;
+    out.push(base(source,{name,technology:'Sabit Genişbant',price_status:'not_published',
+      market_segment:/ULTRA/i.test(name)?'business':'residential',unlimited:/Kotasız/i.test(raw)?true:null,
+      features:[...container.find('li').map((_,li)=>clean($(li).text())).get(),'Fiyat listesi görselde; fiyat ve dönem doğrulaması gerekli'],raw_text:raw}));
+  });return out;
+}
+
 export function parseServices(html,source){
   const $=document(html),out=[],seen=new Set();
   $('h1,h2,h3,h4').each((_,h)=>{
@@ -345,7 +361,7 @@ function extendBusiness(html,source){
 
 export function parseISP(html,source){
   const parser={'towernet-bundle':parseTowernetBundle,'extend-business':extendBusiness,'extend-pricing':extendPricing,
-    xrealnet,comtech,'netonline-business':netonlineBusiness,cypking,joker,netonline:parseNetonline,haypem,surface,primenet,royalnet,goldsurf,enson:tables,analiz:tables,'isp-table':tables,services:parseServices};
+    flynet,xrealnet,comtech,'netonline-business':netonlineBusiness,cypking,joker,netonline:parseNetonline,haypem,surface,primenet,royalnet,goldsurf,enson:tables,analiz:tables,'isp-table':tables,services:parseServices};
   const rows=(parser[source.parser]||(()=>[]))(html,source);
   return [...new Map(rows.map(r=>[r.product_key||[r.source_slug,r.technology,r.name,r.duration_months,r.duration_days,r.bonus_months,r.bonus_days].join('|'),r])).values()];
 }

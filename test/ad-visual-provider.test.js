@@ -70,3 +70,14 @@ test('video preview evidence is retained through feed validation and labeled as 
   const dom=await dashboard({rows:[ad],groups:{home:1}});
   try{assert.match(dom.window.document.querySelector('.av-flags').textContent,/Video önizlemesi incelendi/)}finally{dom.window.close()}
 });
+
+test('complete downloads with missing supplier counts explain coverage without claiming a failed download',async()=>{
+  const dom=await dashboard({cloud:{capture_provider:{provider:'apify',enabled:true,configured:true,runs:[{brand:'Nethouse',job_id:3,state:'partial',ads:11,assets:11,captured:11,pending:0,missing:0,errors:0,coverage_complete:false,coverage_reasons:['expected_count_missing'],updated_at:at}]}}});
+  try{
+    const d=dom.window.document,filter=d.querySelector('[data-av-brand]');filter.value='Nethouse';filter.dispatchEvent(new dom.window.Event('change',{bubbles:true}));
+    const text=d.querySelector('.av-source-focus').textContent;
+    assert.match(text,/Kaydedilen: 11/);assert.match(text,/İndirme hatası: 0/);
+    assert.match(text,/Sağlayıcı toplam reklam sayısını bildirmedi/);
+    assert.doesNotMatch(text,/Sağlayıcı kapsamı tam olarak doğruladı/);
+  }finally{dom.window.close()}
+});

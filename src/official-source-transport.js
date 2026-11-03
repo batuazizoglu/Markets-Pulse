@@ -17,9 +17,13 @@ export async function withOfficialSourceTransport(source,allowedHosts,read,{env=
     try{
       const result=await read(agent);
       return {...result,meta:{...result.meta,transport:'proxy',direct_error:code}};
-    }catch{
-      // Proxy credentials, endpoints and upstream exception text stay private.
-      throw new Error('Resmi kaynak bağlantısı doğrudan ve proxy üzerinden tamamlanamadı');
+    }catch(error){
+      // Preserve only known transport diagnostics, never upstream text/URLs.
+      const rawCode=error?.cause?.code||error?.code;
+      const known=new Set([...transient,'ENOTFOUND','CERT_HAS_EXPIRED','ERR_TLS_CERT_ALTNAME_INVALID','DEPTH_ZERO_SELF_SIGNED_CERT','UND_ERR_HEADERS_TIMEOUT']);
+      const http=String(error?.message||'').match(/^HTTP (\d{3})$/)?.[1];
+      const reason=http?'HTTP '+http:known.has(rawCode)?rawCode:error?.name==='TimeoutError'?'TIMEOUT':null;
+      throw new Error('Resmi kaynak bağlantısı doğrudan ve proxy üzerinden tamamlanamadı'+(reason?' ('+reason+')':''));
     }finally{await agent.destroy().catch(()=>{})}
   }
 }

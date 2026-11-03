@@ -36,3 +36,9 @@ test('production source fetch refuses proxy redirects to HTTP, unrelated domains
     }
   }finally{globalThis.fetch=originalFetch;for(const key of keys){if(previous[key]===undefined)delete process.env[key];else process.env[key]=previous[key]}}
 });
+
+test('fallback diagnostics expose a known status but never untrusted upstream text',async()=>{
+  for(const [error,want] of [[new Error('HTTP 403'),'HTTP 403'],[Object.assign(new Error('secret endpoint'),{cause:{code:'ENOTFOUND'}}),'ENOTFOUND']]){
+    await assert.rejects(read(source,hosts,async dispatcher=>{if(!dispatcher)throw timeout();throw error},{env,createAgent:()=>({destroy:async()=>{}})}),e=>e.message.includes(want)&&!e.message.includes('secret'));
+  }
+});

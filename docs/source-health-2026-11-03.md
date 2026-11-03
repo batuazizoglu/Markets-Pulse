@@ -1,0 +1,15 @@
+# Source health maintenance — 3 November 2026
+
+The source directory retains 56 entries and all 29 legal companies. Collection now has 53 independent active sources, two shared-catalog entries, and one archived source. Shared entries inherit their canonical source's failure/freshness and do not duplicate products or network requests. Archived entries do not emit removal events; their historical scans and changes remain in the database.
+
+- `kktcell-home`: the former filtered page now has an empty catalogue. The same fixed-internet brand is monitored through the existing official Lifecell Digital catalogue. Legal-company attribution includes both companies without duplicating offers.
+- `kktcell-superbox`: the official `/internet-paketleri` hub replaced the old empty query URL. Its three popular cards use separate title, price and commitment fields. Preserve 10/20 Mbps distinctions, 6/12-month commitments, native price IDs, and unknown speed for 4.5G. Do not treat the `(6+6 Ay)` name as six free months. This is a popular selection; the separate Lifecell Superbox source remains the full catalogue.
+- `vodafone-evde-home`: the corporate site publishes Red Spot information, not an independent home-tariff catalogue. Its tariffs are already monitored through `telsim-home`.
+- `multimax-ozgur`: confirmed HTTP 404, no verified successor. Preserve as an archived source, not as an alias of the different Plus plans.
+- `flytom-home`: the old official address redirects to `https://flynet.net/`, whose company name FLYTOM NETWORKS LTD. and telephone match the official directory. Monitor its three package families with no invented numeric price, fixed speed or term; the price list is an image. Live retrieval remains dependent on origin availability.
+
+External access problems are not converted into healthy sources: FixNet returns 403 from production, Airmax and Longnet have TLS failures, Cyprus Sky DNS is absent, and Towernet/Gold Surf connections time out. HTTPS verification stays enabled; denials are never retried through alternative IPs. The existing one-proxy retry for transient connection failures now emits only allowlisted failure codes, without credentials or upstream exception strings.
+
+Provider media completion and source coverage are separate. A successful dataset transfer with all images saved still cannot prove full coverage without the supplier's expected count and explicit completeness declaration. The API, admin panel and startup audit now expose the precise missing condition. Existing conservative retirement rules and daily budgets remain unchanged. No replacement paid runs are started by the diagnostic.
+
+Primary evidence checked: https://www.kktcell.com/internet-paketleri ; https://www.lifecelldigital.com/paketler?altyapi=1&cat=other ; https://www.vodafoneevde.com/ ; https://www.kktctelsim.com/tr/internet/evde-internet-ve-red-box/vodafone-evde-internet ; https://www.mmcyp.com/ozgur-paketler.php ; https://flynet.net/ ; https://www.bthk.org/en/yetkilendirilen-haberlesme-saglayicilar/ ; https://apify.com/apify/facebook-ads-scraper/output-schema .
