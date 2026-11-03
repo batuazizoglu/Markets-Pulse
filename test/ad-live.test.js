@@ -75,3 +75,25 @@ test('unanalysed media uses the same live policy and newer creative evidence hid
     assert.equal((await getAdVisuals(db,{now})).total,0);assert.equal((await getPendingAdVisuals(db,{now})).total,1);
   }finally{await db.close();}
 });
+
+test('archive is the exact complement of current ads, including unknown status and superseded creatives',async()=>{
+  const db=await setup();
+  try{
+    for(const a of [ad('500001'),ad('500002','inactive'),ad('500003','unknown'),ad('500004','active',72),ad('500005','active',-1),{...ad('500006'),ad_status:null},ad('500007')])await seed(db,a);
+    const job=(await db.query("INSERT INTO ad_cloud_jobs(batch_key,brand,source_json) VALUES('archive-newer','Telsim',$1) RETURNING *",[{page_id:page}])).rows[0];
+    await persistCloudCapture(db,{...ad('500007'),observed_at:at(0),evidence:[{bytes:jpeg,sha256:hash,captured_at:at(0)}]},job);
+    const current=await getAdVisuals(db,{now}),archived=await getAdVisuals(db,{now,view:'archive',limit:2});
+    assert.equal(current.total,1);assert.equal(archived.total,6);assert.equal(archived.groups.home,6);assert.equal(archived.brand_groups.Telsim.home,6);
+    assert.equal(archived.visibility.active_only,false);assert.equal(archived.visibility.view,'archive');
+    let cursor,rows=[];
+    do{const data=await getAdVisuals(db,{now,view:'archive',limit:2,...(cursor?{cursor}:{})});rows.push(...data.rows);cursor=data.pagination.next_cursor;}while(cursor);
+    assert.equal(new Set(rows.map(x=>x.key)).size,6);assert.ok(rows.every(x=>x.archived&&!current.rows.some(y=>y.key===x.key)));
+    const reasons=Object.fromEntries(rows.map(x=>[x.ad_id,x.archive_reason]));assert.deepEqual(reasons,{'500002':'inactive','500003':'unverified','500004':'outdated','500005':'outdated','500006':'unverified','500007':'superseded'});
+    await assert.rejects(getAdVisuals(db,{now,cursor:archived.pagination.next_cursor}),/Geçersiz/);
+    for(const view of ['all','',[],{}])await assert.rejects(getAdVisuals(db,{now,view}),/Geçersiz/);
+    const filtered=await getAdVisuals(db,{now,view:'archive',brand:'Telsim',category:'home'});assert.equal(filtered.pagination.total,6);
+    await recordAdStatus(db,{...ad('500004'),observed_at:at(0)});
+    assert.equal((await getAdVisuals(db,{now})).total,2);assert.equal((await getAdVisuals(db,{now,view:'archive'})).total,5);
+    assert.equal((await db.query('SELECT count(*)::int n FROM ad_visual_items')).rows[0].n,7);
+  }finally{await db.close();}
+});

@@ -195,17 +195,19 @@ export function syncAdVisuals(pool,sources,{fetcher=fetch}={}){
     }
   })().finally(()=>{inFlight=null});return inFlight;
 }
-function pageInput({limit=400,brand='',category='',cursor}={},categories=AD_CATEGORIES){
+function pageInput({limit=400,brand='',category='',view='active',cursor}={},categories=AD_CATEGORIES){
   const invalid=()=>{const e=new Error('Geçersiz reklam sayfası veya filtresi');e.status=400;throw e};
+  if(!['active','archive'].includes(view))invalid();
   if(typeof limit!=='number'&&typeof limit!=='string'||!/^\d{1,3}$/.test(String(limit))||Number(limit)<1||Number(limit)>400)invalid();
   if(typeof brand!=='string'||brand.length>120||brand!==brand.trim()||/[\u0000-\u001f\u007f]/.test(brand)||typeof category!=='string'||category&&!Object.hasOwn(categories,category))invalid();
   let after=null;
   if(cursor!==undefined&&cursor!==null){
     if(typeof cursor!=='string'||!/^[A-Za-z0-9_-]{1,1500}$/.test(cursor))invalid();
     try{after=JSON.parse(Buffer.from(cursor,'base64url').toString('utf8'))}catch{invalid()}
+    if((after?.view??'active')!==view)invalid();
     if(!after||after.v!==1||after.brand!==brand||after.category!==category||typeof after.k!=='string'||!after.k||after.k.length>120||/[\u0000-\u001f\u007f]/.test(after.k)||typeof after.t!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(after.t)||after.t.startsWith('0000')||!Number.isFinite(+new Date(after.t))||new Date(after.t).toISOString()!==after.t.slice(0,23)+'Z')invalid();
   }
-  return {limit:Number(limit),brand,category,after};
+  return {limit:Number(limit),brand,category,view,after};
 }
 const pendingMediaWhere="c.status IN ('pending','retry','error') AND NOT EXISTS (SELECT 1 FROM ad_visual_items a WHERE a.ad_key=c.ad_key AND a.observed_at>=c.observed_at) AND EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.payload->'images')='array' THEN c.payload->'images' ELSE '[]'::jsonb END) image JOIN ad_visual_evidence e ON e.sha256=image->>'sha256')";
 async function pendingMediaCounts(pool,now=new Date()){
@@ -235,15 +237,18 @@ export async function getAdVisuals(pool,{now=new Date(),...options}={}){
   const categories=await getAdCategories(pool);
   const live=liveAdSql('a');
   const currentCreative="NOT EXISTS (SELECT 1 FROM ad_cloud_candidates newer WHERE newer.ad_key=a.ad_key AND newer.observed_at>a.observed_at)";
-  const {limit,brand,category,after}=pageInput(options,categories),params=liveAdWindow(now),where=[live.where,currentCreative];
+  const {limit,brand,category,view,after}=pageInput(options,categories),params=liveAdWindow(now);
+  // IS NOT TRUE includes unknown/null source status in the archive as well.
+  const active=`(${live.where}) AND ${currentCreative}`;
+  const visibility=view==='archive'?`(${active}) IS NOT TRUE`:active,where=[visibility];
   if(brand){params.push(brand);where.push('a.brand=$'+params.length)}
   if(category){params.push(category);where.push('a.category=$'+params.length)}
   if(after){params.push(after.t,after.k);where.push('(a.observed_at<$'+(params.length-1)+'::timestamptz OR (a.observed_at=$'+(params.length-1)+'::timestamptz AND a.ad_key>$'+params.length+'))')}
   params.push(limit+1);
   const [data,sync,counts,pendingMedia]=await Promise.all([
-    pool.query('SELECT a.ad_key,a.first_seen_at,a.observed_at,'+live.checked+' activity_checked_at,to_char(a.observed_at AT TIME ZONE \'UTC\',\'YYYY-MM-DD"T"HH24:MI:SS.US"Z"\') cursor_time,a.analysis_json,c.status ai_queue_status,c.analyzed_at,c.review_round FROM ad_visual_items a '+live.join+' LEFT JOIN ad_cloud_candidates c ON c.ad_key=a.ad_key WHERE '+where.join(' AND ')+' ORDER BY a.observed_at DESC,a.ad_key ASC LIMIT $'+params.length,params),
+    pool.query('SELECT a.ad_key,a.first_seen_at,a.observed_at,'+live.checked+' activity_checked_at,'+live.status+' activity_status,NOT('+currentCreative+') superseded,to_char(a.observed_at AT TIME ZONE \'UTC\',\'YYYY-MM-DD"T"HH24:MI:SS.US"Z"\') cursor_time,a.analysis_json,c.status ai_queue_status,c.analyzed_at,c.review_round FROM ad_visual_items a '+live.join+' LEFT JOIN ad_cloud_candidates c ON c.ad_key=a.ad_key WHERE '+where.join(' AND ')+' ORDER BY a.observed_at DESC,a.ad_key ASC LIMIT $'+params.length,params),
     pool.query('SELECT * FROM ad_visual_sync WHERE id=1'),
-    pool.query('SELECT a.brand,a.category,count(*)::int count FROM ad_visual_items a '+live.join+' WHERE '+live.where+' AND '+currentCreative+' GROUP BY a.brand,a.category',liveAdWindow(now)),pendingMediaCounts(pool,now)
+    pool.query('SELECT a.brand,a.category,count(*)::int count FROM ad_visual_items a '+live.join+' WHERE '+visibility+' GROUP BY a.brand,a.category',liveAdWindow(now)),pendingMediaCounts(pool,now)
   ]);
   const status=sync.rows[0]||{};
   const stale=t=>!t||+now-+new Date(t)>48*3600000;
@@ -254,11 +259,12 @@ export async function getAdVisuals(pool,{now=new Date(),...options}={}){
     brandGroups[row.brand]||=Object.fromEntries(Object.keys(categories).map(k=>[k,0]));brandGroups[row.brand][row.category]=row.count;
     if((!brand||row.brand===brand)&&(!category||row.category===category))total+=row.count;
   }
-  const rows=page.map(x=>({...x.analysis_json,ad_status:'active',activity_checked_at:x.activity_checked_at,first_seen_at:x.first_seen_at,stale:false,ai_queue_status:x.ai_queue_status||null,
+  const rows=page.map(x=>({...x.analysis_json,ad_status:x.activity_status||'unknown',activity_checked_at:x.activity_checked_at,first_seen_at:x.first_seen_at,stale:view==='archive',archived:view==='archive',
+    archive_reason:view!=='archive'?null:x.superseded?'superseded':x.activity_status==='inactive'?'inactive':x.activity_status!=='active'?'unverified':'outdated',ai_queue_status:x.ai_queue_status||null,
     ai_analysis:x.analysis_json.ai_analysis||(x.analyzed_at?{status:'completed',analyzed_at:x.analyzed_at,pass:x.ai_queue_status==='analyzed'?(x.review_round||0)+1:Math.max(1,x.review_round||0)}:null)}));
-  return {generated_at:now.toISOString(),categories,rows,visibility:{active_only:true,max_observation_age_hours:AD_ACTIVE_MAX_AGE_HOURS},
+  return {generated_at:now.toISOString(),categories,rows,visibility:{view,active_only:view==='active',max_observation_age_hours:AD_ACTIVE_MAX_AGE_HOURS},
     groups,brand_groups:brandGroups,total:Object.values(groups).reduce((sum,n)=>sum+n,0),pending_media:pendingMedia,
-    pagination:{limit,total,has_more:hasMore,next_cursor:hasMore?Buffer.from(JSON.stringify({v:1,t:last.cursor_time,k:last.ad_key,brand,category})).toString('base64url'):null,brand:brand||null,category:category||null},
+    pagination:{limit,total,has_more:hasMore,next_cursor:hasMore?Buffer.from(JSON.stringify({v:1,t:last.cursor_time,k:last.ad_key,brand,category,view})).toString('base64url'):null,brand:brand||null,category:category||null,view},
     monitoring:{...status,stale:stale(status.checked_at),status:status.last_error?'sync_error':!status.checked_at?'pending':stale(status.checked_at)?'stale':status.status,
       coverage:(status.coverage_json||[]).map(x=>({...x,stale:stale(x.checked_at)})),schedule:status.schedule_json||null}};
 }
@@ -283,7 +289,7 @@ export function registerAdVisualRoutes(app,pool,sources,{sync=syncAdVisuals,now=
     try{const result=await sync(pool,sources);res.json({...await getAdVisuals(pool),sync:result})}catch(e){next(e)}
   });
   app.get('/api/ad-visuals',async(req,res,next)=>{try{
-    const data=await getAdVisuals(pool,{limit:req.query.limit,brand:req.query.brand,category:req.query.category,cursor:req.query.cursor});
+    const data=await getAdVisuals(pool,{limit:req.query.limit,brand:req.query.brand,category:req.query.category,view:req.query.view,cursor:req.query.cursor});
     // Source identity is independent of successful capture or AI publication.
     data.source_directory=socialDirectory(sources).map(({brand,page_id,capture_brand,ad_library_url,ad_library_type,facebook,instagram,additional_social_links,research_note,research_checked_at})=>({brand,page_id:page_id||null,capture_brand,ad_library_url,ad_library_type,country:'CY',facebook,instagram,additional_social_links,research_note,research_checked_at}));
     if(cloudStatus){data.cloud=await cloudStatus();data.monitoring.schedule=data.cloud.schedule}

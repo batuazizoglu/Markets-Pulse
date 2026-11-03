@@ -121,6 +121,17 @@ test('standard report status is minimal while downloads and delivery to the sign
   assert.deepEqual(deliveries.at(-1),{type:'weekly',email:'reader@example.com'});
 });
 
+test('archive is readable by standard users without operational details and validates view scope',async()=>{
+  const old={key:'164143610515:999999999:1',page_id:'164143610515',ad_id:'999999999',ad_status:'inactive',brand:'Telsim',category:'home',title:'Archived package',observed_at:seen,images:[{sha256:hash}],ai_analysis:{model:'internal-model'}};
+  await db.query("INSERT INTO ad_visual_items(ad_key,brand,category,first_seen_at,observed_at,meaning_hash,analysis_json) VALUES($1,'Telsim','home',$2,$2,'archive-fixture',$3)",[old.key,seen,old]);
+  const response=await request('/api/ad-visuals?view=archive&category=home'),data=await response.json();assert.equal(response.status,200);
+  assert.equal(data.rows.length,1);assert.equal(data.rows[0].title,'Archived package');assert.equal(data.rows[0].archived,true);assert.equal(data.rows[0].archive_reason,'inactive');assert.equal(data.rows[0].images[0].sha256,hash);
+  assert.equal(data.pagination.total,1);assert.equal(data.visibility.view,'archive');assert.ok(!Object.hasOwn(data.rows[0],'ai_analysis'));assert.ok(!Object.hasOwn(data,'cloud'));
+  assert.equal((await (await request('/api/ad-visuals')).json()).rows.some(x=>x.key===old.key),false);
+  const admin=await (await request('/api/ad-visuals?view=archive',{role:'admin'})).json();assert.equal(admin.rows[0].ai_analysis.model,'internal-model');
+  for(const query of ['view=all','view[]=archive'])assert.equal((await request('/api/ad-visuals?'+query)).status,400);
+});
+
 test('plain completeness reflects stale analysis, waiting work and partial supplier coverage without exposing reasons',()=>{
   const complete={rows:[],monitoring:{status:'ok',stale:false,checked_at:seen},pending_media:{total:0},cloud:{worker_online:true,vision_configured:true,candidates:{},sources:[],capture_provider:{enabled:true,configured:true,runs:[{coverage_complete:true}]}}};
   assert.equal(standardAdVisuals(complete).display_status.incomplete,false);
