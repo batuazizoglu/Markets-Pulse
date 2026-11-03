@@ -1,6 +1,7 @@
 (()=>{
 const coreLabels={home:'Ev İnterneti',gsm:'GSM Paketleri',mnp:'MNP / Numara Taşıma',review:'Diğer / Belirsiz'};
-const state={data:null,category:'home',brand:'all',loading:null,loaded:0,views:new Map(),requests:new Map(),generation:0};
+const state={data:null,view:'active',category:'home',brand:'all',loading:null,loaded:0,views:new Map(),requests:new Map(),generation:0};
+const archiveReasons={inactive:'Son kontrolde pasif',unverified:'Aktifliği doğrulanmadı',outdated:'Güncel aktiflik doğrulaması yok',superseded:'Daha yeni görsel kaydı var'};
 const isAdmin=()=>Boolean(window.MarketPulseAccess?.isAdmin());
 const accessReady=()=>Promise.resolve(window.MarketPulseAccess?.ready).catch(()=>null);
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -34,6 +35,7 @@ function captureBrand(brand,data=state.data){
 }
 function sourceDirectory(data){
   const sources=new Map(),ensure=brand=>{if(!sources.has(brand))sources.set(brand,{brand});return sources.get(brand)};
+  if(state.brand!=='all')ensure(state.brand);
   for(const source of data.source_directory||[])Object.assign(ensure(source.brand),source);
   for(const source of data.monitoring?.coverage||[])Object.assign(ensure(source.brand),{legacy:source});
   for(const source of data.cloud?.sources||[])Object.assign(ensure(source.brand),{live:source});
@@ -60,7 +62,7 @@ function sourceCard(source){
     (source.country?'<span>Ülke filtresi: '+esc(source.country==='CY'?'Kıbrıs (CY)':source.country)+'</span>':'')+
     (source.note?'<p>'+esc(source.note)+'</p>':'')+
     (source.provider?providerCounters(source.provider):'')+
-    (source.archive_count!==null?'<p>Aktif reklam analizi: '+count(source.archive_count)+'</p>':'')+
+    (source.archive_count!==null?'<p>'+(state.view==='archive'?'Arşivdeki analiz: ':'Aktif reklam analizi: ')+count(source.archive_count)+'</p>':'')+
     (pending?'<p>AI sonucu yayınlanmamış görsel: '+pending+'</p>':source.captured>0&&!(source.archive_count??source.rows.length)?'<p>Görseller kaydedildi; analiz sonucu henüz yayınlanmadı.</p>':'')+
     '<span>'+(source.provider?'Sağlayıcı son durumu: ':'Son tamamlanan tarama: ')+stamp(source.checked_at)+'</span>'+
     (source.status==='retry'?'<span>Sonraki deneme: '+stamp(source.available_at)+'</span>':'')+
@@ -82,10 +84,19 @@ function offerText(o={}){
     o.data_gb==null?null:o.data_gb+' GB',o.bonus_data_gb==null?null:'+'+o.bonus_data_gb+' GB bonus',
     o.minutes==null?null:o.minutes+' DK',o.speed_mbps==null?null:o.speed_mbps+' Mbps'].filter(Boolean).join(' · ');
 }
+function updateViewControls(root){
+  const archived=state.view==='archive';
+  for(const button of root.querySelectorAll('[data-av-view]')){
+    const selected=button.dataset.avView===state.view;button.classList.toggle('active',selected);button.setAttribute('aria-pressed',String(selected));
+  }
+  root.querySelector('[data-av-view-description]').textContent=archived?'Geçmiş reklam görselleri ve son kaydedilmiş analizleri.':'Yalnızca son 48 saatte aktif olduğu doğrulanan reklamlar gösterilir.';
+  for(const el of root.querySelectorAll('.av-pending,.av-cloud,.av-coverage,[data-av-scan]'))el.hidden=archived;
+}
 function frame(root,home=false){
   const admin=isAdmin();
   root.classList.add('av-root');root.dataset.home=home?'1':'0';
-  root.innerHTML='<div class="av-heading"><div><h2>'+(home?'Ev İnterneti Reklamları':'Rakip Reklamları')+'</h2><p>Yalnızca son 48 saatte aktif olduğu doğrulanan reklamlar gösterilir.</p></div>'+(admin?'<button class="btn" data-admin-only data-av-scan>Bulutta tara</button>':'')+'<button class="btn" data-av-refresh>Yenile</button></div>'+
+  root.innerHTML='<div class="av-heading"><div><h2>'+(home?'Ev İnterneti Reklamları':'Rakip Reklamları')+'</h2><p data-av-view-description>Yalnızca son 48 saatte aktif olduğu doğrulanan reklamlar gösterilir.</p></div>'+(admin?'<button class="btn" data-admin-only data-av-scan>Bulutta tara</button>':'')+'<button class="btn" data-av-refresh>Yenile</button></div>'+
+    '<div class="av-view-switch" role="group" aria-label="Reklam görünümü"><button data-av-view="active" class="active" aria-pressed="true">Güncel Reklamlar</button><button data-av-view="archive" aria-pressed="false">Arşiv</button></div>'+
     (home?'<p><a href="#ads">Tüm reklam kategorilerini görüntüle →</a></p>':'<nav class="av-tabs" aria-label="Reklam kategorileri"></nav>'+(admin?'<p class="av-help" data-admin-only>AI, mevcut kategorilere uymayan reklamlar için yeni kategori oluşturabilir.</p>':''))+
     '<label class="av-filter">Marka <select data-av-brand aria-label="Reklam markası"><option value="all">Tüm markalar</option></select></label>'+
     '<div class="av-status" role="status">Reklamlar yükleniyor…</div><div class="av-review-info"></div>'+(admin?'<div class="av-job-message" data-admin-only role="status"></div>':'')+'<div class="av-source-focus" aria-live="polite"></div><div class="av-cards"></div><div class="av-pagination" aria-live="polite"></div>'+(admin?(home?'':'<details class="av-pending" data-admin-only><summary>AI sonucu beklenen görseller</summary><div class="av-pending-content"></div></details>')+'<details class="av-cloud" data-admin-only><summary>Bulut taraması ve analiz kuyruğu</summary><div></div></details><details class="av-coverage" data-admin-only><summary>İnceleme kapsamı ve kaynak durumu</summary><div></div></details><p class="av-help" data-admin-only>Sayılar reklam kayıtlarını gösterir; aynı kampanya farklı reklam kimlikleriyle yayınlanabilir. Görseldeki teklif, paket kataloğuna ve karşılaştırma skoruna otomatik uygulanmaz.</p>':'');
@@ -96,6 +107,7 @@ function frame(root,home=false){
     if(b.hasAttribute('data-av-analyze'))analyze(b.dataset.avAnalyze||null);
     if(b.hasAttribute('data-av-more'))loadView(home?'home':state.category,state.brand,true);
     if(b.hasAttribute('data-av-pending-more'))loadView('pending_media',state.brand,true);
+    if(b.dataset.avView)setView(b.dataset.avView);
     if(b.dataset.avCategory)setCategory(b.dataset.avCategory);
     if(b.dataset.avHistory)history(b);
   });
@@ -111,7 +123,7 @@ function card(a,labels){
   const src=imageUrl((a.images?.[1]||a.images?.[0])?.sha256);
   const aiPending=['pending','retry'].includes(a.ai_queue_status);
   const aiLabel=aiPending?(a.ai_analysis?'AI yeniden inceliyor':'AI inceleme kuyruğunda'):a.ai_queue_status==='error'?'AI incelemesi tamamlanamadı':a.ai_analysis?.status==='completed'?'AI incelemesi tamamlandı':null;
-  const flags=[a.media_kind==='video_preview'?(admin?'Video önizlemesi incelendi':'Video önizlemesi'):null,admin?aiLabel:null,a.stale?'Son doğrulanmış kayıt':a.ad_status==='active'?'Son gözlemde aktif':a.ad_status==='inactive'?'Son gözlemde pasif':'Durum belirsiz',(a.uncertainties||[]).length?'Kontrol edilecek koşullar var':null].filter(Boolean);
+  const flags=[a.archived?'Arşiv':null,a.media_kind==='video_preview'?(admin?'Video önizlemesi incelendi':'Video önizlemesi'):null,admin?aiLabel:null,a.archived?archiveReasons[a.archive_reason]||'Geçmiş kayıt':a.stale?'Son doğrulanmış kayıt':a.ad_status==='active'?'Son gözlemde aktif':a.ad_status==='inactive'?'Son gözlemde pasif':'Durum belirsiz',(a.uncertainties||[]).length?'Kontrol edilecek koşullar var':null].filter(Boolean);
   return '<article class="av-card">'+(src?'<a class="av-image" href="'+src+'" target="_blank" rel="noopener"><img loading="lazy" src="'+src+'" alt="'+esc(a.brand+' '+a.title+' reklam kanıtı')+'"></a>':'')+
     '<div class="av-card-body"><div class="av-flags">'+flags.map(f=>'<span>'+esc(f)+'</span>').join('')+'</div><p class="av-brand">'+esc(a.brand)+' • '+esc(categoryLabel(a,labels))+'</p><h3>'+esc(a.title)+'</h3>'+
     '<p class="av-offer">'+esc(offerText(a.offer))+'</p>'+(a.offer?.previous_price_try==null?'':'<p class="av-help">Görselde üstü çizili fiyat: '+esc(money(a.offer.previous_price_try))+'</p>')+
@@ -119,20 +131,21 @@ function card(a,labels){
     '<ul>'+(a.conditions||[]).map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul>'+((a.uncertainties||[]).length?'<p><b>Doğrulanamayan / okunamayan:</b></p><ul>'+a.uncertainties.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul>':'')+
     '<p>'+esc(a.ad_text)+'</p></details><p class="av-help">Aktiflik kontrolü: '+stamp(a.activity_checked_at||a.observed_at)+'<br>Görsel tarihi: '+stamp(a.observed_at)+(admin?((a.ai_analysis?'<br>AI incelemesi: '+stamp(a.ai_analysis.analyzed_at)+' • '+Number(a.ai_analysis.pass||1)+'. okuma':'')+(a.category_assignment?'<br>Kategori doğrulaması: '+stamp(a.category_assignment.reviewed_at)+' • '+(a.category_assignment.evidence_source==='visual_summary'?'Kaydedilmiş görselde tanınan cihazlar':'Kaydedilmiş görsel metni ve açıklama'):'')+'<br>İlk kayıt: '+stamp(a.first_seen_at)+'<br>Reklam kimliği: '+esc(a.ad_id)):'')+'</p>'+
     '<div class="av-links"><a href="'+esc(safeLink(a.source_url))+'" target="_blank" rel="noopener noreferrer">Ad Library kaynağı ↗</a>'+
-    (admin?(a.images||[]).map((x,i)=>'<a href="'+imageUrl(x.sha256)+'" target="_blank" rel="noopener">Kanıt '+(i+1)+' • '+stamp(x.captured_at)+'</a>').join('')+'<button class="btn" data-admin-only data-av-analyze="'+esc(a.key)+'"'+(aiPending?' disabled':'')+'>AI ile yeniden incele</button>':'')+'<button class="btn" data-av-history="'+esc(a.key)+'">Teklif geçmişi</button></div><div class="av-history"></div></div></article>';
+    (admin?(a.images||[]).map((x,i)=>'<a href="'+imageUrl(x.sha256)+'" target="_blank" rel="noopener">Kanıt '+(i+1)+' • '+stamp(x.captured_at)+'</a>').join('')+(a.archived?'':'<button class="btn" data-admin-only data-av-analyze="'+esc(a.key)+'"'+(aiPending?' disabled':'')+'>AI ile yeniden incele</button>'):'')+'<button class="btn" data-av-history="'+esc(a.key)+'">Teklif geçmişi</button></div><div class="av-history"></div></div></article>';
 }
 function render(){
   if(!state.data)return;
-  const admin=isAdmin();
+  const admin=isAdmin(),archived=state.view==='archive';
   const {monitoring:m={},groups={}}=state.data;
   const labels=categoryLabels(),categories=categoryEntries(labels);
   if(!categories.some(([key])=>key===state.category))state.category='home';
   const sources=sourceDirectory(state.data);
   for(const root of document.querySelectorAll('.av-root')){
     const home=root.dataset.home==='1',category=home?'home':state.category,view=currentView(category,state.brand),loading=state.requests.has(viewKey(category,state.brand));
-    const nav=root.querySelector('.av-tabs');
+    updateViewControls(root);
+    const nav=root.querySelector('.av-tabs:not(.av-view-switch)');
     if(nav)nav.innerHTML=categories.map(([k,label])=>'<button data-av-category="'+esc(k)+'" class="'+(k===category?'active':'')+'" aria-pressed="'+(k===category)+'">'+esc(label)+' <span>'+count(Object.hasOwn(groups,k)?groups[k]:0)+'</span></button>').join('');
-    root.querySelector('.av-review-info').innerHTML=admin&&category==='review'?'<p>Kategorisi görselden kesinleştirilemeyen reklamlar burada gösterilir. AI incelemesi yeterli kanıt bulduğunda mevcut bir kategoriye atayabilir veya yeni kategori oluşturabilir. Analiz durumu her kartta ayrıca belirtilir.</p><button class="btn" data-admin-only data-av-analyze>Tüm diğer / belirsiz kayıtları AI ile yeniden incele</button>':'';
+    root.querySelector('.av-review-info').innerHTML=admin&&!archived&&category==='review'?'<p>Kategorisi görselden kesinleştirilemeyen reklamlar burada gösterilir. AI incelemesi yeterli kanıt bulduğunda mevcut bir kategoriye atayabilir veya yeni kategori oluşturabilir. Analiz durumu her kartta ayrıca belirtilir.</p><button class="btn" data-admin-only data-av-analyze>Tüm diğer / belirsiz kayıtları AI ile yeniden incele</button>':'';
     const brand=root.querySelector('[data-av-brand]');
     if(brand){brand.innerHTML='<option value="all">Tüm markalar</option>'+sources.map(x=>'<option value="'+esc(x.brand)+'">'+esc(x.brand)+'</option>').join('');brand.value=state.brand}
     if(admin){
@@ -158,9 +171,10 @@ function render(){
       root.querySelector('.av-cloud div').innerHTML='<p>AI incelemesi bekleyen: '+Number((c.pending||0)+(c.retry||0))+' • Analizi tamamlanan: '+Number(c.analyzed||0)+' • Hatalı: '+Number(c.error||0)+'</p><p>Sunucu kontrolü: '+stamp(cloud.worker_heartbeat)+'</p>'+(provider?.enabled?sources.filter(s=>s.provider&&!s.shared).map(s=>'<div class="av-source"><b>'+esc(s.brand)+'</b>'+providerCounters(s.provider)+'</div>').join(''):'');
     }else root.querySelector('.av-cloud div').textContent='Bulut görevi bilgileri bekleniyor.';
     }else root.querySelector('.av-status').innerHTML=simpleStatus(state.data,sources);
+    if(archived)root.querySelector('.av-status').textContent='Arşiv kayıtları geçmiş gözlemleri gösterir; kampanya ve fiyatların bugün geçerli olduğu anlamına gelmez.';
     const selected=view.rows.filter(a=>a.category===category&&(state.brand==='all'||a.brand===captureBrand(state.brand))),focus=sources.find(s=>s.brand===state.brand);
-    root.querySelector('.av-source-focus').innerHTML=focus?(admin?sourceCard(focus):simpleSourceCard(focus)):'';
-    root.querySelector('.av-cards').innerHTML=selected.map(a=>card(a,labels)).join('')||'<div class="av-empty">'+(loading?'Reklamlar yükleniyor…':view.error?'Reklamlar alınamadı. Yeniden deneyin.':!admin?'Bu seçimde güncel ve aktif olduğu doğrulanmış reklam yok.':focus?.status==='no_ads'?'Son kaynak taramasında seçili reklam filtresinde reklam bulunamadı. Yeni taramalarda sonuç değişebilir.':'Bu kategoride son 48 saatte aktifliği doğrulanmış reklam yok. Pasif, durumu belirsiz ve eski kayıtlar gösterilmez. Bu durum reklam olmadığı anlamına gelmez; kaynağın tarama durumunu kontrol edin.')+'</div>';
+    root.querySelector('.av-source-focus').innerHTML=focus?(admin&&!archived?sourceCard(focus):simpleSourceCard(focus)):'';
+    root.querySelector('.av-cards').innerHTML=selected.map(a=>card(a,labels)).join('')||'<div class="av-empty">'+(loading?'Reklamlar yükleniyor…':view.error?'Reklamlar alınamadı. Yeniden deneyin.':archived?'Bu seçimde arşiv kaydı yok.':!admin?'Bu seçimde güncel ve aktif olduğu doğrulanmış reklam yok.':focus?.status==='no_ads'?'Son kaynak taramasında seçili reklam filtresinde reklam bulunamadı. Yeni taramalarda sonuç değişebilir.':'Bu kategoride son 48 saatte aktifliği doğrulanmış reklam yok. Pasif, durumu belirsiz ve eski kayıtlar gösterilmez. Bu durum reklam olmadığı anlamına gelmez; kaynağın tarama durumunu kontrol edin.')+'</div>';
     root.querySelector('.av-pagination').innerHTML=state.data.pagination?'<p>'+selected.length+' / '+count(view.pagination.total)+' analiz gösteriliyor.</p>'+(view.error?'<p>'+esc(view.error)+'</p>':'')+(view.pagination.has_more||view.error?'<button class="btn" data-av-more'+(loading?' disabled':'')+'>'+(loading?'Yükleniyor…':view.error?'Yeniden dene':'Daha fazla analiz göster')+'</button>':''):'';
     const pendingBox=root.querySelector('.av-pending');
     if(admin&&pendingBox){
@@ -182,7 +196,7 @@ async function history(button){
     box.innerHTML=(data.rows||[]).map(x=>'<div><b>'+stamp(x.observed_at)+' • '+(x.event_type==='first_seen'?'İlk gözlem':x.event_type==='category_updated'?'Kategori düzeltildi':x.event_type==='analysis_updated'?(isAdmin()?'AI yeniden inceledi':'Teklif güncellendi'):'Değişiklik')+'</b><p>'+esc(offerText(x.analysis_json?.offer))+'</p><p>'+esc((x.analysis_json?.conditions||[]).join(' · '))+'</p></div>').join('')||'<p>Geçmiş kayıt yok.</p>';
   }catch(e){box.textContent=isAdmin()?e.message:'Teklif geçmişi alınamadı. Tekrar deneyin.'}finally{button.disabled=false}
 }
-const viewKey=(category,brand)=>JSON.stringify([category,captureBrand(brand)]);
+const viewKey=(category,brand)=>JSON.stringify([state.view,category,captureBrand(brand)]);
 function currentView(category,brand){
   brand=captureBrand(brand);
   const cached=state.views.get(viewKey(category,brand));if(cached)return cached;
@@ -195,13 +209,14 @@ function currentView(category,brand){
 function loadView(category,brand,more=false){
   brand=captureBrand(brand);
   const pending=category==='pending_media';
-  if(pending&&!isAdmin())return Promise.resolve();
+  if(pending&&(!isAdmin()||state.view==='archive'))return Promise.resolve();
   if(!pending&&!selectableCategory(category))return Promise.resolve();
   if(!pending&&!state.data?.pagination?.has_more||pending&&!currentView(category,brand).pagination.total)return Promise.resolve();
   const key=viewKey(category,brand),prior=state.views.get(key);
   if(state.requests.has(key))return state.requests.get(key);
   if(prior&&!more&&!prior.error||more&&prior&&!prior.pagination.has_more&&!prior.error)return Promise.resolve();
   const generation=state.generation,params=new URLSearchParams(pending?{limit:'50'}:{category,limit:'100'});
+  if(!pending&&state.view==='archive')params.set('view','archive');
   if(brand!=='all')params.set('brand',brand);
   if(more&&prior?.pagination.next_cursor)params.set('cursor',prior.pagination.next_cursor);
   const request=(async()=>{
@@ -217,21 +232,33 @@ function loadView(category,brand,more=false){
 }
 function ensureViews(){
   const categories=new Set([...document.querySelectorAll('.av-root')].map(root=>root.dataset.home==='1'?'home':state.category));
-  if(document.querySelector('.av-pending[open]'))categories.add('pending_media');
+  if(state.view==='active'&&document.querySelector('.av-pending[open]'))categories.add('pending_media');
   return Promise.all([...categories].map(category=>loadView(category,state.brand)));
 }
 function load(force=false){
   if(state.loading)return state.loading;
   if(!force&&state.data&&Date.now()-state.loaded<60000){render();return ensureViews()}
+  const generation=++state.generation,view=state.view;
+  state.requests.clear();
   state.loading=(async()=>{
     await accessReady();
     for(const b of document.querySelectorAll('[data-av-refresh]'))b.disabled=true;
     try{
-      const r=await fetch('/api/ad-visuals',{cache:'no-store'});
-      const data=await r.json();if(!r.ok)throw new Error(data.error||'Reklam analizi alınamadı');state.data=data;state.loaded=Date.now();state.generation++;state.views.clear();state.requests.clear();render();await ensureViews();
+      const r=await fetch('/api/ad-visuals'+(view==='archive'?'?view=archive':''),{cache:'no-store'});
+      const data=await r.json();if(generation!==state.generation)return;if(!r.ok)throw new Error(data.error||'Reklam analizi alınamadı');state.data=data;state.loaded=Date.now();state.views.clear();render();await ensureViews();
     }
-    catch(e){for(const el of document.querySelectorAll('.av-status'))el.textContent=isAdmin()?e.message:'Reklamlar şu anda yenilenemiyor. Tekrar deneyin.'}
-  })().finally(()=>{state.loading=null;for(const b of document.querySelectorAll('[data-av-refresh]'))b.disabled=false});return state.loading;
+    catch(e){if(generation===state.generation)for(const el of document.querySelectorAll('.av-status'))el.textContent=isAdmin()?e.message:'Reklamlar şu anda yenilenemiyor. Tekrar deneyin.'}
+  })().finally(()=>{if(generation===state.generation){state.loading=null;for(const b of document.querySelectorAll('[data-av-refresh]'))b.disabled=false}});return state.loading;
+}
+function setView(view){
+  if(!['active','archive'].includes(view)||view===state.view)return state.loading;
+  state.view=view;state.generation++;state.data=null;state.loaded=0;state.loading=null;state.views.clear();state.requests.clear();
+  for(const root of document.querySelectorAll('.av-root')){
+    updateViewControls(root);
+    for(const el of root.querySelectorAll('.av-cards,.av-pagination,.av-source-focus,.av-review-info,.av-job-message,.av-tabs:not(.av-view-switch)'))el.replaceChildren();
+    root.querySelector('.av-status').textContent=view==='archive'?'Arşiv yükleniyor…':'Reklamlar yükleniyor…';
+  }
+  return load(true);
 }
 async function scan(){
   await accessReady();if(!isAdmin())return;
@@ -261,6 +288,6 @@ async function init(){
   const section=document.createElement('section');section.id='ad-visual-section';section.className='section';frame(section);shell.append(section);
   if(location.hash==='#ads')load();
 }
-window.AdVisualUI={load,setCategory,mountHome};
+window.AdVisualUI={load,setCategory,setView,mountHome};
 init();
 })();

@@ -14,7 +14,7 @@ const rows=Object.keys(categories).map((category,i)=>({key:'164143610515:123456'
 app.get('/preview-ads',(_,res)=>res.type('html').send('<!doctype html><html lang="tr" data-theme="light"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/app.css"><link rel="stylesheet" href="/brand.css"><main class="shell"></main><script>window.MarketPulseAccess={ready:Promise.resolve({role:"admin"}),isAdmin:()=>true};</script><script src="/ad-visual.js"></script></html>'));
 app.get('/preview-home-ads',(_,res)=>res.type('html').send('<!doctype html><html lang="tr" data-theme="light"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/app.css"><link rel="stylesheet" href="/brand.css"><main class="shell"><div id="hiAdVisualMount"></div></main><script>window.MarketPulseAccess={ready:Promise.resolve({role:"admin"}),isAdmin:()=>true};</script><script src="/ad-visual.js"></script><script>AdVisualUI.mountHome()</script></html>'));
 const source_directory=[['Telsim','164143610515'],['Nethouse','159064954156749'],['Kıbrıs Online','107418628779416']].map(([brand,page_id])=>({brand,page_id,country:'CY',ad_library_type:'page',ad_library_url:'https://www.facebook.com/ads/library/?country=CY&view_all_page_id='+page_id}));
-const sendVisuals=(_,res)=>res.json({rows,categories,source_directory,groups:Object.fromEntries(Object.keys(categories).map(key=>[key,1])),cloud:{vision_configured:true,worker_online:true,worker_heartbeat:at,message:'Görseller sunucuda analiz edilir.',candidates:{analyzed:12},sources:[{brand:'Telsim',status:'partial',captured:12,note:'Test kaydı'},...['Nethouse','Kıbrıs Online'].map(brand=>({brand,status:'blocked',captured:0,finished_at:at,note:'Ad Library erişimi HTTP 403 ile sonuçlandı. Reklam yok olarak yorumlanmadı.'}))]},monitoring:{status:'partial',checked_at:at,imported_at:at,schedule:{enabled:true,description:'Bulutta her gün 06:00'},coverage:[{brand:'Telsim',status:'partial',country:'CY',checked_at:at,source_url:'https://www.facebook.com/kktctelsim',note:'Test kaydı'},{brand:'Nethouse',status:'no_ads',country:'CY',checked_at:at,source_url:source_directory[1].ad_library_url,note:'Eski taramada reklam yok.'}]}});
+const sendVisuals=(req,res)=>res.json({rows:req.query.view==='archive'?rows.map(row=>({...row,title:'Arşiv · '+row.title,archived:true,archive_reason:'outdated',observed_at:'2026-09-01T06:00:00.000Z'})):rows,categories,source_directory,groups:Object.fromEntries(Object.keys(categories).map(key=>[key,1])),cloud:{vision_configured:true,worker_online:true,worker_heartbeat:at,message:'Görseller sunucuda analiz edilir.',candidates:{analyzed:12},sources:[{brand:'Telsim',status:'partial',captured:12,note:'Test kaydı'},...['Nethouse','Kıbrıs Online'].map(brand=>({brand,status:'blocked',captured:0,finished_at:at,note:'Ad Library erişimi HTTP 403 ile sonuçlandı. Reklam yok olarak yorumlanmadı.'}))]},monitoring:{status:'partial',checked_at:at,imported_at:at,schedule:{enabled:true,description:'Bulutta her gün 06:00'},coverage:[{brand:'Telsim',status:'partial',country:'CY',checked_at:at,source_url:'https://www.facebook.com/kktctelsim',note:'Test kaydı'},{brand:'Nethouse',status:'no_ads',country:'CY',checked_at:at,source_url:source_directory[1].ad_library_url,note:'Eski taramada reklam yok.'}]}});
 app.get('/api/ad-visuals',sendVisuals);
 app.post('/api/ad-visuals/sync',sendVisuals);
 app.post('/api/ad-visuals/scan',(_,res)=>res.status(202).json({queued:7,message:'Tarama sunucu kuyruğuna alındı; sayfayı kapatabilirsiniz.'}));
@@ -47,6 +47,16 @@ try{
       }
       await page.screenshot({path:'test-output/ads-'+category+'-'+width+'.png',fullPage:true});console.log('AD_LAYOUT '+category+' '+width+' OK');
     }
+    await page.locator('[data-av-category="home"]').click();
+    await page.focus('#ad-visual-section [data-av-view="archive"]');await page.keyboard.press('Enter');
+    await page.waitForFunction(()=>document.querySelector('.av-card .av-flags')?.textContent.includes('Arşiv'));
+    assert.equal(await page.$eval('[data-av-view="archive"]',el=>el.getAttribute('aria-pressed')),'true');
+    assert.equal(await page.$eval('.av-pending',el=>el.hidden),true);
+    assert.equal(await page.$('.av-card [data-av-analyze]'),null);
+    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'archive overflow '+width);
+    await page.screenshot({path:'test-output/ads-archive-'+width+'.png',fullPage:true});
+    await page.locator('[data-av-view="active"]').click();await page.waitForFunction(()=>document.querySelector('.av-card h3')&&!document.querySelector('.av-card h3').textContent.includes('Arşiv'));
+    console.log('AD_LAYOUT archive keyboard switch '+width+' OK');
     await page.select('#ad-visual-section [data-av-brand]','Nethouse');
     assert.equal(await page.$$eval('#ad-visual-section .av-card',els=>els.length),0);
     assert.match(await page.$eval('#ad-visual-section .av-source-focus',el=>el.textContent),/HTTP 403/);
@@ -62,6 +72,9 @@ try{
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'home ISP status overflow '+width);
     await page.screenshot({path:'test-output/ads-home-isp-status-'+width+'.png',fullPage:true});
     await page.select('#hiAdVisualMount [data-av-brand]','all');assert.equal(await page.$$eval('#hiAdVisualMount .av-card',els=>els.length),1);
+    await page.locator('#hiAdVisualMount [data-av-view="archive"]').click();await page.waitForFunction(()=>document.querySelector('#hiAdVisualMount .av-flags')?.textContent.includes('Arşiv'));
+    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'home archive overflow '+width);
+    await page.screenshot({path:'test-output/ads-home-archive-'+width+'.png',fullPage:true});
     console.log('AD_LAYOUT home ISP filter '+width+' OK');
   }
   assert.deepEqual(errors,[]);

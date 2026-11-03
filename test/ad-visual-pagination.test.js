@@ -118,3 +118,44 @@ test('UI exposes the full archive with bounded load-more and server filters whil
     assert.equal(d.querySelectorAll('#ad-visual-section .av-card').length,1);assert.equal(d.querySelectorAll('#hiAdVisualMount .av-card').length,70);
   }finally{dom.window.close();await db.close()}
 });
+
+test('archive switch keeps old cards, filters and pagination separate from current ads in both mounts',async()=>{
+  const db=await archive(),requests=[];
+  await db.query("UPDATE ad_visual_items SET analysis_json=jsonb_set(analysis_json,'{ad_status}','\"inactive\"') WHERE ad_key<>$1",['164143610515:100000:1']);
+  const dom=new JSDOM('<main class="shell"><div id="hiAdVisualMount"></div></main>',{url:'https://www.marketspulse.cloud/#ads',runScripts:'outside-only'});
+  dom.window.MarketPulseAccess={ready:Promise.resolve({role:'admin'}),isAdmin:()=>true};
+  dom.window.fetch=async url=>{requests.push(url);return {ok:true,json:async()=>getAdVisuals(db,Object.fromEntries(new URL(url,'https://www.marketspulse.cloud').searchParams))}};
+  const settled=async()=>{await new Promise(r=>setTimeout(r,0));await dom.window.AdVisualUI.load()};
+  try{
+    dom.window.eval(await readFile(new URL('../public/ad-visual.js',import.meta.url),'utf8'));await settled();await dom.window.AdVisualUI.mountHome();const d=dom.window.document;
+    assert.equal(d.querySelectorAll('#ad-visual-section .av-card').length,1);
+    d.querySelector('[data-av-view="archive"]').click();await settled();
+    assert.equal(d.querySelector('[data-av-view="archive"]').getAttribute('aria-pressed'),'true');assert.equal(d.querySelectorAll('#ad-visual-section .av-card').length,100);
+    assert.equal(d.querySelectorAll('#hiAdVisualMount .av-card').length,100);assert.match(d.querySelector('.av-pagination').textContent,/100 \/ 519/);
+    assert.match(d.querySelector('.av-flags').textContent,/Arşiv.*pasif/);assert.doesNotMatch(d.querySelector('.av-flags').textContent,/Son gözlemde aktif/);
+    assert.equal(d.querySelector('.av-pending').hidden,true);assert.equal(d.querySelector('.av-card [data-av-analyze]'),null);assert.ok(d.querySelector('.av-card [data-av-history]'));
+    d.querySelector('[data-av-more]').click();await settled();assert.equal(d.querySelectorAll('#ad-visual-section .av-card').length,200);assert.match(requests.at(-1),/view=archive/);
+    const filter=d.querySelector('#ad-visual-section [data-av-brand]');filter.value='Nethouse';filter.dispatchEvent(new dom.window.Event('change',{bubbles:true}));await settled();
+    assert.equal(d.querySelectorAll('#ad-visual-section .av-card').length,70);assert.equal(d.querySelectorAll('#hiAdVisualMount .av-card').length,70);
+    await dom.window.AdVisualUI.setView('active');assert.equal(d.querySelector('[data-av-brand]').value,'Nethouse');assert.equal(d.querySelectorAll('#ad-visual-section .av-card').length,0);assert.equal(d.querySelector('.av-pending').hidden,false);
+    assert.ok(requests.every(url=>!url.includes('/pending')),'browsing an archive never requests the AI queue');
+  }finally{dom.window.close();await db.close()}
+});
+
+test('a late archive response cannot replace a newer current selection for a standard user',async()=>{
+  const dom=new JSDOM('<main class="shell"></main>',{url:'https://www.marketspulse.cloud/#ads',runScripts:'outside-only'});
+  dom.window.MarketPulseAccess={ready:Promise.resolve({role:'standard'}),isAdmin:()=>false};
+  const data=(archived=false)=>({rows:[{key:'one',brand:'Telsim',category:'home',title:archived?'Old card':'Current card',ad_status:'active',archived,archive_reason:archived?'outdated':null,images:[]}],groups:{home:1},pagination:{total:1,has_more:false}});
+  let resolveArchive,archiveStarted;
+  const started=new Promise(resolve=>archiveStarted=resolve);
+  dom.window.fetch=async url=>({ok:true,json:async()=>url.includes('view=archive')?new Promise(resolve=>{resolveArchive=resolve;archiveStarted()}):data()});
+  try{
+    dom.window.eval(await readFile(new URL('../public/ad-visual.js',import.meta.url),'utf8'));await new Promise(r=>setTimeout(r,0));await dom.window.AdVisualUI.load();
+    const archiveRequest=dom.window.AdVisualUI.setView('archive');await started;
+    await dom.window.AdVisualUI.setView('active');resolveArchive(data(true));await archiveRequest;
+    const d=dom.window.document;assert.equal(d.querySelector('.av-card h3').textContent,'Current card');assert.equal(d.querySelector('[data-av-view="active"]').getAttribute('aria-pressed'),'true');
+    assert.equal(d.querySelector('[data-admin-only]'),null);assert.equal(d.querySelector('[data-av-refresh]').disabled,false);
+    const second=dom.window.AdVisualUI.setView('archive');await new Promise(r=>setTimeout(r,0));resolveArchive(data(true));await second;
+    assert.equal(d.querySelector('.av-card h3').textContent,'Old card');assert.match(d.querySelector('.av-flags').textContent,/Arşiv/);assert.equal(d.querySelector('[data-admin-only]'),null);
+  }finally{dom.window.close()}
+});
