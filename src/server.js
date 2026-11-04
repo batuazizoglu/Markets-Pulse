@@ -18,6 +18,7 @@ import { generateEvidencePack } from './evidence-pack.js';
 import { getReportEmailStatus, sendReportEmail } from './report-email.js';
 import { sendPersonalReportEmail } from './manual-report-email.js';
 import { getHomeInternetMarket, loadHomeInternetChanges, scanHomeInternet, HOME_INTERNET_SOURCES } from './home-internet.js';
+import {sendHomeInternetMarket} from './home-internet-http.js';
 import {getProviderStatus} from './ad-provider-worker.js';
 import { registerAuth, bootstrapInitialUsers } from './auth.js';
 import { registerEvidenceRoutes } from './evidence-archive.js';
@@ -120,7 +121,7 @@ app.get('/api/home-internet',requireAdminForRefresh, async (req,res,next)=>{try{
   const refresh=req.query.refresh==='1';
   const days=Math.max(1,Math.min(180,parseInt(req.query.days||'30',10)||30));
   res.set('Cache-Control','private, no-store');
-  res.json(await getHomeInternetMarket(pool,{refresh,days}));
+  await sendHomeInternetMarket(req,res,await getHomeInternetMarket(pool,{refresh,days}));
 }catch(e){next(e)}});
 
 app.post('/api/home-internet/scan',requireOperationalAdmin, async (req,res,next)=>{try{

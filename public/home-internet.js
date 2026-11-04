@@ -323,18 +323,43 @@ function setView(view){
   if(view==='social'&&window.AdVisualUI)window.AdVisualUI.mountHome();
 }
 function setFamily(family){state.family=family==='fwa'?'fwa':'fixed';state.provider='Tümü';state.tech='Tümü';state.changeProvider='Tümü';state.changeCategory='all';resetChangeLimits();render()}
+async function fetchMarket(days,force,requestId){
+  const url='/api/home-internet?days='+days+'&view=browser'+(force?'&refresh=1':'');
+  for(let attempt=0;attempt<2;attempt++){
+    if(requestId!==state.requestId)return null;
+    const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),force?180000:20000);
+    state.controller=controller;
+    try{
+      const response=await fetch(url,{cache:'no-store',credentials:'same-origin',signal:controller.signal});
+      if(!response.ok){
+        const messages={401:'Oturum süresi doldu. Tekrar giriş yapın.',403:'Bu veriye erişim izni alınamadı.',428:'İlk giriş parolanızı değiştirdikten sonra tekrar giriş yapın.'};
+        throw Object.assign(new Error(messages[response.status]||'Ev interneti verisi şu anda alınamıyor. Yenile ile tekrar deneyin.'),{retryable:[408,502,503,504].includes(response.status)});
+      }
+      return await response.json();
+    }catch(error){
+      if(requestId!==state.requestId)return null;
+      const network=error.name==='TypeError'||error.name==='AbortError';
+      if(!force&&attempt===0&&(network||error.retryable)){
+        $('hiMessage').textContent='Bağlantı kesildi; veriler yeniden yükleniyor…';
+        await new Promise(resolve=>setTimeout(resolve,750));
+        continue;
+      }
+      if(network)throw new Error(error.name==='AbortError'?'Veri bağlantısı zaman aşımına uğradı. Yenile ile tekrar deneyin.':'Ev interneti verisi sunucudan alınamadı. Bağlantınızı kontrol edip Yenile ile tekrar deneyin.');
+      if(error.name==='SyntaxError')throw new Error('Sunucudan geçerli veri alınamadı. Yenile ile tekrar deneyin.');
+      throw error;
+    }finally{clearTimeout(timer);if(state.controller===controller)state.controller=null;}
+  }
+}
 async function load(force=false){
   await accessReady();force=force&&isAdmin();ensure();
   if(state.loading&&(force||state.requestDays===state.days))return state.loadPromise;
-  const requestId=++state.requestId,days=state.days;state.requestDays=days;state.loading=true;state.scanning=force;
+  const requestId=++state.requestId,days=state.days;state.controller?.abort();state.requestDays=days;state.loading=true;state.scanning=force;
   $('home-internet-section').querySelectorAll('[data-hi-days]').forEach(b=>{b.disabled=force});
   $('hiTrackingTop').setAttribute('aria-busy','true');
   const button=$('hiScanBtn');button.disabled=true;button.textContent=force?'Taranıyor…':'Yükleniyor…';$('hiMessage').textContent='';
   state.loadPromise=(async()=>{
     try{
-      const r=await fetch('/api/home-internet?days='+days+(force?'&refresh=1':''),{cache:'no-store'});
-      if(!r.ok)throw new Error(r.status===401?'Oturum süresi doldu. Tekrar giriş yapın.':'Ev interneti verisi alınamadı');
-      const data=await r.json();if(requestId!==state.requestId)return;state.data=data;render();
+      const data=await fetchMarket(days,force,requestId);if(requestId!==state.requestId)return;state.data=data;$('hiMessage').textContent='';render();
     }catch(e){
       if(requestId!==state.requestId)return;
       $('hiMessage').textContent=e.message+(state.data?' Önceki '+(state.data.window_days||state.data.days||30)+' günlük kayıtlar gösteriliyor.':'');
