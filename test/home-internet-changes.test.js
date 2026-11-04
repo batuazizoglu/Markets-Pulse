@@ -7,6 +7,7 @@ import {PGlite} from '@electric-sql/pglite';
 import {SCHEMA_SQL} from '../src/schema.js';
 import {competitiveWindow} from '../src/competitive-changes.js';
 import {getHomeInternetMarket,loadHomeInternetChanges,marketPayload} from '../src/home-internet.js';
+import {sendHomeInternetMarket} from '../src/home-internet-http.js';
 
 const now=new Date('2026-10-06T00:00:00.000Z'),day=86400000;
 const at=days=>new Date(+now-days*day).toISOString();
@@ -98,7 +99,7 @@ test('both HTTP home history views pass the selected period and disable response
   const source=await readFile(new URL('../src/server.js',import.meta.url),'utf8');
   const route=path=>{const start=source.indexOf("app.get('"+path+"'");assert.ok(start>=0);return source.slice(start,source.indexOf('\n\n',start))};
   const app=express(),calls=[];
-  const dependencies={app,pool:db,competitiveWindow:days=>competitiveWindow(days,now),requireAdminForRefresh:(req,res,next)=>next(),
+  const dependencies={app,pool:db,competitiveWindow:days=>competitiveWindow(days,now),requireAdminForRefresh:(req,res,next)=>next(),sendHomeInternetMarket,
     getHomeInternetMarket:(pool,options)=>{calls.push(options);return getHomeInternetMarket(pool,{...options,now})},loadHomeInternetChanges};
   compileFunction(route('/api/home-internet')+'\n'+route('/api/home-internet/changes'),Object.keys(dependencies))(...Object.values(dependencies));
   const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));

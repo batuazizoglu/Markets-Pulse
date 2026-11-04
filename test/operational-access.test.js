@@ -6,6 +6,7 @@ import express from 'express';
 import {PGlite} from '@electric-sql/pglite';
 import {SCHEMA_SQL} from '../src/schema.js';
 import {HOME_INTERNET_SOURCES} from '../src/home-internet.js';
+import {sendHomeInternetMarket} from '../src/home-internet-http.js';
 import {registerCloudRoutes} from '../src/ad-cloud.js';
 import {registerAdVisualRoutes} from '../src/ad-visual.js';
 import {registerSocialWatchRoutes} from '../src/social-watch.js';
@@ -37,7 +38,7 @@ before(async()=>{
   const route=(method,path)=>{const at=source.indexOf("app."+method+"('"+path+"'");assert.ok(at>=0,path);return source.slice(at,source.indexOf('\n\n',at))};
   const routes=[['get','/api/home-internet'],['post','/api/home-internet/scan'],['get','/api/kktcell-catalog'],['get','/api/benchmark'],['post','/api/scan'],['get','/api/scans'],['get','/api/reports/status'],['get','/api/reports/:type/download'],['post','/api/reports/:type/email']].map(([method,path])=>route(method,path)).join('\n');
   const artifact={ctx:{period_start:seen,period_end:seen},fileName:'synthetic.pdf',contentType:'application/pdf',buffer:Buffer.from('PDF')};
-  const dependencies={app,pool,requireOperationalAdmin,requireAdminForRefresh,reportStatusForUser,
+  const dependencies={app,pool,requireOperationalAdmin,requireAdminForRefresh,reportStatusForUser,sendHomeInternetMarket,
     scanAll:async()=>{operations++;return {sources:[]}},scanHomeInternet:async()=>{operations++;return {ok:true}},
     getHomeInternetMarket:async(_,options={})=>{if(options.refresh)operations++;return {products:[]}},
     getKktcellCatalog:async force=>{if(force)operations++;return {at:Date.now(),sources:[],rows:[]}},
