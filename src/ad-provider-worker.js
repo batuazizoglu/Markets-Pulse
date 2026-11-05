@@ -106,42 +106,43 @@ export async function runProviderTick(pool,sources,{env=process.env,owner,assert
   if(!run) {
     // At most one extra supplier run can progress while another source honors its wait period.
     if(active.length>=2)return waiting();
+    if(!active.length){
+      const unknown=(await pool.query(`SELECT r.*,j.source_json FROM ad_provider_runs r JOIN ad_cloud_jobs j ON j.id=r.job_id
+        WHERE r.state='start_unknown' AND r.run_id IS NULL AND r.next_poll_at<=$1 ORDER BY r.next_poll_at,r.job_id LIMIT 1`,[stamp()])).rows[0];
+      if(unknown){
+        // Reserve the read before networking; failed/missing/ambiguous matches
+        // retain the creation fence and budget, and are read at most once a day.
+        await atomic(db=>db.query('UPDATE ad_provider_runs SET next_poll_at=$2 WHERE job_id=$1',[unknown.job_id,after(stamp(),86400000)]));
+        let found;
+        try{found=await api.findProviderRun(unknown.source_json,{createdAt:unknown.created_at,env});}
+        catch(error){
+          if(isRate(error))await atomic(db=>db.query('UPDATE ad_provider_runs SET next_poll_at=GREATEST(next_poll_at,$2) WHERE job_id=$1',[unknown.job_id,after(stamp(),delayFor(error))]));
+          return {status:'start_unknown',job_id:unknown.job_id,operation:'reconcile',reason:safeCode(error),...providerHttpDiagnostics(error)};
+        }
+        if(!found)return {status:'start_unknown',job_id:unknown.job_id,operation:'reconcile',reason:'PROVIDER_MATCH_UNCONFIRMED'};
+        return atomic(async db=>{
+          // A supplier run can belong to only one persisted local job.
+          const used=await db.query('SELECT job_id FROM ad_provider_runs WHERE run_id=$1 AND job_id<>$2',[found.id,unknown.job_id]);
+          if(used.rows.length)return {status:'start_unknown',job_id:unknown.job_id,operation:'reconcile',reason:'PROVIDER_MATCH_CONFLICT'};
+          const failed=['FAILED','TIMED-OUT','ABORTED'].includes(found.status),terminal=failed||found.status==='SUCCEEDED';
+          const state=terminal?(found.defaultDatasetId?'importing':'error'):'running',at=stamp();
+          await db.query(`UPDATE ad_provider_runs SET run_id=$2,dataset_id=$3,state=$4,usage_usd=$5,
+            coverage_denied=coverage_denied OR $6,limit_reached=limit_reached OR $7,
+            updated_at=$8,next_poll_at=$8,finished_at=NULL,read_failed_at=NULL,poll_attempts=0,last_error=$9 WHERE job_id=$1`,
+            [unknown.job_id,found.id,found.defaultDatasetId,state,found.usageTotalUsd,failed,
+              found.usageTotalUsd!=null&&found.usageTotalUsd>=Number(unknown.max_run_usd),at,failed?'PROVIDER_RUN_'+found.status.replace(/-/g,'_'):state==='error'?'PROVIDER_DATASET_MISSING':null]);
+          await db.query('UPDATE ad_cloud_jobs SET status=$2,finished_at=NULL,note=$3 WHERE id=$1',[unknown.job_id,state==='error'?'error':'running','Önceki sağlayıcı çalışması doğrulandı; yeni ücretli çalışma açılmadan mevcut sonuç okunuyor.']);
+          return {status:state,job_id:unknown.job_id,operation:'reconcile',recovered:true};
+        });
+      }
+    }
     const directory=socialDirectory(sources);
     const eligible=(await pool.query(`SELECT j.* FROM ad_cloud_jobs j LEFT JOIN ad_provider_runs r ON r.job_id=j.id
       WHERE r.job_id IS NULL AND j.status IN ('queued','retry') AND j.available_at<=$1 AND j.attempts<3
       AND NOT EXISTS(SELECT 1 FROM ad_provider_runs old JOIN ad_cloud_jobs prior ON prior.id=old.job_id
         WHERE prior.source_json->>'page_id'=j.source_json->>'page_id' AND old.state IN ('creating','start_unknown','running','importing','downloading')) ORDER BY j.id`,[stamp()])).rows;
     const job=eligible.find(j=>ID.test(String(j.source_json?.page_id || '')) && directory.some(s=>s.brand===j.brand && s.page_id===j.source_json.page_id));
-    if(!job){
-      if(active.length)return waiting();
-      const unknown=(await pool.query(`SELECT r.*,j.source_json FROM ad_provider_runs r JOIN ad_cloud_jobs j ON j.id=r.job_id
-        WHERE r.state='start_unknown' AND r.run_id IS NULL AND r.next_poll_at<=$1 ORDER BY r.next_poll_at,r.job_id LIMIT 1`,[stamp()])).rows[0];
-      if(!unknown)return {status:'idle'};
-      // Reserve the read before networking; failed/missing/ambiguous matches
-      // retain the creation fence and budget, and are read at most once a day.
-      await atomic(db=>db.query('UPDATE ad_provider_runs SET next_poll_at=$2 WHERE job_id=$1',[unknown.job_id,after(stamp(),86400000)]));
-      let found;
-      try{found=await api.findProviderRun(unknown.source_json,{createdAt:unknown.created_at,env});}
-      catch(error){
-        if(isRate(error))await atomic(db=>db.query('UPDATE ad_provider_runs SET next_poll_at=GREATEST(next_poll_at,$2) WHERE job_id=$1',[unknown.job_id,after(stamp(),delayFor(error))]));
-        return {status:'start_unknown',job_id:unknown.job_id,operation:'reconcile',reason:safeCode(error),...providerHttpDiagnostics(error)};
-      }
-      if(!found)return {status:'start_unknown',job_id:unknown.job_id,operation:'reconcile',reason:'PROVIDER_MATCH_UNCONFIRMED'};
-      return atomic(async db=>{
-        // A supplier run can belong to only one persisted local job.
-        const used=await db.query('SELECT job_id FROM ad_provider_runs WHERE run_id=$1 AND job_id<>$2',[found.id,unknown.job_id]);
-        if(used.rows.length)return {status:'start_unknown',job_id:unknown.job_id,operation:'reconcile',reason:'PROVIDER_MATCH_CONFLICT'};
-        const failed=['FAILED','TIMED-OUT','ABORTED'].includes(found.status),terminal=failed||found.status==='SUCCEEDED';
-        const state=terminal?(found.defaultDatasetId?'importing':'error'):'running',at=stamp();
-        await db.query(`UPDATE ad_provider_runs SET run_id=$2,dataset_id=$3,state=$4,usage_usd=$5,
-          coverage_denied=coverage_denied OR $6,limit_reached=limit_reached OR $7,
-          updated_at=$8,next_poll_at=$8,finished_at=NULL,read_failed_at=NULL,poll_attempts=0,last_error=$9 WHERE job_id=$1`,
-          [unknown.job_id,found.id,found.defaultDatasetId,state,found.usageTotalUsd,failed,
-            found.usageTotalUsd!=null&&found.usageTotalUsd>=Number(unknown.max_run_usd),at,failed?'PROVIDER_RUN_'+found.status.replace(/-/g,'_'):state==='error'?'PROVIDER_DATASET_MISSING':null]);
-        await db.query('UPDATE ad_cloud_jobs SET status=$2,finished_at=NULL,note=$3 WHERE id=$1',[unknown.job_id,state==='error'?'error':'running','Önceki sağlayıcı çalışması doğrulandı; yeni ücretli çalışma açılmadan mevcut sonuç okunuyor.']);
-        return {status:state,job_id:unknown.job_id,operation:'reconcile',recovered:true};
-      });
-    }
+    if(!job)return active.length?waiting():{status:'idle'};
     const reserved=await atomic(async db=>{
       const at=stamp(),day=dayAt(at);
       await db.query('INSERT INTO ad_provider_budget(day) VALUES($1) ON CONFLICT DO NOTHING',[day]);

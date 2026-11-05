@@ -141,6 +141,21 @@ test('unconfirmed reconciliation keeps the fence and budget, and obeys daily and
   }finally{await f.db.close();}
 });
 
+test('budget-blocked new starts cannot starve reconciliation of an already-paid run',async()=>{
+  let reads=0;
+  const f=await fixture({startProviderRun:async()=>{throw err('PROVIDER_TIMEOUT',{ambiguous:true});},
+    findProviderRun:async()=>{reads++;return {id:'found12345',status:'SUCCEEDED',defaultDatasetId:'dataset12345',usageTotalUsd:0.01};}});
+  try{
+    await f.tick();
+    await f.db.query("UPDATE ad_cloud_jobs SET status='queued' WHERE brand='Broadmax'");
+    await f.db.query('UPDATE ad_provider_budget SET reserved_usd=$1',[env.APIFY_DAILY_BUDGET_USD]);
+    f.advance(300000);
+    const result=await f.tick();assert.equal(result.operation,'reconcile');assert.equal(result.status,'importing');assert.equal(reads,1);
+    assert.deepEqual((await f.db.query("SELECT attempts,status FROM ad_cloud_jobs WHERE brand='Broadmax'")).rows[0],{attempts:0,status:'queued'});
+    assert.equal(Number((await f.db.query('SELECT reserved_usd FROM ad_provider_budget')).rows[0].reserved_usd),0.2);
+  }finally{await f.db.close();}
+});
+
 test('complete nonempty provider results expose successful jobs rather than unconditional partial status',async()=>{
   const f=await fixture({getProviderItems:async()=>({items:[{...rawAd(),totalCount:1,isResultComplete:true}],offset:0,count:1,total:1})});
   try{await toDownload(f);assert.equal((await f.tick()).status,'complete');assert.equal((await f.target()).status,'ok');}
