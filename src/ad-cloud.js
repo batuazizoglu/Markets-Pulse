@@ -1,4 +1,5 @@
 import {randomUUID,createHash} from 'node:crypto';
+import {getCloudSourceCoverage} from './ad-source-coverage.js';
 import {recordAdStatus,retireMissingAds} from './ad-live.js';
 import {socialDirectory,verifiedFixedIspPageId} from './isp-registry.js';
 import {captureCloudAds,adLibrarySource} from './ad-cloud-capture.js';
@@ -253,10 +254,7 @@ export async function saveCloudCapture(pool,candidate,job,owner){
   return transaction(pool,async db=>{await assertLease(db,owner);return persistCloudCapture(db,candidate,job)});
 }
 async function cloudCoverage(pool){
-  const jobs=await pool.query("SELECT DISTINCT ON (brand) brand,source_json,status,created_at,finished_at,captured,note FROM ad_cloud_jobs WHERE status<>'imported' ORDER BY brand,created_at DESC,id DESC");
-  return jobs.rows.map(j=>({brand:j.brand,source_url:adLibrarySource(j.source_json)||j.source_json.ad_library_url,country:'CY',
-    status:['blocked','unverified','no_ads','error'].includes(j.status)?j.status:'partial',
-    checked_at:new Date(j.finished_at||j.created_at).toISOString(),reviewed_ads:null,note:j.note||'Bulut taraması kuyrukta; görsel analizi henüz tamamlanmadı.'}));
+  return (await getCloudSourceCoverage(pool))?.coverage||[];
 }
 async function publishCloudAnalysis(pool,sources,candidate,analysis,owner){
   // The worker lease serializes publication and capture; fence expired workers before importing.
@@ -264,7 +262,7 @@ async function publishCloudAnalysis(pool,sources,candidate,analysis,owner){
   const at=new Date().toISOString(),coverage=await cloudCoverage(pool);
   const {category_assignment:previousAssignment,...payload}=candidate.payload;
   const feed=validateAdFeed({schema_version:1,producer:'cloud-vision',schedule:CLOUD_SCHEDULE,
-    run:{id:'cloud-'+randomUUID(),checked_at:at,status:'partial',coverage},ads:[{...payload,...analysis}]},sources);
+    run:{id:'cloud-'+randomUUID(),checked_at:at,status:coverage.length&&coverage.every(x=>['ok','no_ads'].includes(x.status))?'ok':'partial',coverage},ads:[{...payload,...analysis}]},sources);
   await importAdFeed(pool,feed,{reanalysis:candidate.review_round>0,fetcher:async()=>{throw new Error('Cloud evidence missing')}});
   await pool.query("UPDATE ad_cloud_candidates SET status='analyzed',analysis_json=$1::jsonb,analyzed_at=NOW(),last_error=NULL WHERE ad_key=$2 AND fingerprint=$3",[JSON.stringify(analysis),candidate.ad_key,candidate.fingerprint]);
 }

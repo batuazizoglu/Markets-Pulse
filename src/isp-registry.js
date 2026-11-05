@@ -740,6 +740,7 @@ export const EXTRA_HOME_SOURCES = [
     "name": "Flytom • Sabit Genişbant",
     "url": "https://flynet.net/",
     "aliases": ["https://www.flytom.net/"],
+    "transport": "browser",
     "coverage_note": "Eski alan adı Flynet adresine yönleniyor; resmî sitede FLYTOM NETWORKS LTD. unvanı ve aynı telefon doğrulandı. Fiyat görseli otomatik fiyat verisi sayılmaz.",
     "parser": "flynet",
     "revision": 2,
@@ -753,7 +754,8 @@ export const EXTRA_HOME_SOURCES = [
     "slug": "longnet-home",
     "provider": "Longnet",
     "name": "Longnet • Sabit Genişbant",
-    "url": "https://www.longnetcyprus.com/",
+    "url": "https://longnetcyprus.com/",
+    "aliases": ["https://www.longnetcyprus.com/"],
     "parser": "services",
     "company_ids": [
       "longnet"

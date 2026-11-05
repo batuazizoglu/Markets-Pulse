@@ -5,6 +5,7 @@ import {parseISP, socialLinks, parseAlemPackages, parseFixnetCampaigns} from './
 import {ISP_SCOPE, ISP_COMPANIES, EXTRA_HOME_SOURCES, LEGACY_COMPANIES, companyCoverage, socialDirectory} from './isp-registry.js';
 import {competitiveWindow} from './competitive-changes.js';
 import {withOfficialSourceTransport} from './official-source-transport.js';
+import {readOfficialHtml} from './official-source-browser.js';
 const PARSER_VERSION='home-isp-2';
 const compatibleSnapshot=(row,source)=>row?.source_meta_json?.parser_version===PARSER_VERSION&&
   (row.source_meta_json.source_revision||1)===(source.revision||1);
@@ -656,6 +657,11 @@ export async function fetchSource(source){
       result=await serialBrowserFetch(()=>fetchLifecellDynamic(source));
     }else if(source.parser==='alemnet-dynamic'||source.parser==='fixnet-dynamic'){
       result=await serialBrowserFetch(()=>fetchPublicPricingDynamic(source));
+    }else if(source.transport==='browser'){
+      const page=await serialBrowserFetch(async()=>readOfficialHtml(await getLifecellBrowser(),source,{userAgent:UA}));
+      const parsed=parserFor(source,page.html);
+      result={ok:true,http_status:page.http_status,response_ms:Date.now()-t0,products:parsed.products,
+        meta:{...parsed.meta,transport:'browser',social_links:socialLinks(page.html,source.url)}};
     }else{
       result=await withOfficialSourceTransport(source,officialSourceHosts,async dispatcher=>{
       let url=source.fetch_url||source.url,res;

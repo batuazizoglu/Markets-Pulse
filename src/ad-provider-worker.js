@@ -1,13 +1,13 @@
 import {createHash} from 'node:crypto';
 import {socialDirectory} from './isp-registry.js';
 import {adLibrarySource} from './ad-cloud-capture.js';
-import {providerConfig,providerHttpDiagnostics,startProviderRun,getProviderRun,getProviderItems,fetchProviderImage} from './ad-provider-client.js';
+import {providerConfig,providerHttpDiagnostics,startProviderRun,getProviderRun,findProviderRun,getProviderItems,fetchProviderImage} from './ad-provider-client.js';
 import {normalizeProviderItem} from './ad-provider-normalize.js';
 import {recordAdStatus,retireMissingAds} from './ad-live.js';
 
 const ACTIVE = ['creating','running','importing','downloading'];
 const ID = /^\d{5,30}$/;
-const CLIENT = {startProviderRun,getProviderRun,getProviderItems,fetchProviderImage,normalizeProviderItem};
+const CLIENT = {startProviderRun,getProviderRun,findProviderRun,getProviderItems,fetchProviderImage,normalizeProviderItem};
 const sha = value => createHash('sha256').update(value).digest('hex');
 const safeCode = error => /^(?:PROVIDER|MEDIA|CLOUD)_[A-Z0-9_]+$/.test(error?.code || error?.message || '') ? (error.code || error.message) : 'PROVIDER_OPERATION_FAILED';
 const dayAt = date => new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Famagusta',year:'numeric',month:'2-digit',day:'2-digit'}).format(date);
@@ -50,7 +50,7 @@ async function finish(db,run,now) {
   if(tally.pending){await db.query('UPDATE ad_provider_runs SET updated_at=$2 WHERE job_id=$1',[run.job_id,now]);return {...tally,status:'downloading',job_id:run.job_id};}
   const complete=run.coverage_complete && !run.coverage_denied && run.source_exhausted && !run.limit_reached && !run.rows_rejected && !tally.missing && !tally.errors && run.expected_ads!=null && run.expected_ads===tally.ads;
   const state=complete ? 'complete' : 'partial';
-  const jobStatus=complete && tally.ads===0 ? 'no_ads' : 'partial';
+  const jobStatus=complete ? (tally.ads===0 ? 'no_ads' : 'ok') : 'partial';
   const note=`Sağlayıcıdan ${tally.ads} reklamda ${tally.assets} görsel kaydı bulundu; ${tally.captured} görsel arşivlendi, ${tally.missing+tally.errors} eksik/hatalı. `+
     (complete ? 'Sağlayıcının bildirdiği sonuçlar tamamlandı.' : 'Kaynak kapsamının tamamı doğrulanmadı; sonuçlar kısmi olarak gösteriliyor.');
   await db.query('UPDATE ad_provider_runs SET state=$2,updated_at=$3,finished_at=$3,coverage_complete=$4 WHERE job_id=$1',[run.job_id,state,now,complete]);
@@ -76,6 +76,7 @@ export async function runProviderTick(pool,sources,{env=process.env,owner,assert
   const markError=async(run,error,state='error')=>atomic(async db=>{
     const code=safeCode(error),at=stamp(),diagnostics=providerHttpDiagnostics(error);
     await db.query('UPDATE ad_provider_runs SET state=$2,last_error=$3,updated_at=$4,finished_at=$4 WHERE job_id=$1',[run.job_id,state,code,at]);
+    if(state==='start_unknown')await db.query('UPDATE ad_provider_runs SET next_poll_at=$2 WHERE job_id=$1',[run.job_id,after(at,300000)]);
     const http=diagnostics.http_status?` (HTTP ${diagnostics.http_status})`:'';
     await db.query('UPDATE ad_cloud_jobs SET status=$2,note=$3,finished_at=$4 WHERE id=$1',[run.job_id,state==='start_unknown'?'blocked':'error',state==='start_unknown'?'Sağlayıcı başlatma yanıtı belirsiz'+http+'; mükerrer ücret oluşmaması için yeni çalışma başlatılmadı.':'Sağlayıcı aktarımı tamamlanamadı: '+code+http+'. Arşivlenen kanıtlar korunuyor.',at]);
     return {status:state,reason:code,job_id:run.job_id,operation:operationFor(run),...diagnostics};
@@ -105,6 +106,36 @@ export async function runProviderTick(pool,sources,{env=process.env,owner,assert
   if(!run) {
     // At most one extra supplier run can progress while another source honors its wait period.
     if(active.length>=2)return waiting();
+    if(!active.length){
+      const unknown=(await pool.query(`SELECT r.*,j.source_json FROM ad_provider_runs r JOIN ad_cloud_jobs j ON j.id=r.job_id
+        WHERE r.state='start_unknown' AND r.run_id IS NULL AND r.next_poll_at<=$1 ORDER BY r.next_poll_at,r.job_id LIMIT 1`,[stamp()])).rows[0];
+      if(unknown){
+        // Reserve the read before networking; failed/missing/ambiguous matches
+        // retain the creation fence and budget, and are read at most once a day.
+        await atomic(db=>db.query('UPDATE ad_provider_runs SET next_poll_at=$2 WHERE job_id=$1',[unknown.job_id,after(stamp(),86400000)]));
+        let found;
+        try{found=await api.findProviderRun(unknown.source_json,{createdAt:unknown.created_at,env});}
+        catch(error){
+          if(isRate(error))await atomic(db=>db.query('UPDATE ad_provider_runs SET next_poll_at=GREATEST(next_poll_at,$2) WHERE job_id=$1',[unknown.job_id,after(stamp(),delayFor(error))]));
+          return {status:'start_unknown',job_id:unknown.job_id,operation:'reconcile',reason:safeCode(error),...providerHttpDiagnostics(error)};
+        }
+        if(!found)return {status:'start_unknown',job_id:unknown.job_id,operation:'reconcile',reason:'PROVIDER_MATCH_UNCONFIRMED'};
+        return atomic(async db=>{
+          // A supplier run can belong to only one persisted local job.
+          const used=await db.query('SELECT job_id FROM ad_provider_runs WHERE run_id=$1 AND job_id<>$2',[found.id,unknown.job_id]);
+          if(used.rows.length)return {status:'start_unknown',job_id:unknown.job_id,operation:'reconcile',reason:'PROVIDER_MATCH_CONFLICT'};
+          const failed=['FAILED','TIMED-OUT','ABORTED'].includes(found.status),terminal=failed||found.status==='SUCCEEDED';
+          const state=terminal?(found.defaultDatasetId?'importing':'error'):'running',at=stamp();
+          await db.query(`UPDATE ad_provider_runs SET run_id=$2,dataset_id=$3,state=$4,usage_usd=$5,
+            coverage_denied=coverage_denied OR $6,limit_reached=limit_reached OR $7,
+            updated_at=$8,next_poll_at=$8,finished_at=NULL,read_failed_at=NULL,poll_attempts=0,last_error=$9 WHERE job_id=$1`,
+            [unknown.job_id,found.id,found.defaultDatasetId,state,found.usageTotalUsd,failed,
+              found.usageTotalUsd!=null&&found.usageTotalUsd>=Number(unknown.max_run_usd),at,failed?'PROVIDER_RUN_'+found.status.replace(/-/g,'_'):state==='error'?'PROVIDER_DATASET_MISSING':null]);
+          await db.query('UPDATE ad_cloud_jobs SET status=$2,finished_at=NULL,note=$3 WHERE id=$1',[unknown.job_id,state==='error'?'error':'running','Önceki sağlayıcı çalışması doğrulandı; yeni ücretli çalışma açılmadan mevcut sonuç okunuyor.']);
+          return {status:state,job_id:unknown.job_id,operation:'reconcile',recovered:true};
+        });
+      }
+    }
     const directory=socialDirectory(sources);
     const eligible=(await pool.query(`SELECT j.* FROM ad_cloud_jobs j LEFT JOIN ad_provider_runs r ON r.job_id=j.id
       WHERE r.job_id IS NULL AND j.status IN ('queued','retry') AND j.available_at<=$1 AND j.attempts<3
