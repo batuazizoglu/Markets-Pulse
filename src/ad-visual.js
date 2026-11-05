@@ -1,4 +1,5 @@
 import {createHash} from 'node:crypto';
+import {getCloudSourceCoverage} from './ad-source-coverage.js';
 import {AD_ACTIVE_MAX_AGE_HOURS,liveAdWindow,liveAdSql,recordAdStatus} from './ad-live.js';
 import {isDeepStrictEqual} from 'node:util';
 import {socialDirectory,verifiedFixedIspPageId} from './isp-registry.js';
@@ -245,12 +246,12 @@ export async function getAdVisuals(pool,{now=new Date(),...options}={}){
   if(category){params.push(category);where.push('a.category=$'+params.length)}
   if(after){params.push(after.t,after.k);where.push('(a.observed_at<$'+(params.length-1)+'::timestamptz OR (a.observed_at=$'+(params.length-1)+'::timestamptz AND a.ad_key>$'+params.length+'))')}
   params.push(limit+1);
-  const [data,sync,counts,pendingMedia]=await Promise.all([
+  const [data,sync,counts,pendingMedia,sourceCoverage]=await Promise.all([
     pool.query('SELECT a.ad_key,a.first_seen_at,a.observed_at,'+live.checked+' activity_checked_at,'+live.status+' activity_status,NOT('+currentCreative+') superseded,to_char(a.observed_at AT TIME ZONE \'UTC\',\'YYYY-MM-DD"T"HH24:MI:SS.US"Z"\') cursor_time,a.analysis_json,c.status ai_queue_status,c.analyzed_at,c.review_round FROM ad_visual_items a '+live.join+' LEFT JOIN ad_cloud_candidates c ON c.ad_key=a.ad_key WHERE '+where.join(' AND ')+' ORDER BY a.observed_at DESC,a.ad_key ASC LIMIT $'+params.length,params),
     pool.query('SELECT * FROM ad_visual_sync WHERE id=1'),
-    pool.query('SELECT a.brand,a.category,count(*)::int count FROM ad_visual_items a '+live.join+' WHERE '+visibility+' GROUP BY a.brand,a.category',liveAdWindow(now)),pendingMediaCounts(pool,now)
+    pool.query('SELECT a.brand,a.category,count(*)::int count FROM ad_visual_items a '+live.join+' WHERE '+visibility+' GROUP BY a.brand,a.category',liveAdWindow(now)),pendingMediaCounts(pool,now),getCloudSourceCoverage(pool,{end:now})
   ]);
-  const status=sync.rows[0]||{};
+  const status={...sync.rows[0],...(sourceCoverage?{checked_at:sourceCoverage.checked_at,status:sourceCoverage.status,last_error:sourceCoverage.last_error,coverage_json:sourceCoverage.coverage}:{})};
   const stale=t=>!t||+now-+new Date(t)>48*3600000;
   const hasMore=data.rows.length>limit,page=data.rows.slice(0,limit),last=page.at(-1);
   const groups=Object.fromEntries(Object.keys(categories).map(k=>[k,0])),brandGroups=Object.create(null);let total=0;
@@ -272,7 +273,8 @@ export async function getAdReport(pool,start,end,{category}={}){
   const params=[date(start),date(end)];if(category)params.push(category);
   const r=await pool.query("SELECT event_type,analysis_json,observed_at FROM ad_visual_versions WHERE observed_at >= $1 AND observed_at < $2 AND event_type IN ('first_seen','changed') "+(category?"AND analysis_json->>'category'=$3 ":'')+"ORDER BY observed_at DESC,id DESC",params);
   const current=await pool.query('SELECT checked_at,status,last_error,coverage_json FROM ad_visual_sync WHERE id=1');
-  return {rows:r.rows,categories:await getAdCategories(pool),checked_at:current.rows[0]?.checked_at||null,status:current.rows[0]?.status||'pending',last_error:current.rows[0]?.last_error||null,coverage:current.rows[0]?.coverage_json||[]};
+  const live=await getCloudSourceCoverage(pool,{end});
+  return {rows:r.rows,categories:await getAdCategories(pool),checked_at:current.rows[0]?.checked_at||null,status:current.rows[0]?.status||'pending',last_error:current.rows[0]?.last_error||null,coverage:current.rows[0]?.coverage_json||[],...live};
 }
 export function registerAdVisualRoutes(app,pool,sources,{sync=syncAdVisuals,now=Date.now,cloudStatus=null}={}){
   let lastManualSync=-Infinity;

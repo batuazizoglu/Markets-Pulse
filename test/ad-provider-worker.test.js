@@ -23,6 +23,7 @@ async function fixture(overrides={}) {
   const client={
     startProviderRun:async()=>{starts++;return {id:'run12345',status:'RUNNING',defaultDatasetId:'dataset12345',usageTotalUsd:0};},
     getProviderRun:async()=>{polls++;return {id:'run12345',status:'SUCCEEDED',defaultDatasetId:'dataset12345',usageTotalUsd:0.01};},
+    findProviderRun:async()=>null,
     getProviderItems:async(id,{offset})=>({items:offset?[]:[rawAd()],total:1,offset,count:offset?0:1}),
     fetchProviderImage:async()=>{fetches++;return {bytes:jpeg,mime:'image/jpeg'};},
     ...overrides
@@ -109,6 +110,41 @@ test('a persisted creation fence is never automatically repeated after process i
     await f.tick();await f.db.query("UPDATE ad_provider_runs SET state='creating',run_id=NULL,dataset_id=NULL");
     assert.equal((await f.tick()).status,'start_unknown');assert.equal(f.stats().starts,1);
   } finally {await f.db.close();}
+});
+
+test('read-only reconciliation resumes a known old run without another start, spend or fresh observation',async()=>{
+  let starts=0,reads=0;
+  const f=await fixture({startProviderRun:async()=>{starts++;throw err('PROVIDER_TIMEOUT',{ambiguous:true});},
+    findProviderRun:async()=>{reads++;return {id:'found12345',status:'SUCCEEDED',defaultDatasetId:'dataset12345',usageTotalUsd:0.01};}});
+  try{
+    await f.tick();const original=await f.run(),budget=(await f.db.query('SELECT * FROM ad_provider_budget')).rows;
+    f.advance(86400000);
+    const recovered=await f.tick();assert.equal(recovered.operation,'reconcile');assert.equal(recovered.status,'importing');assert.equal(recovered.recovered,true);
+    assert.equal(starts,1);assert.equal(reads,1);assert.deepEqual((await f.db.query('SELECT * FROM ad_provider_budget')).rows,budget);
+    assert.equal(+(await f.run()).created_at,+original.created_at);
+    await f.tick();await f.tick();assert.equal((await f.run()).state,'partial');
+    assert.equal(+(await f.db.query('SELECT checked_at FROM ad_live_status')).rows[0].checked_at,+original.created_at);
+    assert.equal(starts,1);
+  }finally{await f.db.close();}
+});
+
+test('unconfirmed reconciliation keeps the fence and budget, and obeys daily and supplier read backoff',async()=>{
+  let reads=0;
+  const f=await fixture({startProviderRun:async()=>{throw err('PROVIDER_TIMEOUT',{ambiguous:true});},findProviderRun:async()=>{reads++;return null;}});
+  try{
+    await f.tick();f.advance(300000);let result=await f.tick();assert.equal(result.reason,'PROVIDER_MATCH_UNCONFIRMED');
+    assert.equal((await f.tick()).status,'idle');assert.equal(reads,1);assert.equal((await f.run()).state,'start_unknown');
+    f.advance(86400000);f.client.findProviderRun=async()=>{reads++;throw err('PROVIDER_RATE_LIMITED',{http_status:429,retry_after_ms:172800000});};
+    result=await f.tick();assert.equal(result.operation,'reconcile');assert.equal(result.http_status,429);
+    f.advance(86400000);assert.equal((await f.tick()).status,'idle');assert.equal(reads,2);
+    assert.equal((await f.db.query('SELECT starts FROM ad_provider_budget')).rows[0].starts,1);
+  }finally{await f.db.close();}
+});
+
+test('complete nonempty provider results expose successful jobs rather than unconditional partial status',async()=>{
+  const f=await fixture({getProviderItems:async()=>({items:[{...rawAd(),totalCount:1,isResultComplete:true}],offset:0,count:1,total:1})});
+  try{await toDownload(f);assert.equal((await f.tick()).status,'complete');assert.equal((await f.target()).status,'ok');}
+  finally{await f.db.close();}
 });
 
 test('rejected paid starts report safe HTTP diagnostics, retain budget reservations and are not retried',async()=>{

@@ -92,6 +92,27 @@ test('quiet days require fresh successful checks in every domain; stale, partial
   ctx.ad_report_data.status='ok';ctx.ad_report_data.last_error='latest attempt failed';assert.equal(buildDailyBrief(ctx).quiet,false);
 });
 
+test('home coverage counts independent catalogues once, excludes archives, and preserves real failures',()=>{
+  const ctx=context();
+  ctx.daily_home.fixed.sources=[{...source(),slug:'canonical'},
+    {...source(),slug:'shared',catalog_source:'canonical',status:'shared'},
+    {slug:'retired',retired:true,status:'archived'},
+    ...Array.from({length:5},(_,i)=>({...source(),slug:'failed-'+i,status:'error',error:'connection failed'}))];
+  let fixed=buildDailyBrief(ctx).coverage.domains.find(x=>x.domain==='fixed');
+  assert.equal(fixed.total,6);assert.equal(fixed.checked,1);assert.equal(fixed.failed,5);assert.match(fixed.message,/5 kaynakta/);
+  ctx.daily_home.fixed.sources[0].status='error';ctx.daily_home.fixed.sources[1].status='error';
+  fixed=buildDailyBrief(ctx).coverage.domains.find(x=>x.domain==='fixed');
+  assert.equal(fixed.failed,6,'the failed shared catalogue is counted through its canonical source once');
+  ctx.daily_home.fixed.sources=[{...source(),slug:'shared',catalog_source:'absent',status:'shared'}];
+  assert.equal(buildDailyBrief(ctx).coverage.domains.find(x=>x.domain==='fixed').state,'partial');
+  ctx.daily_home.fixed.sources=[{...source(),slug:'canonical'},
+    {...source(),slug:'shared',catalog_source:'canonical',status:'shared'},
+    {slug:'archive',status:'archived'}];
+  assert.equal(buildDailyBrief(ctx).quiet,true);
+  ctx.daily_home.fixed.sources[0].captured_at=ctx.daily_home.fixed.sources[0].last_checked_at='2026-10-01T00:00:00Z';
+  assert.equal(buildDailyBrief(ctx).quiet,false,'a fresh alias cannot hide a stale canonical check');
+});
+
 test('ad radar omits analysis-only updates, deduplicates equal campaigns and uses only prepared creative images',()=>{
   const ctx=context();ctx.ad_report_data.rows=[ad(),ad({ad_id:'100002',variant_id:'2'}),{...ad({ad_id:'100003'}),event_type:'analysis_updated'},{...ad({ad_id:'100004'}),observed_at:end},ad({ad_id:'100005',category:'review'})];
   let brief=buildDailyBrief(ctx);assert.equal(brief.counts.ads,1);assert.equal(brief.ads[0].variant_count,2);assert.match(brief.ads[0].image_url,/report-media\/[a-f0-9]{64}\.jpg$/);assert.match(brief.ads[0].offer,/899 TL \/ ay/);assert.deepEqual(brief.ads[0].conditions,['Yeni abonelere özel']);

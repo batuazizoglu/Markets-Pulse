@@ -130,6 +130,31 @@ export async function getProviderRun(id, {env=process.env,fetcher=fetch} = {}) {
   if (run.id !== id) throw failure('PROVIDER_RESPONSE_INVALID');
   return run;
 }
+// Reconcile a lost create response with read-only API calls. Never infer that
+// no match means no charge, and never start/resurrect a replacement run here.
+export async function findProviderRun(source,{createdAt,env=process.env,fetcher=fetch}={}){
+  const at=+new Date(createdAt);
+  if(!Number.isFinite(at)||!PAGE_ID.test(String(source?.page_id||'')))throw failure('PROVIDER_SOURCE_INVALID');
+  const start=at-5000,end=at+120000;
+  const query=new URLSearchParams({offset:'0',limit:'4',startedAfter:new Date(start).toISOString(),startedBefore:new Date(end).toISOString()});
+  const {value}=await apiRequest('/actors/apify~facebook-ads-scraper/runs?'+query,{env,fetcher,maxBytes:1024*1024});
+  const data=value?.data;
+  if(!data||!Array.isArray(data.items)||data.offset!==0||data.count!==data.items.length||!Number.isSafeInteger(data.total)||data.total<0)throw failure('PROVIDER_RESPONSE_INVALID');
+  if(data.total>3||data.total!==data.items.length)return null;
+  const expectedUrl=new URL(adLibraryUrl(source,{allowKeyword:false}));expectedUrl.searchParams.sort();
+  const matches=[],seen=new Set();
+  for(const item of data.items){
+    const run=safeRun({data:item}),started=+new Date(item.startedAt);
+    if(seen.has(run.id)||!Number.isFinite(started)||started<start||started>end||!RUN_ID.test(item.defaultKeyValueStoreId||''))throw failure('PROVIDER_RESPONSE_INVALID');
+    seen.add(run.id);
+    const {value:input}=await apiRequest('/key-value-stores/'+item.defaultKeyValueStoreId+'/records/INPUT',{env,fetcher,maxBytes:1024*1024});
+    if(!Array.isArray(input?.startUrls)||input.startUrls.length!==1||input.onlyTotal!==false||input.includeAboutPage!==false||input.isDetailsPerAd!==false||input.enrichWithEcommerceData!==false)continue;
+    if(['resultsLimit','onlyAdsNewerThan','onlyAdsOlderThan'].some(key=>input[key]!=null))continue;
+    let url;try{url=new URL(input.startUrls[0].url);url.searchParams.sort();}catch{continue;}
+    if(url.href===expectedUrl.href)matches.push(run);
+  }
+  return matches.length===1?matches[0]:null;
+}
 export async function getProviderItems(datasetId, {offset=0,limit=100,env=process.env,fetcher=fetch} = {}) {
   if (!RUN_ID.test(String(datasetId || '')) || !Number.isSafeInteger(offset) || offset<0 || !Number.isSafeInteger(limit) || limit<1 || limit>1000) throw failure('PROVIDER_ID_INVALID');
   const query = new URLSearchParams({format:'json',offset:String(offset),limit:String(limit),clean:'false'});

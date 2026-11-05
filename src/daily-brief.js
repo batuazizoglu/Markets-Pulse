@@ -203,7 +203,14 @@ function comparisonFor(move,ctx,start,end){
 }
 
 function coverageFor(ctx,start,end){
-  const groups=[['gsm',list(ctx.sources).filter(x=>x.enabled!==false)],['fixed',list(ctx.daily_home?.fixed?.sources).filter(x=>x.enabled!==false)],['fwa',list(ctx.daily_home?.fwa?.sources).filter(x=>x.enabled!==false)]];
+  const homeSources=rows=>{
+    const active=list(rows).filter(x=>x.enabled!==false&&!x.retired&&x.status!=='archived');
+    const canonical=new Set(active.filter(x=>!x.catalog_source).map(x=>x.slug));
+    // Shared catalogues are already checked through their canonical source.
+    // An orphan alias remains an unknown check, never an implicit success.
+    return active.filter(x=>!x.catalog_source||!canonical.has(x.catalog_source));
+  };
+  const groups=[['gsm',list(ctx.sources).filter(x=>x.enabled!==false)],['fixed',homeSources(ctx.daily_home?.fixed?.sources)],['fwa',homeSources(ctx.daily_home?.fwa?.sources)]];
   const ad=ctx.ad_report_data||{};
   groups.push(['ads',list(ad.coverage).length?ad.coverage:[{status:ad.status,checked_at:ad.checked_at,last_error:ad.last_error}]]);
   const domains=groups.map(([domain,rows])=>{

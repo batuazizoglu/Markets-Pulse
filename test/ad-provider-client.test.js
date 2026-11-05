@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {providerConfig,providerStatus,providerHttpDiagnostics,startProviderRun,getProviderRun,getProviderItems,fetchProviderImage,safeProviderImageUrl} from '../src/ad-provider-client.js';
+import {providerConfig,providerStatus,providerHttpDiagnostics,startProviderRun,getProviderRun,findProviderRun,getProviderItems,fetchProviderImage,safeProviderImageUrl} from '../src/ad-provider-client.js';
+import {adLibraryUrl} from '../src/ad-library-url.js';
 
 const env={AD_CAPTURE_PROVIDER:'apify',APIFY_TOKEN:'secret-test-token',APIFY_MAX_RUN_USD:'0.50',APIFY_DAILY_BUDGET_USD:'2'};
 const source={brand:'Verified provider',page_id:'159064954156749'};
@@ -8,6 +9,36 @@ const json=(value,status=200,headers={})=>new Response(JSON.stringify(value),{st
 const run={id:'runABC12345',status:'RUNNING',defaultDatasetId:'dataABC12345',usageTotalUsd:0};
 const asset={kind:'image',urls:['https://scontent.xx.fbcdn.net/ad.jpg?oh=signed']};
 const jpeg=Buffer.from([0xff,0xd8,0xff,0xe0,0,0]);
+
+test('lost starts are reconciled only against a unique exact source input using bounded GET requests',async()=>{
+  const createdAt='2026-10-15T21:09:30Z';
+  const candidate={...run,status:'SUCCEEDED',startedAt:'2026-10-15T21:09:31Z',defaultKeyValueStoreId:'storeABC12345'};
+  const input={startUrls:[{url:adLibraryUrl(source)}],onlyTotal:false,includeAboutPage:false,isDetailsPerAd:false,enrichWithEcommerceData:false};
+  let calls=[];
+  const fetcher=async(url,options)=>{
+    calls.push(url);assert.equal(options.method,'GET');assert.equal(options.headers.Authorization,'Bearer '+env.APIFY_TOKEN);
+    if(url.includes('/actors/')){
+      const q=new URL(url).searchParams;assert.equal(q.get('startedAfter'),'2026-10-15T21:09:25.000Z');assert.equal(q.get('startedBefore'),'2026-10-15T21:11:30.000Z');
+      return json({data:{items:[candidate],offset:0,count:1,total:1}});
+    }
+    assert.match(url,/\/key-value-stores\/storeABC12345\/records\/INPUT$/);return json(input);
+  };
+  assert.deepEqual(await findProviderRun(source,{createdAt,env,fetcher}),{...run,status:'SUCCEEDED'});assert.equal(calls.length,2);
+  input.startUrls[0].url=adLibraryUrl({...source,page_id:'999999'});
+  assert.equal(await findProviderRun(source,{createdAt,env,fetcher}),null);
+  input.startUrls[0].url=adLibraryUrl(source).replace('country=CY','country=ALL');
+  assert.equal(await findProviderRun(source,{createdAt,env,fetcher}),null);
+  input.startUrls[0].url=adLibraryUrl(source);input.resultsLimit=1;
+  assert.equal(await findProviderRun(source,{createdAt,env,fetcher}),null);
+  delete input.resultsLimit;
+  for(const items of [[],[candidate,{...candidate,id:'runXYZ12345'}]]){
+    assert.equal(await findProviderRun(source,{createdAt,env,fetcher:async url=>url.includes('/actors/')?json({data:{items,offset:0,count:items.length,total:items.length}}):json(input)}),null);
+  }
+  let bounded=0;
+  assert.equal(await findProviderRun(source,{createdAt,env,fetcher:async()=>{bounded++;return json({data:{items:[candidate],offset:0,count:1,total:10}});}}),null);
+  assert.equal(bounded,1,'a truncated search cannot establish a unique match');
+  await assert.rejects(findProviderRun(source,{createdAt,env,fetcher:async()=>json({error:env.APIFY_TOKEN},403)}),e=>e.code==='PROVIDER_ACCESS_DENIED'&&!String(e).includes(env.APIFY_TOKEN));
+});
 
 test('provider requires an explicit account token and cost ceilings; status never exposes the token',()=>{
   assert.equal(providerConfig({}).mode,'browser');
