@@ -3,14 +3,14 @@ import assert from 'node:assert/strict';
 import {PGlite} from '@electric-sql/pglite';
 import {JSDOM} from 'jsdom';
 import {SCHEMA_SQL} from '../src/schema.js';
-import {deliverGsmChangeNotification,gsmChangeEmailHtml,gsmChangePlainText,gsmChangeSubject,queueGsmChangeNotification} from '../src/gsm-change-email.js';
+import {deliverGsmChangeNotification,gsmChangeEmailHtml,gsmChangePlainText,gsmChangeSubject,queueGsmChangeNotification,queueUnnotifiedGsmChanges} from '../src/gsm-change-email.js';
 
 let db;
 const firstAt='2030-07-02T08:03:00.000Z',retryAt='2030-07-02T09:03:00.000Z';
 before(async()=>{
   db=new PGlite();await db.exec(SCHEMA_SQL);
   await db.query("INSERT INTO sources(id,slug,name,url) VALUES(1,'faturali','Faturalı','https://synthetic.example/faturali')");
-  await db.query("INSERT INTO scans(id,source_id,started_at,finished_at,status) VALUES(1,1,$1,$1,'ok'),(2,1,$2,$2,'ok'),(3,1,$3,$3,'ok')",[firstAt,'2030-07-02T08:33:00.000Z',retryAt]);
+  await db.query("INSERT INTO scans(id,source_id,started_at,finished_at,status) VALUES(1,1,$1,$1,'ok'),(2,1,$2,$2,'ok'),(3,1,$3,$3,'ok'),(4,1,$4,$4,'ok'),(5,1,$5,$5,'ok')",[firstAt,'2030-07-02T08:33:00.000Z',retryAt,'2030-07-02T10:03:00.000Z','2030-07-02T11:03:00.000Z']);
   await db.query(`INSERT INTO products(id,source_id,identity_base,current_name,first_seen_at,last_seen_at,active)
     VALUES(1,1,'red-20','Red 20 GB <script>','2030-07-01T08:00:00Z',$1,TRUE),(2,1,'yeni-50','Yeni 50 GB',$1,$1,TRUE)`,[firstAt]);
   await db.query(`INSERT INTO product_versions(product_id,scan_id,captured_at,name,price_try,extras_json,product_hash)
@@ -19,7 +19,9 @@ before(async()=>{
     (1,1,1,$1,'field_changed','Fiyat','599','699','critical',1),
     (2,1,1,$1,'field_changed','Ek Fayda / Koşul','["Eski fayda"]','["Sosyal medya faydası"]','medium',1),
     (3,1,2,$1,'added',NULL,NULL,'Yeni 50 GB','critical',1),
-    (4,1,1,$2,'field_changed','Data','20','25','high',3)`,[firstAt,retryAt]);
+    (4,1,1,$2,'field_changed','Data','20','25','high',3),
+    (5,1,1,'2030-07-02T10:03:00Z','field_changed','SMS','500','1000','medium',4),
+    (6,1,1,'2030-07-02T11:03:00Z','field_changed','Uluslararası Dakika','50','100','high',5)`,[firstAt,retryAt]);
 });
 after(async()=>db?.close());
 
@@ -71,4 +73,23 @@ test('failed delivery stays pending, respects backoff and succeeds without creat
   assert.equal(retried.status,'sent');assert.equal(retried.change_count,1);assert.equal(calls,2);
   const stored=(await db.query('SELECT status,attempt_count,last_error FROM gsm_change_notifications WHERE batch_key=$1',[queued.batch_key])).rows[0];
   assert.equal(stored.status,'sent');assert.equal(stored.attempt_count,2);assert.equal(stored.last_error,null);
+});
+
+test('reconciliation queues a completed scan whose first enqueue attempt never persisted',async()=>{
+  const recovered=await queueUnnotifiedGsmChanges(db,{now:new Date('2030-07-02T10:04:00Z')});
+  assert.equal(recovered.status,'pending');assert.equal(recovered.queued,true);assert.equal(recovered.change_count,1);assert.deepEqual(recovered.scan_ids,['4']);
+  const sent=await deliverGsmChangeNotification(db,recovered.batch_key,{now:new Date('2030-07-02T10:04:01Z'),sendEmail:async(_pool,message)=>({message_id:'gsm-message-3',recipients:['8 kişi'],recipient_count:8,subject:message.subject,total_bytes:100})});
+  assert.equal(sent.status,'sent');assert.equal(sent.change_count,1);
+  assert.equal((await queueUnnotifiedGsmChanges(db,{now:new Date('2030-07-02T10:05:00Z')})).status,'no_changes');
+});
+
+test('transient row preparation failure returns the claim to bounded backoff instead of leaving it sending',async()=>{
+  const queued=await queueGsmChangeNotification(db,[5],{now:new Date('2030-07-02T11:04:00Z')});let fail=true,calls=0;
+  const flaky={query(sql,args){if(fail&&/SELECT c\.\*,s\.slug source_slug/.test(sql)){fail=false;return Promise.reject(new Error('Synthetic row read failure'))}return db.query(sql,args)}};
+  const first=await deliverGsmChangeNotification(flaky,queued.batch_key,{now:new Date('2030-07-02T11:04:01Z'),sendEmail:async()=>{calls++;return {}}});
+  assert.equal(first.status,'pending');assert.equal(first.attempt_count,1);assert.match(first.error,/row read failure/);assert.equal(calls,0);
+  const stored=(await db.query('SELECT status,attempt_count FROM gsm_change_notifications WHERE batch_key=$1',[queued.batch_key])).rows[0];
+  assert.equal(stored.status,'pending');assert.equal(stored.attempt_count,1);
+  const retried=await deliverGsmChangeNotification(db,queued.batch_key,{now:new Date('2030-07-02T11:05:02Z'),sendEmail:async(_pool,message)=>{calls++;return {message_id:'gsm-message-4',recipients:['8 kişi'],recipient_count:8,subject:message.subject,total_bytes:100}}});
+  assert.equal(retried.status,'sent');assert.equal(calls,1);
 });

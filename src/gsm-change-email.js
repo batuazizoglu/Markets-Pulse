@@ -89,6 +89,16 @@ export async function queueGsmChangeNotification(pool,scanIds,{trigger='schedule
   return {status:existing?.status||'existing',queued:false,batch_key:key,change_count:rows.length,scan_ids:scans};
 }
 
+export async function queueUnnotifiedGsmChanges(pool,{trigger='recovery',now=new Date(),limit=100}={}){
+  const at=new Date(now),result=await pool.query(`SELECT DISTINCT c.scan_id
+    FROM changes c CROSS JOIN gsm_change_notification_state state
+    WHERE state.id=1 AND c.detected_at>=state.reconcile_after AND c.detected_at<$1
+      AND NOT EXISTS (SELECT 1 FROM gsm_change_notifications notification WHERE c.id=ANY(notification.change_ids))
+    ORDER BY c.scan_id LIMIT $2`,[new Date(+at+60000).toISOString(),Math.max(1,Math.min(500,Number(limit)||100))]);
+  const scanIds=result.rows.map(row=>row.scan_id);
+  return scanIds.length?queueGsmChangeNotification(pool,scanIds,{trigger,now:at}):{status:'no_changes',queued:false,change_count:0,scan_ids:[]};
+}
+
 async function notificationRows(pool,notification,now){
   const rows=await loadCompetitiveChanges(pool,{scanIds:notification.scan_ids,end:new Date(+new Date(now)+60000)}),wanted=new Set(notification.change_ids.map(String));
   return rows.filter(row=>wanted.has(String(row.id))).sort((a,b)=>{
@@ -105,21 +115,19 @@ export async function deliverGsmChangeNotification(pool,key,{sendEmail,now=new D
     const current=(await pool.query('SELECT status,attempt_count,sent_at,last_error FROM gsm_change_notifications WHERE batch_key=$1',[key])).rows[0];
     return current?{batch_key:key,...current,delivered:false}:{batch_key:key,status:'missing',delivered:false};
   }
-  const rows=await notificationRows(pool,claimed,now);
-  if(!rows.length){
-    await pool.query("UPDATE gsm_change_notifications SET status='failed',last_error='CHANGE_ROWS_MISSING',updated_at=$2 WHERE batch_key=$1",[key,new Date(now).toISOString()]);
-    return {batch_key:key,status:'failed',delivered:false,error:'CHANGE_ROWS_MISSING'};
-  }
-  const subject=gsmChangeSubject(rows),htmlContent=gsmChangeEmailHtml(rows),textContent=gsmChangePlainText(rows);
-  let sent;
+  let rows=[],subject,htmlContent,textContent,sent;
   try{
+    rows=await notificationRows(pool,claimed,now);
+    if(!rows.length){const error=new Error('CHANGE_ROWS_MISSING');error.code='CHANGE_ROWS_MISSING';throw error;}
+    subject=gsmChangeSubject(rows);htmlContent=gsmChangeEmailHtml(rows);textContent=gsmChangePlainText(rows);
     sent=await sendEmail(pool,{subject,textContent,htmlContent,headers:{'X-Markets-Pulse-Type':'gsm-change','X-Markets-Pulse-Batch':key}});
   }catch(error){
     const attempts=Number(claimed.attempt_count)||1,terminal=attempts>=MAX_ATTEMPTS;
     const retrySeconds=Math.min(1800,60*2**Math.max(0,attempts-1)),next=new Date(+new Date(now)+retrySeconds*1000);
     await pool.query(`UPDATE gsm_change_notifications SET status=$2,next_attempt_at=$3,last_error=$4,updated_at=$5 WHERE batch_key=$1`,[key,terminal?'failed':'pending',next.toISOString(),clip(error?.message||String(error),500),new Date(now).toISOString()]);
+    const periodStart=rows[0]?.detected_at||claimed.created_at,periodEnd=rows.at(-1)?.detected_at||claimed.created_at;
     if(terminal)await pool.query(`INSERT INTO report_runs(report_type,period_start,period_end,trigger_type,delivery_status,error,meta_json)
-      VALUES('gsm-change',$1,$2,$3,'error',$4,$5::jsonb)`,[rows[0].detected_at,rows.at(-1).detected_at,claimed.trigger_type,clip(error?.message||String(error),500),JSON.stringify({batch_key:key,scan_ids:claimed.scan_ids,change_count:rows.length,attempts})]);
+      VALUES('gsm-change',$1,$2,$3,'error',$4,$5::jsonb)`,[periodStart,periodEnd,claimed.trigger_type,clip(error?.message||String(error),500),JSON.stringify({batch_key:key,scan_ids:claimed.scan_ids,change_count:claimed.change_ids.length,attempts})]);
     return {batch_key:key,status:terminal?'failed':'pending',delivered:false,attempt_count:attempts,next_attempt_at:next.toISOString(),error:clip(error?.message||String(error),500)};
   }
   const sentAt=new Date(now).toISOString();
