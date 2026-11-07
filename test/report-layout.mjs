@@ -10,6 +10,7 @@ import {createReportLayoutFixtures,createDailyBriefLayoutFixtures} from './repor
 import {dailyBriefEmailHtml} from '../src/daily-brief-email.js';
 import {REPORT_NAMES,REPORT_TZ} from '../src/report-data.js';
 import {monthlyOverviewHtml} from '../src/monthly-report-content.js';
+import {gsmChangeEmailHtml} from '../src/gsm-change-email.js';
 
 const output='test-output/report-layout';
 await mkdir(output,{recursive:true});
@@ -135,6 +136,28 @@ try{
       emails.push({name,...reviewMetrics});console.log('EMAIL_LAYOUT '+JSON.stringify(emails.at(-1)));
       await page.close();
     }
+  }
+  const gsmRows=[
+    {id:1,source_id:1,product_id:1,source_name:'Faturalı',product_name:'Red 20 GB',detected_at:'2030-07-02T08:03:00Z',change_type:'field_changed',field_name:'Fiyat',old_value:'599',new_value:'699',severity:'critical'},
+    {id:2,source_id:1,product_id:1,source_name:'Faturalı',product_name:'Red 20 GB',detected_at:'2030-07-02T08:03:00Z',change_type:'field_changed',field_name:'Ek Fayda / Koşul',old_value:'["Eski fayda"]',new_value:'["Sosyal medya ve video uygulamalarında geçerli uzun kampanya faydası"]',severity:'medium'},
+    {id:3,source_id:2,product_id:2,source_name:'Faturasız',product_name:'Yeni 50 GB',detected_at:'2030-07-02T08:04:00Z',change_type:'added',new_value:'Yeni 50 GB',severity:'critical'}
+  ],gsmHtml=gsmChangeEmailHtml(gsmRows);
+  await writeFile(`${output}/email-gsm-change.html`,gsmHtml);
+  for(const width of [700,390,375]){
+    const page=await browser.newPage();await page.emulateMediaType('screen');await page.setViewport({width,height:1000,deviceScaleFactor:1});
+    const unexpectedRequests=[];await page.setRequestInterception(true);page.on('request',request=>{const url=request.url();if(/^(data:|about:)/.test(url))return request.continue();unexpectedRequests.push(url);return request.abort()});
+    await page.setContent(gsmHtml,{waitUntil:'load',timeout:60000});
+    const metrics=await page.evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth,rows:document.querySelectorAll('.gsm-change-row').length,images:document.images.length,
+      tableRight:document.querySelector('.gsm-table').getBoundingClientRect().right,ctaHeight:document.querySelector('a').getBoundingClientRect().height,
+      textMinFont:Math.min(...Array.from(document.body.querySelectorAll('*')).filter(el=>Array.from(el.childNodes).some(node=>node.nodeType===Node.TEXT_NODE&&node.textContent.trim())&&el.getBoundingClientRect().height>0).map(el=>parseFloat(getComputedStyle(el).fontSize))),
+      mobileLabels:Array.from(document.querySelectorAll('.gsm-mobile-label')).filter(el=>el.getBoundingClientRect().height>0).length,
+      headingVisible:document.querySelector('.gsm-table thead').getBoundingClientRect().height>0,text:document.body.textContent}));
+    await page.screenshot({path:`${output}/email-gsm-change-${width}.png`,fullPage:true});
+    assert.ok(metrics.scroll<=width+1,`GSM email horizontal overflow ${width}: ${metrics.scroll}`);
+    assert.ok(metrics.tableRight<=width+1,`GSM email table clipped ${width}`);
+    assert.equal(metrics.rows,3);assert.equal(metrics.images,0);assert.ok(metrics.textMinFont>=12,`GSM email text below 12px ${width}`);assert.ok(metrics.ctaHeight>=40,`GSM email CTA too small ${width}`);
+    assert.equal(metrics.headingVisible,width>520);assert.equal(metrics.mobileLabels,width<=520?12:0);assert.match(metrics.text,/599 TL.*699 TL/s);assert.deepEqual(unexpectedRequests,[]);
+    const {text,...reviewMetrics}=metrics;emails.push({name:'gsm-change',...reviewMetrics});console.log('EMAIL_LAYOUT '+JSON.stringify(emails.at(-1)));await page.close();
   }
 }finally{await browser.close()}
 await writeFile(`${output}/metrics.json`,JSON.stringify({poppler:hasPoppler,reports:results,emails},null,2));

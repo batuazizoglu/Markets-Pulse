@@ -43,9 +43,14 @@ export function competitiveWindow(days=30,now=new Date()){
 
 // All mobile views use the same event-time product version and interval. Limits
 // are only for the backwards-compatible latest-changes endpoint, never totals.
-export async function loadCompetitiveChanges(pool,{start,end=new Date(),limit}={}){
+export async function loadCompetitiveChanges(pool,{start,end=new Date(),limit,scanIds}={}){
   const baseParams=[new Date(end).toISOString()],baseWhere=['c.detected_at < $1::timestamptz'];
-  if(start!=null){baseParams.push(new Date(start).toISOString());baseWhere.push('c.detected_at >= $2::timestamptz')}
+  if(start!=null){baseParams.push(new Date(start).toISOString());baseWhere.push(`c.detected_at >= $${baseParams.length}::timestamptz`)}
+  const scans=[...new Set((scanIds||[]).map(value=>String(value)).filter(value=>/^\d+$/.test(value)))];
+  if(scanIds!==undefined){
+    if(!scans.length)return [];
+    baseParams.push(scans);baseWhere.push(`c.scan_id=ANY($${baseParams.length}::bigint[])`);
+  }
   const resultLimit=limit==null?null:Math.max(1,Math.min(250,Math.trunc(Number(limit)||80)));
   const batchSize=resultLimit==null?null:Math.max(80,resultLimit),rows=[];
   let cursor=null;
