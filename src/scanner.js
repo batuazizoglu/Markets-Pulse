@@ -96,11 +96,11 @@ async function scanSource(source) {
         [source.id, scanId, started, kind, pageHash, zlib.gzipSync(Buffer.from(html)), JSON.stringify(cards), fullScreenshot, focusedScreenshot, screenshotError, focusedScreenshotError, JSON.stringify(screenshotMeta)]);
     }
 
-    return { ok:true, source:source.slug, http_status:responseStatus, response_ms:Date.now()-t0, parsed_count:parsedCount, baseline, changes:meaningfulChanges, screenshot_ok:screenshotOk, focused_screenshot_ok:focusOk };
+    return { ok:true, scan_id:scanId, source:source.slug, http_status:responseStatus, response_ms:Date.now()-t0, parsed_count:parsedCount, baseline, changes:meaningfulChanges, screenshot_ok:screenshotOk, focused_screenshot_ok:focusOk };
   } catch (error) {
     await pool.query(`UPDATE scans SET finished_at=NOW(), status='error', http_status=$1, response_ms=$2, page_hash=$3, parsed_count=$4, error=$5 WHERE id=$6`,
       [responseStatus, Date.now()-t0, pageHash, parsedCount, error?.message || String(error), scanId]);
-    return { ok:false, source:source.slug, http_status:responseStatus, response_ms:Date.now()-t0, parsed_count:parsedCount, error:error?.message || String(error) };
+    return { ok:false, scan_id:scanId, source:source.slug, http_status:responseStatus, response_ms:Date.now()-t0, parsed_count:parsedCount, error:error?.message || String(error) };
   }
 }
 

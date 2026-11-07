@@ -23,7 +23,7 @@ function harness(mode,{configured=true,fail=false}={}){
     fetch:async(url,options)=>{assert.equal(url,'https://api.brevo.com/v3/smtp/email');const body=JSON.parse(options.body);const messageId=await deliver(body.to.map(row=>row.email),body);return {ok:true,status:201,json:async()=>({messageId})}},
     setTimeout:()=>({unref(){}}),setInterval:()=>({unref(){}}),clearTimeout:()=>{},console:{log(){},error(){}}
   };
-  const report=compileFunction(reportSource+'\nfunction emailHtml(){return ""}\nreturn {sendReportEmail,refreshReportRecipients,getReportEmailStatus};',Object.keys(dependencies))(...Object.values(dependencies));
+  const report=compileFunction(reportSource+'\nfunction emailHtml(){return ""}\nreturn {sendPreparedEmail,sendReportEmail,refreshReportRecipients,getReportEmailStatus};',Object.keys(dependencies))(...Object.values(dependencies));
   const sendPersonalReportEmail=compileFunction(personalSource+'\nreturn sendPersonalReportEmail;',['sendReportEmail','refreshReportRecipients'])(report.sendReportEmail,report.refreshReportRecipients);
   return {pool,sent,scheduled,report,sendPersonalReportEmail,reads:()=>reads};
 }
@@ -71,4 +71,13 @@ for(const mode of ['smtp','api'])test(mode+': daily delivery uses the new eviden
   assert.equal(h.sent[0].subject,result.subject);
   assert.match(h.sent[0].text,/Güncel görünüm henüz doğrulanamadı/);
   assert.doesNotMatch(h.sent[0].text,/undefined|NaN|Kritik rakip hamlesi yok/);
+});
+
+for(const mode of ['smtp','api'])test(mode+': prepared alert delivery is attachment-free, sanitizes its subject and uses the scheduled group',async()=>{
+  const h=harness(mode);
+  const result=await h.report.sendPreparedEmail(h.pool,{subject:'GSM değişikliği\r\nBcc: hidden@example.test',textContent:'Sade metin',htmlContent:'<p>Sade HTML</p>',headers:{'X-Markets-Pulse-Type':'gsm-change'}});
+  assert.equal(h.sent.length,1);assert.deepEqual(h.sent[0].recipients,h.scheduled);
+  assert.equal(result.recipient_count,2);assert.equal(result.total_bytes,Buffer.byteLength('Sade metin<p>Sade HTML</p>'));
+  assert.doesNotMatch(result.subject,/[\r\n]/);assert.match(result.subject,/GSM değişikliği Bcc:/);
+  assert.equal(h.sent[0].subject,result.subject);assert.equal(h.sent[0].text,'Sade metin');
 });

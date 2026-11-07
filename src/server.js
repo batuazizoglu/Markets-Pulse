@@ -15,8 +15,9 @@ import { ENGINE_VERSION } from './comparable-engine.js';
 import { persistBenchmarkHistory, buildBenchmarkHistoryPayload } from './benchmark-history.js';
 import { generateReportPdf } from './report-render.js';
 import { generateEvidencePack } from './evidence-pack.js';
-import { getReportEmailStatus, sendReportEmail } from './report-email.js';
+import { getReportEmailStatus, sendPreparedEmail, sendReportEmail } from './report-email.js';
 import { sendPersonalReportEmail } from './manual-report-email.js';
+import {deliverGsmChangeNotification,deliverPendingGsmChangeNotifications,queueGsmChangeNotification} from './gsm-change-email.js';
 import { getHomeInternetMarket, loadHomeInternetChanges, scanHomeInternet, HOME_INTERNET_SOURCES } from './home-internet.js';
 import {sendHomeInternetMarket} from './home-internet-http.js';
 import {getProviderStatus} from './ad-provider-worker.js';
@@ -99,6 +100,24 @@ async function scheduledReportEmail(type){
   }catch(e){
     await logReportRun({report_type:type,trigger_type:'scheduled',delivery_status:'error',error:e?.message||String(e)});
     console.error('[report-email]',type,'failed',e);
+  }
+}
+
+async function scanGsmAndNotify(trigger='scheduled'){
+  const scan=await scanAll();
+  if(scan.skipped)return scan;
+  try{
+    const scanIds=(scan.sources||[]).map(source=>source.scan_id).filter(Boolean);
+    const queued=await queueGsmChangeNotification(pool,scanIds,{trigger});
+    const delivery=queued.batch_key&&queued.status==='pending'
+      ?await deliverGsmChangeNotification(pool,queued.batch_key,{sendEmail:sendPreparedEmail})
+      :queued;
+    console.log('[gsm-change-email]',JSON.stringify({trigger,scan_ids:scanIds,status:delivery.status,change_count:delivery.change_count||queued.change_count||0,recipient_count:delivery.recipient_count||0}));
+    return {...scan,notification:delivery};
+  }catch(error){
+    const message=error?.message||String(error);
+    console.error('[gsm-change-email]',JSON.stringify({trigger,status:'error',error:message}));
+    return {...scan,notification:{status:'error',delivered:false,error:message}};
   }
 }
 
@@ -263,7 +282,7 @@ app.post('/api/reports/:type/email', async (req,res,next)=>{try{
   res.status(status).json({error:e?.message||String(e),code:e?.code||null});
 }});
 
-app.post('/api/scan',requireOperationalAdmin, async (req,res,next)=>{try{res.json(await scanAll())}catch(e){next(e)}});
+app.post('/api/scan',requireOperationalAdmin, async (req,res,next)=>{try{res.json(await scanGsmAndNotify('manual'))}catch(e){next(e)}});
 
 app.use('/api',(req,res)=>res.status(404).json({error:'Not found'}));
 app.use(express.static(path.join(__dirname,'..','public')));
@@ -288,7 +307,7 @@ app.listen(port,()=>console.log(`Markets Pulse / Telsim Watch listening on ${por
 }
 const timezone=process.env.TZ||'Asia/Famagusta';
 const schedule=process.env.SCAN_CRON || '0 * * * *';
-cron.schedule(schedule,()=>scanAll().catch(e=>console.error('scheduled scan failed',e)),{timezone});
+cron.schedule(schedule,()=>scanGsmAndNotify('scheduled').catch(e=>console.error('scheduled scan failed',e)),{timezone});
 cron.schedule('5 * * * *',()=>captureBenchmarkHistory(false).catch(e=>console.error('benchmark history capture failed',e)),{timezone});
 cron.schedule(process.env.HOME_INTERNET_CRON||'12 * * * *',()=>scanHomeInternet(pool).catch(e=>console.error('home internet scan failed',e)),{timezone});
 cron.schedule(process.env.REPORT_DAILY_CRON||'0 8 * * *',()=>scheduledReportEmail('daily'),{timezone});
@@ -297,13 +316,18 @@ const adCloudTick=createCloudWorker(pool,HOME_INTERNET_SOURCES);
 const runAdCloud=()=>adCloudTick().catch(()=>console.error('[ad-cloud-worker] database unavailable'));
 setInterval(runAdCloud,60000).unref();
 setTimeout(runAdCloud,15000);
+const retryGsmChangeEmail=()=>deliverPendingGsmChangeNotifications(pool,{sendEmail:sendPreparedEmail})
+  .then(results=>{if(results.length)console.log('[gsm-change-email-retry]',JSON.stringify(results.map(result=>({batch_key:result.batch_key,status:result.status,attempt_count:result.attempt_count||null}))))})
+  .catch(error=>console.error('[gsm-change-email-retry]',error?.message||String(error)));
+setInterval(retryGsmChangeEmail,60000).unref();
+setTimeout(retryGsmChangeEmail,20000);
 setTimeout(()=>Promise.all([getAdVisuals(pool,{limit:1}),getAdVisuals(pool,{limit:1,view:'archive'})])
   .then(([data,archive])=>console.log('[ad-live-visibility]',JSON.stringify({active:data.total,archived:archive.total,pending_active_media:data.pending_media.total,max_observation_age_hours:data.visibility.max_observation_age_hours})))
   .catch(()=>console.error('[ad-live-visibility] status unavailable')),2000);
 setTimeout(()=>getProviderStatus(pool).then(data=>console.log('[ad-provider-coverage]',JSON.stringify({runs:data.runs})))
   .catch(()=>console.error('[ad-provider-coverage] status unavailable')),2500);
 setTimeout(warmKktcellCatalog,1500);
-setTimeout(()=>scanAll().catch(e=>console.error('startup scan failed',e)),5000);
+setTimeout(()=>scanGsmAndNotify('startup').catch(e=>console.error('startup scan failed',e)),5000);
 setTimeout(()=>captureBenchmarkHistory(false).catch(e=>console.error('startup benchmark history failed',e)),25000);
 setTimeout(()=>scanHomeInternet(pool).catch(e=>console.error('startup home internet scan failed',e)),45000);
 if(process.env.REPORT_SMOKE_TEST==='1'){

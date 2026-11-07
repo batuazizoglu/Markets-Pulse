@@ -136,6 +136,26 @@ CREATE TABLE IF NOT EXISTS report_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_report_runs_type_time ON report_runs(report_type,generated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_report_runs_delivery ON report_runs(delivery_status,generated_at DESC);
+
+CREATE TABLE IF NOT EXISTS gsm_change_notifications (
+  batch_key TEXT PRIMARY KEY,
+  scan_ids BIGINT[] NOT NULL,
+  change_ids BIGINT[] NOT NULL,
+  trigger_type TEXT NOT NULL DEFAULT 'scheduled',
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','sending','sent','failed')),
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  claimed_at TIMESTAMPTZ,
+  sent_at TIMESTAMPTZ,
+  recipient_count INTEGER,
+  subject TEXT,
+  message_id TEXT,
+  last_error TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_gsm_change_notifications_pending
+  ON gsm_change_notifications(status,next_attempt_at,created_at);
 CREATE TABLE IF NOT EXISTS home_internet_scans (
   id BIGSERIAL PRIMARY KEY,
   source_slug TEXT NOT NULL,

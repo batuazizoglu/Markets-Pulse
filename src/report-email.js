@@ -80,7 +80,7 @@ function parseSender(v){
   return {name:'Markets Pulse',email:raw};
 }
 
-async function sendViaBrevoApi({status,subject,textContent,htmlContent,attachments}){
+async function sendViaBrevoApi({status,subject,textContent,htmlContent,attachments,headers={}}){
   const sender=parseSender(status.from);
   const recipients=status.recipient_emails||[];
   const body={
@@ -89,7 +89,8 @@ async function sendViaBrevoApi({status,subject,textContent,htmlContent,attachmen
     subject,
     htmlContent,
     textContent,
-    attachment:attachments.map(a=>({name:a.filename,content:Buffer.from(a.content).toString('base64')}))
+    attachment:attachments.map(a=>({name:a.filename,content:Buffer.from(a.content).toString('base64')})),
+    ...(Object.keys(headers).length?{headers}:{})
   };
   console.log('[report-email] brevo-api connecting',JSON.stringify({from:sender.email,recipients:recipients.length,subject,attachments:attachments.length}));
   const controller=new AbortController();
@@ -116,6 +117,31 @@ async function sendViaBrevoApi({status,subject,textContent,htmlContent,attachmen
   }
   console.log('[report-email] brevo-api accepted',JSON.stringify({message_id:payload.messageId||null}));
   return {messageId:payload.messageId||null,accepted_count:recipients.length,rejected:[],response:'Brevo API '+response.status};
+}
+function safeSubject(value){
+  return String(value||'').replace(/[\r\n]+/g,' ').replace(/\s+/g,' ').trim().slice(0,180);
+}
+export async function sendPreparedEmail(pool,{subject,textContent,htmlContent,recipientEmails,headers={}}={}){
+  const personal=recipientEmails!==undefined;
+  const recipients=personal?uniqueEmails(recipientEmails):await refreshReportRecipients(pool);
+  const mail=transportConfig(recipients,personal?'explicit-recipients':recipientSource);
+  const actual=mail.status.recipient_emails||[];
+  const cleanSubject=safeSubject(subject);
+  if(!cleanSubject||!String(textContent||'').trim()||!String(htmlContent||'').trim()){
+    const error=new Error('E-posta konusu, düz metni ve HTML içeriği gerekli.');
+    error.code='EMAIL_CONTENT_REQUIRED';
+    throw error;
+  }
+  const totalBytes=Buffer.byteLength(String(textContent),'utf8')+Buffer.byteLength(String(htmlContent),'utf8');
+  let info;
+  if(mail.status.api_configured){
+    info=await sendViaBrevoApi({status:mail.status,subject:cleanSubject,textContent:String(textContent),htmlContent:String(htmlContent),attachments:[],headers});
+  }else{
+    console.log('[report-email] smtp connecting',JSON.stringify({host:process.env.SMTP_HOST,port:Number(process.env.SMTP_PORT||587),from:mail.status.from,recipients:actual.length,subject:cleanSubject,total_bytes:totalBytes}));
+    info=await mail.transport.sendMail({from:mail.status.from,to:actual.join(', '),subject:cleanSubject,text:String(textContent),html:String(htmlContent),headers});
+    console.log('[report-email] smtp accepted',JSON.stringify({message_id:info.messageId,accepted_count:Array.isArray(info.accepted)?info.accepted.length:null,rejected_count:Array.isArray(info.rejected)?info.rejected.length:null,response:info.response}));
+  }
+  return {message_id:info.messageId,recipients:[actual.length+' kişi'],recipient_count:actual.length,subject:cleanSubject,total_bytes:totalBytes,delivery_mode:mail.status.delivery_mode};
 }
 function signed(v){
   if(v==null||Number.isNaN(Number(v)))return '—';

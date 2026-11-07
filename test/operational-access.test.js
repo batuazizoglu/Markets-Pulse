@@ -39,7 +39,7 @@ before(async()=>{
   const routes=[['get','/api/home-internet'],['post','/api/home-internet/scan'],['get','/api/kktcell-catalog'],['get','/api/benchmark'],['post','/api/scan'],['get','/api/scans'],['get','/api/reports/status'],['get','/api/reports/:type/download'],['post','/api/reports/:type/email']].map(([method,path])=>route(method,path)).join('\n');
   const artifact={ctx:{period_start:seen,period_end:seen},fileName:'synthetic.pdf',contentType:'application/pdf',buffer:Buffer.from('PDF')};
   const dependencies={app,pool,requireOperationalAdmin,requireAdminForRefresh,reportStatusForUser,sendHomeInternetMarket,
-    scanAll:async()=>{operations++;return {sources:[]}},scanHomeInternet:async()=>{operations++;return {ok:true}},
+    scanGsmAndNotify:async()=>{operations++;return {sources:[],notification:{status:'no_changes'}}},scanHomeInternet:async()=>{operations++;return {ok:true}},
     getHomeInternetMarket:async(_,options={})=>{if(options.refresh)operations++;return {products:[]}},
     getKktcellCatalog:async force=>{if(force)operations++;return {at:Date.now(),sources:[],rows:[]}},
     buildCurrentBenchmark:async force=>{if(force)operations++;return {matches:[]}},getReportEmailStatus:()=>emailStatus,
