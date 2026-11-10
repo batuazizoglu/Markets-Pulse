@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {PGlite} from '@electric-sql/pglite';
 import {JSDOM} from 'jsdom';
 import {SCHEMA_SQL} from '../src/schema.js';
-import {deliverGsmChangeNotification,gsmChangeEmailHtml,gsmChangePlainText,gsmChangeSubject,queueGsmChangeNotification,queueUnnotifiedGsmChanges,recoverEmptyAttachmentNotifications} from '../src/gsm-change-email.js';
+import {deliverGsmChangeNotification,getGsmEmailFailureDiagnostics,gsmChangeEmailHtml,gsmChangePlainText,gsmChangeSubject,queueGsmChangeNotification,queueUnnotifiedGsmChanges,recoverEmptyAttachmentNotifications} from '../src/gsm-change-email.js';
 
 let db;
 const firstAt='2030-07-02T08:03:00.000Z',retryAt='2030-07-02T09:03:00.000Z';
@@ -24,6 +24,18 @@ before(async()=>{
     (6,1,1,'2030-07-02T11:03:00Z','field_changed','Uluslararası Dakika','50','100','high',5)`,[firstAt,retryAt]);
 });
 after(async()=>db?.close());
+
+test('failure diagnostics are read-only, omit sent records and redact personal data and credentials',async()=>{
+  const error='Brevo API gönderim hatası (400): invalid sender person@example.com api-key=synthetic-secret https://example.com/private '+ 'x'.repeat(60);
+  await db.query(`INSERT INTO gsm_change_notifications(batch_key,scan_ids,change_ids,status,last_error)
+    VALUES('diagnostic-failed','{}','{}','failed',$1),('diagnostic-sent','{}','{}','sent',$1)`,[error]);
+  const rows=await getGsmEmailFailureDiagnostics(db);
+  assert.equal(rows.length,1);assert.equal(rows[0].batch_key,'diagnostic-failed');
+  assert.match(rows[0].error,/invalid sender \[email\] \[credential\] \[url\] \[token\]/);
+  assert.doesNotMatch(JSON.stringify(rows),/person@example|synthetic-secret|example.com\/private|x{40}/);
+  assert.equal((await db.query("SELECT last_error FROM gsm_change_notifications WHERE batch_key='diagnostic-failed'")).rows[0].last_error,error);
+  await db.query("DELETE FROM gsm_change_notifications WHERE batch_key LIKE 'diagnostic-%'");
+});
 
 test('empty-attachment repair requeues only confirmed rejected deliveries once and preserves history',async()=>{
   const cases=[

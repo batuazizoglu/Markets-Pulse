@@ -17,7 +17,7 @@ import { generateReportPdf } from './report-render.js';
 import { generateEvidencePack } from './evidence-pack.js';
 import { getReportEmailStatus, sendPreparedEmail, sendReportEmail } from './report-email.js';
 import { sendPersonalReportEmail } from './manual-report-email.js';
-import {deliverGsmChangeNotification,deliverPendingGsmChangeNotifications,queueGsmChangeNotification,queueUnnotifiedGsmChanges,recoverEmptyAttachmentNotifications} from './gsm-change-email.js';
+import {deliverGsmChangeNotification,deliverPendingGsmChangeNotifications,getGsmEmailFailureDiagnostics,queueGsmChangeNotification,queueUnnotifiedGsmChanges,recoverEmptyAttachmentNotifications} from './gsm-change-email.js';
 import { getHomeInternetMarket, loadHomeInternetChanges, scanHomeInternet, HOME_INTERNET_SOURCES } from './home-internet.js';
 import {sendHomeInternetMarket} from './home-internet-http.js';
 import {getProviderStatus} from './ad-provider-worker.js';
@@ -324,6 +324,9 @@ const retryGsmChangeEmail=()=>recoverEmptyAttachmentNotifications(pool)
   .catch(error=>console.error('[gsm-change-email-retry]',error?.message||String(error)));
 setInterval(retryGsmChangeEmail,60000).unref();
 setTimeout(retryGsmChangeEmail,20000);
+setTimeout(()=>getGsmEmailFailureDiagnostics(pool)
+  .then(failures=>{if(failures.length)console.log('[gsm-change-email-failures]',JSON.stringify({failures}))})
+  .catch(()=>console.error('[gsm-change-email-failures] diagnostics unavailable')),10000);
 setTimeout(()=>Promise.all([getAdVisuals(pool,{limit:1}),getAdVisuals(pool,{limit:1,view:'archive'})])
   .then(([data,archive])=>console.log('[ad-live-visibility]',JSON.stringify({active:data.total,archived:archive.total,pending_active_media:data.pending_media.total,max_observation_age_hours:data.visibility.max_observation_age_hours})))
   .catch(()=>console.error('[ad-live-visibility] status unavailable')),2000);
