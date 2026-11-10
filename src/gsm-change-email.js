@@ -161,7 +161,8 @@ export async function recoverEmptyAttachmentNotifications(pool,{now=new Date()}=
     WHERE status IN ('failed','pending') AND attachment_repair_applied=FALSE
       AND sent_at IS NULL AND message_id IS NULL
       AND last_error LIKE 'Brevo API gönderim hatası (400):%'
-      AND last_error ILIKE '%attachment%' AND last_error ILIKE '%empty%'
+      AND last_error ILIKE '%attachment%'
+      AND (last_error ILIKE '%empty%' OR last_error='Brevo API gönderim hatası (400): attachment is missing')
     RETURNING batch_key,change_ids`,[new Date(now).toISOString()]);
   return result.rows.map(row=>({batch_key:row.batch_key,change_count:row.change_ids.length}));
 }
