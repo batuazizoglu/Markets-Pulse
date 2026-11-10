@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {PGlite} from '@electric-sql/pglite';
 import {JSDOM} from 'jsdom';
 import {SCHEMA_SQL} from '../src/schema.js';
-import {deliverGsmChangeNotification,gsmChangeEmailHtml,gsmChangePlainText,gsmChangeSubject,queueGsmChangeNotification,queueUnnotifiedGsmChanges} from '../src/gsm-change-email.js';
+import {deliverGsmChangeNotification,gsmChangeEmailHtml,gsmChangePlainText,gsmChangeSubject,queueGsmChangeNotification,queueUnnotifiedGsmChanges,recoverEmptyAttachmentNotifications} from '../src/gsm-change-email.js';
 
 let db;
 const firstAt='2030-07-02T08:03:00.000Z',retryAt='2030-07-02T09:03:00.000Z';
@@ -24,6 +24,30 @@ before(async()=>{
     (6,1,1,'2030-07-02T11:03:00Z','field_changed','Uluslararası Dakika','50','100','high',5)`,[firstAt,retryAt]);
 });
 after(async()=>db?.close());
+
+test('empty-attachment repair requeues only confirmed rejected deliveries once and preserves history',async()=>{
+  const cases=[
+    ['repair-rejected','failed','Brevo API gönderim hatası (400): attachment is empty',null,null],
+    ['repair-pending','pending','Brevo API gönderim hatası (400): attachment is empty',null,null],
+    ['repair-sent','sent','Brevo API gönderim hatası (400): attachment is empty',firstAt,'accepted-id'],
+    ['repair-ambiguous','failed','Brevo API bağlantı hatası: fetch failed',null,null],
+    ['repair-other','failed','Brevo API gönderim hatası (400): sender is invalid',null,null],
+    ['repair-auth','failed','Brevo API gönderim hatası (401): attachment empty',null,null],
+    ['repair-sending','sending','Brevo API gönderim hatası (400): attachment is empty',null,null]
+  ];
+  for(const [key,status,error,sentAt,messageId] of cases)await db.query(`INSERT INTO gsm_change_notifications(batch_key,scan_ids,change_ids,status,attempt_count,last_error,sent_at,message_id)
+    VALUES($1,'{}','{999}',$2,6,$3,$4,$5)`,[key,status,error,sentAt,messageId]);
+  const repaired=await recoverEmptyAttachmentNotifications(db,{now:new Date(retryAt)});
+  assert.deepEqual(repaired.map(x=>x.batch_key).sort(),['repair-pending','repair-rejected']);
+  const row=(await db.query("SELECT * FROM gsm_change_notifications WHERE batch_key='repair-rejected'")).rows[0];
+  assert.equal(row.status,'pending');assert.equal(row.attempt_count,0);assert.equal(row.attachment_repair_applied,true);
+  assert.match(row.last_error,/attachment is empty/);assert.equal(new Date(row.next_attempt_at).toISOString(),retryAt);
+  await db.query("UPDATE gsm_change_notifications SET status='failed',attempt_count=6 WHERE batch_key='repair-rejected'");
+  await db.exec(SCHEMA_SQL);
+  assert.deepEqual(await recoverEmptyAttachmentNotifications(db,{now:new Date(retryAt)}),[],'schema reapplication cannot replay the one-time repair');
+  for(const [key,status] of cases.slice(2))assert.equal((await db.query('SELECT status FROM gsm_change_notifications WHERE batch_key=$1',[key])).rows[0].status,status);
+  await db.query("DELETE FROM gsm_change_notifications WHERE batch_key LIKE 'repair-%'");
+});
 
 test('GSM alert is a compact escaped timeline table with matching plain text and dynamic subject',async()=>{
   const rows=(await db.query(`SELECT c.*,s.name source_name,p.current_name product_name FROM changes c JOIN sources s ON s.id=c.source_id LEFT JOIN products p ON p.id=c.product_id WHERE c.scan_id=1 ORDER BY c.id`)).rows;

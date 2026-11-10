@@ -89,7 +89,7 @@ async function sendViaBrevoApi({status,subject,textContent,htmlContent,attachmen
     subject,
     htmlContent,
     textContent,
-    attachment:attachments.map(a=>({name:a.filename,content:Buffer.from(a.content).toString('base64')})),
+    ...(attachments.length?{attachment:attachments.map(a=>({name:a.filename,content:Buffer.from(a.content).toString('base64')}))}:{}),
     ...(Object.keys(headers).length?{headers}:{})
   };
   console.log('[report-email] brevo-api connecting',JSON.stringify({from:sender.email,recipients:recipients.length,subject,attachments:attachments.length}));
@@ -110,6 +110,7 @@ async function sendViaBrevoApi({status,subject,textContent,htmlContent,attachmen
   }finally{clearTimeout(timer)}
   const payload=await response.json().catch(()=>({}));
   if(!response.ok){
+    console.error('[report-email] brevo-api rejected',JSON.stringify({http_status:response.status,provider_code:/^[a-z0-9_-]{1,80}$/i.test(payload?.code||'')?payload.code:null,attachments:attachments.length}));
     const err=new Error('Brevo API gönderim hatası ('+response.status+'): '+(payload?.message||JSON.stringify(payload)));
     err.code='BREVO_API_ERROR';
     err.httpStatus=response.status;
