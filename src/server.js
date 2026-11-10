@@ -17,7 +17,7 @@ import { generateReportPdf } from './report-render.js';
 import { generateEvidencePack } from './evidence-pack.js';
 import { getReportEmailStatus, sendPreparedEmail, sendReportEmail } from './report-email.js';
 import { sendPersonalReportEmail } from './manual-report-email.js';
-import {deliverGsmChangeNotification,deliverPendingGsmChangeNotifications,queueGsmChangeNotification,queueUnnotifiedGsmChanges} from './gsm-change-email.js';
+import {deliverGsmChangeNotification,deliverPendingGsmChangeNotifications,queueGsmChangeNotification,queueUnnotifiedGsmChanges,recoverEmptyAttachmentNotifications} from './gsm-change-email.js';
 import { getHomeInternetMarket, loadHomeInternetChanges, scanHomeInternet, HOME_INTERNET_SOURCES } from './home-internet.js';
 import {sendHomeInternetMarket} from './home-internet-http.js';
 import {getProviderStatus} from './ad-provider-worker.js';
@@ -316,7 +316,8 @@ const adCloudTick=createCloudWorker(pool,HOME_INTERNET_SOURCES);
 const runAdCloud=()=>adCloudTick().catch(()=>console.error('[ad-cloud-worker] database unavailable'));
 setInterval(runAdCloud,60000).unref();
 setTimeout(runAdCloud,15000);
-const retryGsmChangeEmail=()=>queueUnnotifiedGsmChanges(pool)
+const retryGsmChangeEmail=()=>recoverEmptyAttachmentNotifications(pool)
+  .then(repaired=>{if(repaired.length)console.log('[gsm-change-email-repair]',JSON.stringify({reason:'brevo_empty_attachment',batches:repaired}));return queueUnnotifiedGsmChanges(pool)})
   .then(recovered=>deliverPendingGsmChangeNotifications(pool,{sendEmail:sendPreparedEmail})
     .then(results=>({recovered,results})))
   .then(({recovered,results})=>{if(recovered.queued||results.length)console.log('[gsm-change-email-retry]',JSON.stringify({recovered:{status:recovered.status,batch_key:recovered.batch_key||null,change_count:recovered.change_count||0},deliveries:results.map(result=>({batch_key:result.batch_key,status:result.status,attempt_count:result.attempt_count||null}))}))})

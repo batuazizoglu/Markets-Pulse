@@ -141,6 +141,20 @@ export async function deliverGsmChangeNotification(pool,key,{sendEmail,now=new D
   return {batch_key:key,status:'sent',delivered:true,change_count:rows.length,recipient_count:sent.recipient_count||0,subject:sent.subject||subject,message_id:sent.message_id||null};
 }
 
+// A confirmed HTTP 400 empty-attachment rejection was never accepted by Brevo.
+// Repair only that failure once; do not replay sent, ambiguous or unrelated failures.
+export async function recoverEmptyAttachmentNotifications(pool,{now=new Date()}={}){
+  const result=await pool.query(`UPDATE gsm_change_notifications
+    SET status='pending',attempt_count=0,next_attempt_at=$1,claimed_at=NULL,
+      attachment_repair_applied=TRUE,updated_at=$1
+    WHERE status IN ('failed','pending') AND attachment_repair_applied=FALSE
+      AND sent_at IS NULL AND message_id IS NULL
+      AND last_error LIKE 'Brevo API gönderim hatası (400):%'
+      AND last_error ILIKE '%attachment%' AND last_error ILIKE '%empty%'
+    RETURNING batch_key,change_ids`,[new Date(now).toISOString()]);
+  return result.rows.map(row=>({batch_key:row.batch_key,change_count:row.change_ids.length}));
+}
+
 export async function deliverPendingGsmChangeNotifications(pool,{sendEmail,now=new Date(),limit=3}={}){
   const at=new Date(now),stale=new Date(+at-20*60000);
   await pool.query(`UPDATE gsm_change_notifications SET status='pending',next_attempt_at=$1,updated_at=$1

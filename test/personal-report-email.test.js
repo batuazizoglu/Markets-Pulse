@@ -12,7 +12,7 @@ const personalSource=(await readFile(new URL('../src/manual-report-email.js',imp
 function harness(mode,{configured=true,fail=false}={}){
   const sent=[],scheduled=['scheduled-one@example.test','scheduled-two@example.test'];let reads=0;
   const pool={query:async()=>{reads++;return {rows:scheduled.map(email=>({email}))}}};
-  const deliver=async(recipients,message={})=>{if(fail)throw new Error('Synthetic mail failure');const id='message-'+(sent.length+1);sent.push({id,recipients,subject:message.subject,text:message.text??message.textContent});return id};
+  const deliver=async(recipients,message={})=>{if(fail)throw new Error('Synthetic mail failure');const id='message-'+(sent.length+1);sent.push({id,recipients,subject:message.subject,text:message.text??message.textContent,message});return id};
   const dependencies={
     nodemailer:{createTransport:()=>({sendMail:async message=>({messageId:await deliver(message.to.split(', '),message)})})},
     REPORT_NAMES:{home:'Home'},REPORT_TZ:'UTC',reportDays:()=>7,monthlyOverviewHtml:()=>'',monthlyPlainText:()=>'',
@@ -80,4 +80,8 @@ for(const mode of ['smtp','api'])test(mode+': prepared alert delivery is attachm
   assert.equal(result.recipient_count,2);assert.equal(result.total_bytes,Buffer.byteLength('Sade metin<p>Sade HTML</p>'));
   assert.doesNotMatch(result.subject,/[\r\n]/);assert.match(result.subject,/GSM değişikliği Bcc:/);
   assert.equal(h.sent[0].subject,result.subject);assert.equal(h.sent[0].text,'Sade metin');
+  if(mode==='api'){
+    assert.equal(Object.hasOwn(h.sent[0].message,'attachment'),false,'Brevo isteğinde boş attachment dizisi bulunmamalı');
+    assert.deepEqual(h.sent[0].message.headers,{'X-Markets-Pulse-Type':'gsm-change'});
+  }
 });

@@ -156,6 +156,7 @@ CREATE TABLE IF NOT EXISTS gsm_change_notifications (
 );
 CREATE INDEX IF NOT EXISTS idx_gsm_change_notifications_pending
   ON gsm_change_notifications(status,next_attempt_at,created_at);
+ALTER TABLE gsm_change_notifications ADD COLUMN IF NOT EXISTS attachment_repair_applied BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE TABLE IF NOT EXISTS gsm_change_notification_state (
   id INTEGER PRIMARY KEY CHECK (id=1),
   reconcile_after TIMESTAMPTZ NOT NULL
