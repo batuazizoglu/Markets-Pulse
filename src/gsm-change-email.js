@@ -141,6 +141,17 @@ export async function deliverGsmChangeNotification(pool,key,{sendEmail,now=new D
   return {batch_key:key,status:'sent',delivered:true,change_count:rows.length,recipient_count:sent.recipient_count||0,subject:sent.subject||subject,message_id:sent.message_id||null};
 }
 
+export async function getGsmEmailFailureDiagnostics(pool){
+  const result=await pool.query(`SELECT batch_key,status,attempt_count,last_error,updated_at
+    FROM gsm_change_notifications WHERE status IN ('failed','pending') AND last_error IS NOT NULL
+    ORDER BY updated_at DESC LIMIT 10`);
+  return result.rows.map(({last_error,...row})=>({...row,error:clip(String(last_error)
+    .replace(/https?:\/\/\S+/gi,'[url]')
+    .replace(/[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9.-]+/gi,'[email]')
+    .replace(/\b(?:api[-_ ]?key|authorization|password|token)\s*[:=]\s*[^\s,;]+/gi,'[credential]')
+    .replace(/[a-z0-9_-]{40,}/gi,'[token]'),500)}));
+}
+
 // A confirmed HTTP 400 empty-attachment rejection was never accepted by Brevo.
 // Repair only that failure once; do not replay sent, ambiguous or unrelated failures.
 export async function recoverEmptyAttachmentNotifications(pool,{now=new Date()}={}){
