@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {PGlite} from '@electric-sql/pglite';
-import {HOME_INTERNET_SOURCES,parserFor,scanHomeInternet,marketPayload} from '../src/home-internet.js';
+import {HOME_INTERNET_SOURCES,loadHomeInternetChanges,parserFor,scanHomeInternet,marketPayload} from '../src/home-internet.js';
 import {providerCoverageReasons} from '../src/ad-provider-worker.js';
 import {SCHEMA_SQL} from '../src/schema.js';
 const source=slug=>HOME_INTERNET_SOURCES.find(s=>s.slug===slug);
@@ -17,6 +17,42 @@ test('current Superbox hub preserves three different offers and exact commitment
   assert.ok(rows.every(p=>p.product_family==='fwa'&&p.brand==='Superbox'&&p.bonus_months===0));
   assert.equal(rows[0].unlimited,true);assert.equal(rows[1].unlimited,null);
   assert.equal(parserFor(source('kktcell-home'),html).products.length,0);
+});
+
+test('Superbox fallback ignores accessibility and navigation wrappers around real package links',()=>{
+  const packageLink=(id,name,benefit,duration,price)=>`<a href="https://online.lifecelldigital.com/ev-interneti-basvurusu?priceId=${id}">${name} ${benefit} ${duration} Ay Taahhüt ${price} TL/AY İncele</a>`;
+  const valid=[
+    packageLink(397,'Superbox Sınırsız (6+6 Ay)','4.5G Hızında',12,1699),
+    packageLink(302,'Superbox Evde 10Mbps','10 Mbps',12,799),
+    packageLink(385,'Superbox Evde 20Mbps','20 Mbps',6,899)
+  ];
+  const chrome='Görme engelliler için erişilebilirliği etkinleştirin Enter Erişilebilirlik menüsünü aç Enter Web sitesinin sayfa yapısını açın Enter Evim İçin İşim İçin Türkçe English Ev İnterneti';
+  const wrapped=`<a href="/internet-paketleri">${chrome} ${valid.join(' ')}</a><a href="/superbox">${chrome} Superbox Evde 50Mbps 50 Mbps 12 Ay Taahhüt 1099 TL/AY</a>`;
+  const rows=parserFor(source('kktcell-superbox'),wrapped+valid.join('')).products;
+  assert.deepEqual(rows.map(p=>[p.name,p.speed_down_mbps,p.duration_months,p.price_monthly_try,p.product_key]),[
+    ['Superbox Sınırsız (6+6 Ay)',null,12,1699,'kktcell-superbox|397|12'],
+    ['Superbox Evde 10Mbps',10,12,799,'kktcell-superbox|302|12'],
+    ['Superbox Evde 20Mbps',20,6,899,'kktcell-superbox|385|6']
+  ]);
+  assert.ok(rows.every(p=>!SUPERBOX_PAGE_CHROME_FOR_TEST.test(p.raw_text)));
+});
+
+const SUPERBOX_PAGE_CHROME_FOR_TEST=/görme engelliler|erişilebilirlik menüsü|web sitesinin sayfa yapısı/i;
+
+test('Superbox page chrome is excluded from current products and change history',async()=>{
+  const db=new PGlite();await db.exec(SCHEMA_SQL);
+  try{
+    const s=source('kktcell-superbox'),valid={product_key:'kktcell-superbox|302|12',source_slug:s.slug,name:'Superbox Evde 10Mbps',brand:'Superbox',product_family:'fwa'};
+    const bogus={product_key:'kktcell-superbox|noise',source_slug:s.slug,name:'Görme engelliler için erişilebilirliği etkinleştirin Enter Ev İnterneti',brand:'Superbox',product_family:'fwa'};
+    const scan=(await db.query(`INSERT INTO home_internet_scans(source_slug,provider,source_name,source_url,status,parsed_count,payload_json,source_meta_json)
+      VALUES($1,$2,$3,$4,'ok',2,$5::jsonb,$6::jsonb) RETURNING id,captured_at`,[s.slug,s.provider,s.name,s.url,JSON.stringify([valid,bogus]),JSON.stringify({parser_version:'home-isp-2',source_revision:s.revision})])).rows[0];
+    await db.query(`INSERT INTO home_internet_changes(source_slug,provider,product_key,product_name,change_type,new_value,scan_id)
+      VALUES($1,$2,$3,$4,'added',$5,$6),($1,$2,$7,$8,'added',$9,$6)`,[s.slug,s.provider,valid.product_key,valid.name,JSON.stringify(valid),scan.id,bogus.product_key,bogus.name,JSON.stringify(bogus)]);
+    const market=marketPayload([{...scan,...s,source_slug:s.slug,status:'ok',parsed_count:2,payload_json:[valid,bogus],source_meta_json:{parser_version:'home-isp-2',source_revision:s.revision}}],[],[]);
+    assert.deepEqual(market.products.map(p=>p.name),[valid.name]);
+    const changes=await loadHomeInternetChanges(db,{start:new Date(+new Date(scan.captured_at)-1000),end:new Date(+new Date(scan.captured_at)+1000)});
+    assert.deepEqual(changes.map(change=>change.product_name),[valid.name]);
+  }finally{await db.close()}
 });
 
 test('shared catalogs are collected once and archived sources cannot create false removals',async()=>{
