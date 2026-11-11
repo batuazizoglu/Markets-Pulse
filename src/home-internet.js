@@ -18,7 +18,7 @@ const LEGACY_SOURCES=[
   {slug:'kktcell-home',provider:'Turkcell Ev İnterneti',name:'Kuzey Kıbrıs Turkcell Ev İnterneti',url:'https://www.lifecelldigital.com/paketler?altyapi=1&cat=other',aliases:['https://www.kktcell.com/internet-paketleri?type=turkcell-ev-interneti'],catalog_source:'lifecell-digital-home',coverage_note:'Eski Turkcell kategori sayfası boş. Güncel sabit internet paketleri Lifecell Digital resmî kataloğundan ortak izleniyor; teklifler bir kez sayılır.',technology:'Ev İnterneti',ownership_group:'Kuzey Kıbrıs Turkcell',parser:'kktcell'},
   {slug:'kktcell-superbox',provider:'KKTCELL',name:'Kuzey Kıbrıs Turkcell Superbox',url:'https://www.kktcell.com/internet-paketleri',aliases:['https://www.kktcell.com/internet-paketleri?type=superbox'],revision:3,coverage_note:'Güncel Superbox sayfasında yayımlanan popüler paketler izleniyor. Tam katalog Lifecell Digital kaynağında ayrıca izlenir.',technology:'4.5G FWA',ownership_group:'Kuzey Kıbrıs Turkcell',parser:'kktcell-superbox'},
   {slug:'lifecell-digital-home',provider:'Turkcell Ev İnterneti',name:'Lifecell Digital Ev İnterneti',url:'https://www.lifecelldigital.com/paketler?altyapi=1&cat=other',technology:'WDSL / Fiber / Sabit Genişbant',ownership_group:'Lifecell Digital Ltd.',parser:'lifecell-dynamic'},
-  {slug:'lifecell-digital-superbox',provider:'KKTCELL',name:'Lifecell Digital Superbox',url:'https://www.lifecelldigital.com/paketler?altyapi=2',technology:'4.5G FWA',ownership_group:'Lifecell Digital Ltd.',parser:'lifecell-superbox-dynamic'},
+  {slug:'lifecell-digital-superbox',provider:'KKTCELL',name:'Lifecell Digital Superbox',url:'https://www.lifecelldigital.com/paketler?altyapi=2',revision:2,technology:'4.5G FWA',ownership_group:'Lifecell Digital Ltd.',parser:'lifecell-superbox-dynamic'},
   {slug:'extend-wdsl',provider:'Extend',name:'Extend WDSL',url:'https://www.extendbroadband.com/urunler-wdsl.php',technology:'WDSL',ownership_group:'Arınet Security & Internet Consultancy Ltd.',parser:'extend-table',revision:2},
   {slug:'extend-fiber',provider:'Extend',name:'Extend FiberNET',url:'https://www.extendbroadband.com/urunler-fibernet.php',technology:'Fiber',ownership_group:'Arınet Security & Internet Consultancy Ltd.',parser:'extend-table',revision:2},
   {slug:'telsim-home',provider:'Telsim',name:'Vodafone Evde İnternet',url:'https://www.kktctelsim.com/tr/internet/evde-internet-ve-red-box/vodafone-evde-internet',technology:'WDSL / ADSL',ownership_group:'KKTC Telsim',parser:'telsim-home',revision:2},
@@ -61,9 +61,9 @@ function keyPart(v){return clean(v).toLocaleLowerCase('tr-TR').replace(/[^a-z0-9
 function round(v,d=2){if(v==null||!Number.isFinite(Number(v)))return null;const p=10**d;return Math.round(Number(v)*p)/p}
 const SUPERBOX_PAGE_CHROME=/görme engelliler için erişilebilirliği etkinleştirin|erişilebilirlik menüsünü aç|web sitesinin sayfa yapısını aç/i;
 function validSourceProduct(source,product){
-  if(source?.slug!=='kktcell-superbox')return true;
+  if(!['kktcell-superbox','lifecell-digital-superbox'].includes(source?.slug))return true;
   const name=clean(product?.name);
-  return /^Superbox(?:\s|$)/i.test(name)&&!SUPERBOX_PAGE_CHROME.test(name);
+  return /^Superbox(?:\s|$)/i.test(name)&&!SUPERBOX_PAGE_CHROME.test(name+' '+clean(product?.raw_text));
 }
 
 function parseKktcell(html,source){
@@ -347,9 +347,10 @@ async function getLifecellBrowser(){
 }
 async function wait(ms){return new Promise(r=>setTimeout(r,ms))}
 
-function parseDynamicLifecellVariant(source,variant,isSuperbox=false){
+export function parseDynamicLifecellVariant(source,variant,isSuperbox=false){
   const raw=clean(variant.card_text);
   const selected=clean(variant.option_text);
+  if(isSuperbox&&SUPERBOX_PAGE_CHROME.test([variant.heading,selected,raw].map(clean).join(' ')))return [];
   const speedMatch=selected.match(/(\d+(?:[.,]\d+)?)\s*(?:Mbps|Mbit|Mb)\b/i)
     ||raw.match(/(\d+(?:[.,]\d+)?)\s*(?:Mbps|Mbit|Mb)(?:'e kadar)?/i);
   const speed=speedMatch?n(speedMatch[1]):null;
@@ -448,8 +449,11 @@ async function fetchLifecellDynamic(source){
       const all=[...document.querySelectorAll('select')];
       const clean=s=>String(s||'').replace(/\s+/g,' ').trim();
       const nearestCard=s=>{
+        const explicit=s.closest('.home-internet-card,[data-package-card],article');
+        if(explicit)return explicit;
         let el=s;
         for(let i=0;i<8&&el;i++,el=el.parentElement){
+          if(el===document.body||el===document.documentElement)break;
           const t=clean(el.innerText);
           if(t.length>=50&&t.length<=3500&&/(TL|₺|Mbps|Mbit)/i.test(t))return el;
         }
@@ -531,13 +535,18 @@ async function fetchLifecellDynamic(source){
         const clean=s=>String(s||'').replace(/\s+/g,' ').trim();
         const btn=[...document.querySelectorAll('button.speed-button')][idx];
         if(!btn)return null;
-        let card=btn;
-        for(let i=0;i<10&&card;i++,card=card.parentElement){
-          const text=clean(card.innerText);
-          const oneControl=card.querySelectorAll?card.querySelectorAll('button.speed-button').length===1:false;
-          if(oneControl&&text.length>=40&&text.length<=1800&&/(TL|₺)\s*\/\s*Ay/i.test(text)&&/İncele/i.test(text))break;
+        let card=btn.closest('.home-internet-card,[data-package-card],article');
+        if(!card){
+          card=btn;
+          for(let i=0;i<10&&card;i++,card=card.parentElement){
+            if(card===document.body||card===document.documentElement)return null;
+            const text=clean(card.innerText);
+            const oneControl=card.querySelectorAll?card.querySelectorAll('button.speed-button').length===1:false;
+            if(oneControl&&text.length>=40&&text.length<=1800&&/İncele/i.test(text))break;
+          }
         }
         const raw=clean(card?.innerText||'');
+        if(!raw||raw.length>1800)return null;
         const heading=(raw.match(/^(.*?)\s+\d+(?:[.,]\d+)?\s*Mbps\s*İndirme Hızı/i)||[])[1]||'';
         return {option_text:clean(btn.innerText),selected_value:clean(btn.innerText),heading:clean(heading),card_text:raw.slice(0,3500)};
       },idx);
@@ -773,11 +782,11 @@ async function cleanupHomeInternetMigrationNoise(pool){
       AND detected_at >= TIMESTAMPTZ '2026-09-13 14:11:00+00'
       AND detected_at < TIMESTAMPTZ '2026-09-13 14:14:00+00'
     ) OR (
-      source_slug='kktcell-superbox'
+      source_slug IN ('kktcell-superbox','lifecell-digital-superbox')
       AND (
-        product_name ILIKE '%Görme engelliler için erişilebilirliği etkinleştirin%'
-        OR product_name ILIKE '%Erişilebilirlik menüsünü aç%'
-        OR product_name ILIKE '%Web sitesinin sayfa yapısını aç%'
+        CONCAT_WS(' ',product_name,old_value,new_value) ILIKE '%Görme engelliler için erişilebilirliği etkinleştirin%'
+        OR CONCAT_WS(' ',product_name,old_value,new_value) ILIKE '%Erişilebilirlik menüsünü aç%'
+        OR CONCAT_WS(' ',product_name,old_value,new_value) ILIKE '%Web sitesinin sayfa yapısını aç%'
       )
     )`);
   migrationCleanupDone=true;
@@ -862,19 +871,20 @@ export async function loadHomeInternetChanges(pool,{start,end=new Date()}={}){
     ) event ON TRUE
     WHERE ${where.join(' AND ')} ORDER BY c.detected_at DESC,c.id DESC`,params);
   const definitions=new Map(HOME_INTERNET_SOURCES.map(source=>[source.slug,source]));
-  return result.rows.filter(row=>validSourceProduct({slug:row.source_slug},{name:row.product_name})).map(({_event_product,...row})=>{
+  return result.rows.flatMap(({_event_product,...row})=>{
     const source=definitions.get(row.source_slug);
     const stored=recordedProduct(row.change_type==='removed'?row.old_value:row.change_type==='added'?row.new_value:null);
     const product=stored||_event_product||{};
+    if(!validSourceProduct(source,{...product,name:product.name||row.product_name}))return [];
     const technology=product.technology||row.technology||source?.technology||null;
     const source_url=row.source_url||product.source_url||source?.url||null;
     const product_family=product.product_family||(/\bFWA\b/i.test(technology||'')||/(?:^|-)superbox$|(?:^|-)redbox$/.test(row.source_slug)?'fwa':source||technology?'fixed':null);
-    return {...row,source_name:row.source_name||source?.name||row.provider||row.source_slug,
+    return [{...row,source_name:row.source_name||source?.name||row.provider||row.source_slug,
       source_url,technology,product_family,brand:product.brand||row.provider,
       product_url:product.product_url||source_url,
       ownership_group:product.ownership_group||row.ownership_group||source?.ownership_group||null,
       market_segment:product.market_segment||source?.market_segment||'residential',
-      field_key:TRACK_FIELDS.find(([,label])=>label===row.field_name)?.[0]||null};
+      field_key:TRACK_FIELDS.find(([,label])=>label===row.field_name)?.[0]||null}];
   });
 }
 

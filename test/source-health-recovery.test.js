@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {PGlite} from '@electric-sql/pglite';
-import {HOME_INTERNET_SOURCES,loadHomeInternetChanges,parserFor,scanHomeInternet,marketPayload} from '../src/home-internet.js';
+import {HOME_INTERNET_SOURCES,loadHomeInternetChanges,parseDynamicLifecellVariant,parserFor,scanHomeInternet,marketPayload} from '../src/home-internet.js';
 import {providerCoverageReasons} from '../src/ad-provider-worker.js';
 import {SCHEMA_SQL} from '../src/schema.js';
 const source=slug=>HOME_INTERNET_SOURCES.find(s=>s.slug===slug);
@@ -53,6 +53,17 @@ test('Superbox page chrome is excluded from current products and change history'
     const changes=await loadHomeInternetChanges(db,{start:new Date(+new Date(scan.captured_at)-1000),end:new Date(+new Date(scan.captured_at)+1000)});
     assert.deepEqual(changes.map(change=>change.product_name),[valid.name]);
   }finally{await db.close()}
+});
+
+test('a free dynamic Superbox card cannot climb to body text and create a priced accessibility product',()=>{
+  const s=source('lifecell-digital-superbox');
+  const chrome='Görme engelliler için erişilebilirliği etkinleştirin Enter Erişilebilirlik menüsünü aç Enter Web sitesinin sayfa yapısını açın Enter Evim İçin İşim İçin Türkçe English Ev İnterneti';
+  const body={heading:chrome,option_text:'5G Hızında',card_text:chrome+' Superbox 5G Yanında 300 Mbps İndirme Hızı 12 Ay Taahhütlü 4.500 TL/Ay İncele'};
+  assert.deepEqual(parseDynamicLifecellVariant(s,body,true),[]);
+  const card={heading:'Superbox 5G Evinde',option_text:'300 Mbps İndirme Hızı',card_text:'Superbox 5G Evinde 300 Mbps İndirme Hızı 12 Ay Taahhütlü 3.900 TL/Ay İncele'};
+  const rows=parseDynamicLifecellVariant(s,card,true);
+  assert.equal(rows.length,1);assert.equal(rows[0].name,'Superbox 5G Evinde');assert.equal(rows[0].price_monthly_try,3900);
+  assert.equal(rows[0].duration_months,12);assert.equal(rows[0].speed_down_mbps,300);
 });
 
 test('shared catalogs are collected once and archived sources cannot create false removals',async()=>{
