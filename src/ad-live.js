@@ -1,5 +1,7 @@
 // Live visibility follows source observations, never the time of an AI reanalysis.
-export const AD_ACTIVE_MAX_AGE_HOURS=48;
+// The catalogue is verified every morning. Keep one short grace window for a
+// delayed run, but never present a two-day-old observation as a current ad.
+export const AD_ACTIVE_MAX_AGE_HOURS=30;
 export function liveAdWindow(now=new Date()){
   return [new Date(+now-AD_ACTIVE_MAX_AGE_HOURS*3600000).toISOString(),new Date(+now+300000).toISOString()];
 }

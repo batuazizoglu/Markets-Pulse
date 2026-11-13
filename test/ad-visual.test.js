@@ -136,6 +136,8 @@ test('UI category navigation isolates GSM/MNP and home embeds only fixed-home ad
     dom.window.MarketPulseAccess={ready:Promise.resolve({role:'admin'}),isAdmin:()=>true};
   dom.window.eval(await readFile(new URL('../public/ad-visual.js',import.meta.url),'utf8'));
     await dom.window.AdVisualUI.load();const d=dom.window.document;
+    assert.match(d.querySelector('[data-av-view-description]').textContent,/son 30 saatte/i);
+    assert.doesNotMatch(d.querySelector('[data-av-view-description]').textContent,/48 saatte/i);
     assert.equal(d.querySelectorAll('#ad-visual-section .av-card').length,1);
     dom.window.AdVisualUI.setCategory('mnp');
     assert.match(d.querySelector('#ad-visual-section .av-card h3').textContent,/<script>/);assert.equal(d.querySelectorAll('#ad-visual-section script').length,0);

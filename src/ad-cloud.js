@@ -14,7 +14,7 @@ import {runProviderTick,getProviderStatus} from './ad-provider-worker.js';
 import {normalizeProviderJpeg} from './ad-provider-image.js';
 import {requireOperationalAdmin} from './operational-access.js';
 
-export const CLOUD_SCHEDULE={enabled:true,description:'Bulutta her gün 06:00; Telsim ve sayfası doğrulanmış rakipler',timezone:'Asia/Famagusta',daily_at:'06:00'};
+export const CLOUD_SCHEDULE={enabled:true,description:'Bulutta her gün 06:00; doğrulanmış tüm reklam sayfaları',timezone:'Asia/Famagusta',daily_at:'06:00'};
 export function localCloudTime(now=new Date()){
   const p=Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Famagusta',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',hourCycle:'h23'}).formatToParts(now).map(x=>[x.type,x.value]));
   return {day:p.year+'-'+p.month+'-'+p.day,hour:Number(p.hour)};
@@ -105,10 +105,10 @@ export async function queueCloudReview(pool,sources,{manual=false,now=new Date()
     }
     const prior=await db.query('SELECT brand,MAX(created_at) last_at FROM ad_cloud_jobs GROUP BY brand');
     const dates=new Map(prior.rows.map(r=>[r.brand,+new Date(r.last_at)]));
-    // Unverified keyword searches cannot be captured and must not consume the
-    // six daily competitor slots ahead of known advertiser pages.
+    // Unverified keyword searches cannot be captured. Every advertiser with a
+    // verified numeric page ID receives a daily check.
     const directory=verifiedCloudSources(sources);
-    const selected=[...directory.filter(x=>x.brand==='Telsim'),...directory.filter(x=>x.brand!=='Telsim').sort((a,b)=>(dates.get(a.brand)||0)-(dates.get(b.brand)||0)||Number(Boolean(b.page_id))-Number(Boolean(a.page_id))).slice(0,providerConfig(env).mode==='apify'?undefined:6)];
+    const selected=[...directory.filter(x=>x.brand==='Telsim'),...directory.filter(x=>x.brand!=='Telsim').sort((a,b)=>(dates.get(a.brand)||0)-(dates.get(b.brand)||0)||Number(Boolean(b.page_id))-Number(Boolean(a.page_id)))];
     const batch=manual?'manual-'+randomUUID():'daily-'+local.day;let queued=0;
     for(const source of selected){
       const active=await db.query("SELECT id FROM ad_cloud_jobs WHERE source_json->>'page_id'=$1 AND status IN ('queued','running','retry') LIMIT 1",[source.page_id]);

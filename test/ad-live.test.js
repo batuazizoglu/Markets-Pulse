@@ -16,7 +16,7 @@ async function setup(){const db=new PGlite();await db.exec(SCHEMA_SQL);return db
 test('only fresh explicit active observations enter rows, totals, brand filters and keyset pages',async()=>{
   const db=await setup();
   try{
-    for(const a of [ad('100001'),ad('100002'),ad('100003','inactive'),ad('100004','unknown'),ad('100005','active',72),ad('100006','active',-1)])await seed(db,a);
+    for(const a of [ad('100001'),ad('100002'),ad('100003','inactive'),ad('100004','unknown'),ad('100005','active',31),ad('100006','active',-1)])await seed(db,a);
     const first=await getAdVisuals(db,{now,limit:1});assert.equal(first.total,2);assert.equal(first.groups.home,2);assert.equal(first.brand_groups.Telsim.home,2);assert.equal(first.pagination.total,2);assert.equal(first.rows[0].key,ad('100001').key);
     const next=await getAdVisuals(db,{now,limit:1,cursor:first.pagination.next_cursor});assert.equal(next.rows[0].key,ad('100002').key);assert.equal(next.pagination.has_more,false);
     await recordAdStatus(db,{...ad('100001','inactive'),observed_at:at(0)});
