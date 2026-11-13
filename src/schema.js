@@ -271,6 +271,14 @@ CREATE TABLE IF NOT EXISTS ad_report_image_assets (
   height INTEGER NOT NULL CHECK(height BETWEEN 1 AND 1280),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+CREATE TABLE IF NOT EXISTS ad_lifecycle_policy (
+  id INTEGER PRIMARY KEY CHECK(id=1),
+  active_max_age_hours INTEGER NOT NULL DEFAULT 30 CHECK(active_max_age_hours BETWEEN 1 AND 168),
+  daily_scan_hour INTEGER NOT NULL DEFAULT 6 CHECK(daily_scan_hour BETWEEN 0 AND 23),
+  timezone TEXT NOT NULL DEFAULT 'Asia/Famagusta' CHECK(length(timezone) BETWEEN 3 AND 80),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+INSERT INTO ad_lifecycle_policy(id) VALUES(1) ON CONFLICT DO NOTHING;
 CREATE TABLE IF NOT EXISTS ad_live_status (
   page_id TEXT NOT NULL,
   ad_id TEXT NOT NULL,
@@ -278,6 +286,17 @@ CREATE TABLE IF NOT EXISTS ad_live_status (
   checked_at TIMESTAMPTZ NOT NULL,
   PRIMARY KEY(page_id,ad_id)
 );
+CREATE TABLE IF NOT EXISTS ad_live_status_history (
+  id BIGSERIAL PRIMARY KEY,
+  page_id TEXT NOT NULL CHECK(page_id ~ '^[0-9]{5,30}$'),
+  ad_id TEXT NOT NULL CHECK(ad_id ~ '^[0-9]{5,30}$'),
+  ad_status TEXT NOT NULL CHECK(ad_status IN ('active','inactive','unknown')),
+  checked_at TIMESTAMPTZ NOT NULL,
+  source TEXT NOT NULL CHECK(source IN ('observation','complete_scan','migration')),
+  recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(page_id,ad_id,ad_status,checked_at)
+);
+CREATE INDEX IF NOT EXISTS idx_ad_live_status_history_ad_time ON ad_live_status_history(page_id,ad_id,checked_at DESC);
 CREATE TABLE IF NOT EXISTS ad_visual_items (
   ad_key TEXT PRIMARY KEY,
   brand TEXT NOT NULL,
@@ -381,6 +400,9 @@ FROM (
 ) observations WHERE page_id ~ '^[0-9]{5,30}$' AND ad_id ~ '^[0-9]{5,30}$'
 ORDER BY page_id,ad_id,checked_at DESC,ad_status DESC
 ON CONFLICT(page_id,ad_id) DO NOTHING;
+INSERT INTO ad_live_status_history(page_id,ad_id,ad_status,checked_at,source)
+SELECT page_id,ad_id,ad_status,checked_at,'migration' FROM ad_live_status
+ON CONFLICT(page_id,ad_id,ad_status,checked_at) DO NOTHING;
 CREATE TABLE IF NOT EXISTS ad_cloud_capture_links (
   job_id BIGINT NOT NULL REFERENCES ad_cloud_jobs(id),
   ad_key TEXT NOT NULL,
@@ -390,6 +412,23 @@ INSERT INTO ad_cloud_capture_links(job_id,ad_key) SELECT job_id,ad_key FROM ad_c
 ALTER TABLE ad_cloud_candidates ADD COLUMN IF NOT EXISTS review_round INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE ad_cloud_control ADD COLUMN IF NOT EXISTS analysis_manual_after TIMESTAMPTZ;
 ALTER TABLE ad_cloud_control ADD COLUMN IF NOT EXISTS capture_after TIMESTAMPTZ;
+CREATE OR REPLACE VIEW ad_visual_lifecycle AS
+SELECT a.ad_key,a.brand,a.category,a.first_seen_at,a.observed_at,a.meaning_hash,a.analysis_json,
+  COALESCE(l.checked_at,a.observed_at) activity_checked_at,
+  COALESCE(l.ad_status,NULLIF(a.analysis_json->>'ad_status',''),'unknown') activity_status,
+  EXISTS(SELECT 1 FROM ad_cloud_candidates newer WHERE newer.ad_key=a.ad_key AND newer.observed_at>a.observed_at) superseded,
+  policy.active_max_age_hours
+FROM ad_visual_items a
+CROSS JOIN ad_lifecycle_policy policy
+LEFT JOIN ad_live_status l ON l.page_id=a.analysis_json->>'page_id' AND l.ad_id=a.analysis_json->>'ad_id';
+CREATE OR REPLACE VIEW ad_source_live_counts AS
+SELECT l.page_id,
+  COUNT(*) FILTER(WHERE l.ad_status='active' AND l.checked_at>=NOW()-make_interval(hours=>policy.active_max_age_hours) AND l.checked_at<=NOW()+INTERVAL '5 minutes')::int active_count,
+  COUNT(*) FILTER(WHERE l.ad_status='inactive')::int inactive_count,
+  MAX(l.checked_at) last_checked_at
+FROM ad_live_status l
+CROSS JOIN ad_lifecycle_policy policy
+GROUP BY l.page_id;
 ALTER TABLE ad_visual_versions DROP CONSTRAINT IF EXISTS ad_visual_versions_event_type_check;
 ALTER TABLE ad_visual_versions ADD CONSTRAINT ad_visual_versions_event_type_check CHECK(event_type IN ('first_seen','changed','analysis_updated','category_updated'));
 

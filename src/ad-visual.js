@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto';
 import {getCloudSourceCoverage} from './ad-source-coverage.js';
-import {AD_ACTIVE_MAX_AGE_HOURS,liveAdWindow,liveAdSql,recordAdStatus} from './ad-live.js';
+import {getAdLifecyclePolicy,liveAdWindow,liveAdSql,recordAdStatus} from './ad-live.js';
 import {isDeepStrictEqual} from 'node:util';
 import {socialDirectory,verifiedFixedIspPageId} from './isp-registry.js';
 import {proposeStoredCategory} from './ad-category-evidence.js';
@@ -211,20 +211,22 @@ function pageInput({limit=400,brand='',category='',view='active',cursor}={},cate
   return {limit:Number(limit),brand,category,view,after};
 }
 const pendingMediaWhere="c.status IN ('pending','retry','error') AND NOT EXISTS (SELECT 1 FROM ad_visual_items a WHERE a.ad_key=c.ad_key AND a.observed_at>=c.observed_at) AND EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.payload->'images')='array' THEN c.payload->'images' ELSE '[]'::jsonb END) image JOIN ad_visual_evidence e ON e.sha256=image->>'sha256')";
-async function pendingMediaCounts(pool,now=new Date()){
+async function pendingMediaCounts(pool,now=new Date(),policy=null){
+  policy||=await getAdLifecyclePolicy(pool);
   const live=liveAdSql('c','payload');
-  const result=await pool.query("SELECT c.payload->>'brand' brand,count(*)::int count FROM ad_cloud_candidates c "+live.join+" WHERE "+pendingMediaWhere+" AND "+live.where+" GROUP BY c.payload->>'brand'",liveAdWindow(now));
+  const result=await pool.query("SELECT c.payload->>'brand' brand,count(*)::int count FROM ad_cloud_candidates c "+live.join+" WHERE "+pendingMediaWhere+" AND "+live.where+" GROUP BY c.payload->>'brand'",liveAdWindow(now,policy));
   return {total:result.rows.reduce((n,row)=>n+row.count,0),brand_totals:Object.fromEntries(result.rows.map(row=>[row.brand,row.count]))};
 }
 export async function getPendingAdVisuals(pool,{limit=50,now=new Date(),...options}={}){
+  const policy=await getAdLifecyclePolicy(pool);
   const {brand,after,limit:pageLimit}=pageInput({...options,limit,category:'review'});
   if(pageLimit>100){const error=new Error('Bir sayfada en fazla 100 görsel alınabilir');error.status=400;throw error}
-  const live=liveAdSql('c','payload'),params=liveAdWindow(now),where=[pendingMediaWhere,live.where];
+  const live=liveAdSql('c','payload'),params=liveAdWindow(now,policy),where=[pendingMediaWhere,live.where];
   if(brand){params.push(brand);where.push("c.payload->>'brand'=$"+params.length)}
   if(after){params.push(after.t,after.k);where.push('(c.observed_at<$'+(params.length-1)+'::timestamptz OR (c.observed_at=$'+(params.length-1)+'::timestamptz AND c.ad_key>$'+params.length+'))')}
   params.push(pageLimit+1);
   const [result,counts]=await Promise.all([
-    pool.query('SELECT c.ad_key,c.payload,c.status,c.observed_at,'+live.checked+' activity_checked_at,to_char(c.observed_at AT TIME ZONE \'UTC\',\'YYYY-MM-DD"T"HH24:MI:SS.US"Z"\') cursor_time FROM ad_cloud_candidates c '+live.join+' WHERE '+where.join(' AND ')+' ORDER BY c.observed_at DESC,c.ad_key ASC LIMIT $'+params.length,params),pendingMediaCounts(pool,now)
+    pool.query('SELECT c.ad_key,c.payload,c.status,c.observed_at,'+live.checked+' activity_checked_at,to_char(c.observed_at AT TIME ZONE \'UTC\',\'YYYY-MM-DD"T"HH24:MI:SS.US"Z"\') cursor_time FROM ad_cloud_candidates c '+live.join+' WHERE '+where.join(' AND ')+' ORDER BY c.observed_at DESC,c.ad_key ASC LIMIT $'+params.length,params),pendingMediaCounts(pool,now,policy)
   ]);
   const hasMore=result.rows.length>pageLimit,page=result.rows.slice(0,pageLimit),last=page.at(-1);
   const hashes=[...new Set(page.flatMap(row=>(row.payload.images||[]).map(image=>image.sha256)).filter(hash=>/^[a-f0-9]{64}$/.test(hash)))];
@@ -235,24 +237,28 @@ export async function getPendingAdVisuals(pool,{limit=50,now=new Date(),...optio
   }),pagination:{limit:pageLimit,total:brand?(counts.brand_totals[brand]||0):counts.total,has_more:hasMore,next_cursor:hasMore?Buffer.from(JSON.stringify({v:1,t:last.cursor_time,k:last.ad_key,brand,category:'review'})).toString('base64url'):null,brand:brand||null},...counts};
 }
 export async function getAdVisuals(pool,{now=new Date(),...options}={}){
-  const categories=await getAdCategories(pool);
-  const live=liveAdSql('a');
-  const currentCreative="NOT EXISTS (SELECT 1 FROM ad_cloud_candidates newer WHERE newer.ad_key=a.ad_key AND newer.observed_at>a.observed_at)";
-  const {limit,brand,category,view,after}=pageInput(options,categories),params=liveAdWindow(now);
+  const [categories,policy]=await Promise.all([getAdCategories(pool),getAdLifecyclePolicy(pool)]);
+  const {limit,brand,category,view,after}=pageInput(options,categories),params=liveAdWindow(now,policy);
   // IS NOT TRUE includes unknown/null source status in the archive as well.
-  const active=`(${live.where}) AND ${currentCreative}`;
+  const active=`a.activity_status='active' AND a.activity_checked_at>=$1::timestamptz AND a.activity_checked_at<=$2::timestamptz AND NOT a.superseded`;
   const visibility=view==='archive'?`(${active}) IS NOT TRUE`:active,where=[visibility];
   if(brand){params.push(brand);where.push('a.brand=$'+params.length)}
   if(category){params.push(category);where.push('a.category=$'+params.length)}
   if(after){params.push(after.t,after.k);where.push('(a.observed_at<$'+(params.length-1)+'::timestamptz OR (a.observed_at=$'+(params.length-1)+'::timestamptz AND a.ad_key>$'+params.length+'))')}
   params.push(limit+1);
   const [data,sync,counts,pendingMedia,sourceCoverage]=await Promise.all([
-    pool.query('SELECT a.ad_key,a.first_seen_at,a.observed_at,'+live.checked+' activity_checked_at,'+live.status+' activity_status,NOT('+currentCreative+') superseded,to_char(a.observed_at AT TIME ZONE \'UTC\',\'YYYY-MM-DD"T"HH24:MI:SS.US"Z"\') cursor_time,a.analysis_json,c.status ai_queue_status,c.analyzed_at,c.review_round FROM ad_visual_items a '+live.join+' LEFT JOIN ad_cloud_candidates c ON c.ad_key=a.ad_key WHERE '+where.join(' AND ')+' ORDER BY a.observed_at DESC,a.ad_key ASC LIMIT $'+params.length,params),
+    pool.query(`SELECT a.ad_key,a.first_seen_at,a.observed_at,a.activity_checked_at,a.activity_status,a.superseded,
+      CASE WHEN a.superseded THEN 'superseded' WHEN a.activity_status='inactive' THEN 'inactive'
+        WHEN a.activity_status<>'active' THEN 'unverified' ELSE 'outdated' END archive_reason,
+      to_char(a.observed_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') cursor_time,
+      a.analysis_json,c.status ai_queue_status,c.analyzed_at,c.review_round
+      FROM ad_visual_lifecycle a LEFT JOIN ad_cloud_candidates c ON c.ad_key=a.ad_key
+      WHERE `+where.join(' AND ')+' ORDER BY a.observed_at DESC,a.ad_key ASC LIMIT $'+params.length,params),
     pool.query('SELECT * FROM ad_visual_sync WHERE id=1'),
-    pool.query('SELECT a.brand,a.category,count(*)::int count FROM ad_visual_items a '+live.join+' WHERE '+visibility+' GROUP BY a.brand,a.category',liveAdWindow(now)),pendingMediaCounts(pool,now),getCloudSourceCoverage(pool,{end:now})
+    pool.query('SELECT a.brand,a.category,count(*)::int count FROM ad_visual_lifecycle a WHERE '+visibility+' GROUP BY a.brand,a.category',liveAdWindow(now,policy)),pendingMediaCounts(pool,now,policy),getCloudSourceCoverage(pool,{end:now})
   ]);
   const status={...sync.rows[0],...(sourceCoverage?{checked_at:sourceCoverage.checked_at,status:sourceCoverage.status,last_error:sourceCoverage.last_error,coverage_json:sourceCoverage.coverage}:{})};
-  const stale=t=>!t||+now-+new Date(t)>AD_ACTIVE_MAX_AGE_HOURS*3600000;
+  const stale=t=>!t||+now-+new Date(t)>policy.active_max_age_hours*3600000;
   const hasMore=data.rows.length>limit,page=data.rows.slice(0,limit),last=page.at(-1);
   const groups=Object.fromEntries(Object.keys(categories).map(k=>[k,0])),brandGroups=Object.create(null);let total=0;
   for(const row of counts.rows){
@@ -261,9 +267,9 @@ export async function getAdVisuals(pool,{now=new Date(),...options}={}){
     if((!brand||row.brand===brand)&&(!category||row.category===category))total+=row.count;
   }
   const rows=page.map(x=>({...x.analysis_json,ad_status:x.activity_status||'unknown',activity_checked_at:x.activity_checked_at,first_seen_at:x.first_seen_at,stale:view==='archive',archived:view==='archive',
-    archive_reason:view!=='archive'?null:x.superseded?'superseded':x.activity_status==='inactive'?'inactive':x.activity_status!=='active'?'unverified':'outdated',ai_queue_status:x.ai_queue_status||null,
+    archive_reason:view!=='archive'?null:x.archive_reason,ai_queue_status:x.ai_queue_status||null,
     ai_analysis:x.analysis_json.ai_analysis||(x.analyzed_at?{status:'completed',analyzed_at:x.analyzed_at,pass:x.ai_queue_status==='analyzed'?(x.review_round||0)+1:Math.max(1,x.review_round||0)}:null)}));
-  return {generated_at:now.toISOString(),categories,rows,visibility:{view,active_only:view==='active',max_observation_age_hours:AD_ACTIVE_MAX_AGE_HOURS},
+  return {generated_at:now.toISOString(),categories,rows,visibility:{view,active_only:view==='active',max_observation_age_hours:policy.active_max_age_hours,policy_updated_at:policy.updated_at},
     groups,brand_groups:brandGroups,total:Object.values(groups).reduce((sum,n)=>sum+n,0),pending_media:pendingMedia,
     pagination:{limit,total,has_more:hasMore,next_cursor:hasMore?Buffer.from(JSON.stringify({v:1,t:last.cursor_time,k:last.ad_key,brand,category,view})).toString('base64url'):null,brand:brand||null,category:category||null,view},
     monitoring:{...status,stale:stale(status.checked_at),status:status.last_error?'sync_error':!status.checked_at?'pending':stale(status.checked_at)?'stale':status.status,
@@ -273,8 +279,8 @@ export async function getAdReport(pool,start,end,{category}={}){
   const params=[date(start),date(end)];if(category)params.push(category);
   const r=await pool.query("SELECT event_type,analysis_json,observed_at FROM ad_visual_versions WHERE observed_at >= $1 AND observed_at < $2 AND event_type IN ('first_seen','changed') "+(category?"AND analysis_json->>'category'=$3 ":'')+"ORDER BY observed_at DESC,id DESC",params);
   const current=await pool.query('SELECT checked_at,status,last_error,coverage_json FROM ad_visual_sync WHERE id=1');
-  const live=await getCloudSourceCoverage(pool,{end});
-  return {rows:r.rows,categories:await getAdCategories(pool),checked_at:current.rows[0]?.checked_at||null,status:current.rows[0]?.status||'pending',last_error:current.rows[0]?.last_error||null,coverage:current.rows[0]?.coverage_json||[],...live};
+  const [live,policy,categories]=await Promise.all([getCloudSourceCoverage(pool,{end}),getAdLifecyclePolicy(pool),getAdCategories(pool)]);
+  return {rows:r.rows,categories,checked_at:current.rows[0]?.checked_at||null,status:current.rows[0]?.status||'pending',last_error:current.rows[0]?.last_error||null,coverage:current.rows[0]?.coverage_json||[],visibility:{max_observation_age_hours:policy.active_max_age_hours,policy_updated_at:policy.updated_at},...live};
 }
 export function registerAdVisualRoutes(app,pool,sources,{sync=syncAdVisuals,now=Date.now,cloudStatus=null}={}){
   let lastManualSync=-Infinity;

@@ -14,6 +14,8 @@ export function pageState(text,httpStatus=200){
   if(/(?:^|\n)\s*(?:0 results|0 sonuç|no ads found|sonuç bulunamadı|no ads match your search criteria|hiçbir reklam arama kriterinizle eşleşmiyor)\s*(?:\n|$)/im.test(text))return 'no_ads';
   return 'unknown';
 }
+export const DEFAULT_CAPTURE_MAX_ADS=60;
+export const DEFAULT_CAPTURE_MAX_SCROLLS=40;
 export function captureRetryDelay(value,now=Date.now()){
   const seconds=Number(value);
   const delay=value&&Number.isFinite(seconds)?seconds*1000:Date.parse(value||'')-now;
@@ -48,7 +50,7 @@ export function markAdCards(){
 function restrictedDestination(raw){
   try{return /^\/(?:login(?:\.php)?|checkpoint|challenge)(?:\/|$)/i.test(new URL(raw).pathname)}catch{return true}
 }
-export async function captureCloudAds(source,onCapture,{maxAds=12,timeoutMs=110000,env=process.env,proxyConfig,launch=options=>puppeteer.launch(options),openProxy=openCaptureProxy}={}){
+export async function captureCloudAds(source,onCapture,{maxAds=DEFAULT_CAPTURE_MAX_ADS,maxScrolls=DEFAULT_CAPTURE_MAX_SCROLLS,timeoutMs=110000,env=process.env,proxyConfig,launch=options=>puppeteer.launch(options),openProxy=openCaptureProxy}={}){
   const url=adLibrarySource(source);
   if(!url)return {status:'unverified',captured:0,note:'Resmî Facebook sayfa kimliği doğrulanmadı; isim aramasından otomatik marka eşleştirilmedi.'};
   const transport=proxyConfig||captureTransportConfig(env);
@@ -123,11 +125,12 @@ export async function captureCloudAds(source,onCapture,{maxAds=12,timeoutMs=1100
     checkProxy(true);
     if(state!=='cards')return {status:state==='no_ads'?'no_ads':state==='blocked'?'blocked':'error',http_status:httpStatus,reason:state==='blocked'?'ACCESS_RESTRICTED':state==='no_ads'?'NO_MATCHING_ADS':'CARDS_NOT_FOUND',captured,note:state==='no_ads'?'CY filtresinde açıkça sıfır sonuç gösterildi.':'Reklam kartları doğrulanamadı; erişim, oturum veya sayfa yapısı kontrolü gerekli.'};
     checkProxy();
-    const seen=new Set();
-    for(let scroll=0;scroll<4&&captured<maxAds;scroll++){
+    const seen=new Set();let stagnant=0;
+    for(let scroll=0;scroll<maxScrolls&&captured<maxAds;scroll++){
+      const before=captured;
       const cards=await page.evaluate(markAdCards);
       for(const data of cards){
-        if(seen.has(data.ad_id)||captured>=maxAds)continue;seen.add(data.ad_id);
+        if(seen.has(data.ad_id)||captured>=maxAds)continue;
         const card=await page.$('[data-mp-ad-card="'+data.ad_id+'"]');if(!card)continue;
         await card.scrollIntoView();
         const unobscured=await card.evaluate(el=>{const r=el.getBoundingClientRect(),x=Math.min(innerWidth-1,Math.max(1,r.x+r.width/2)),y=Math.min(innerHeight-1,Math.max(1,r.y+Math.min(r.height/2,400)));return el.contains(document.elementFromPoint(x,y))});
@@ -148,14 +151,16 @@ export async function captureCloudAds(source,onCapture,{maxAds=12,timeoutMs=1100
         await onCapture({brand:source.brand,page_id:source.page_id,ad_id:data.ad_id,variant_id:'1',source_url:url,
           observed_at:at,started_on:null,ad_status:/\bInactive\b|Aktif değil/i.test(data.ad_text)?'inactive':/\bActive\b|\bAktif\b/i.test(data.ad_text)?'active':'unknown',
           ad_text:data.ad_text,has_video:data.has_video,evidence});
-        captured++;
+        seen.add(data.ad_id);captured++;
       }
       if(captured>=maxAds)break;
-      await page.evaluate(()=>window.scrollBy(0,1000));
+      stagnant=captured===before?stagnant+1:0;
+      await page.evaluate(()=>window.scrollBy(0,Math.max(1000,innerHeight*.85)));
       await new Promise(r=>setTimeout(r,900));
       text=await page.evaluate(()=>document.body.innerText.slice(0,60000));
       if(pageState(text)==='blocked'||restrictedDestination(page.url()))return {status:'blocked',reason:'ACCESS_RESTRICTED',captured,note:'Tarama sırasında erişim kısıtı görüldü; kaydedilmiş görseller korundu.'};
       checkProxy();
+      if(stagnant>=4)break;
     }
     checkProxy();
     return {status:captured?'partial':'error',captured,note:captured+' reklam görseli bulut sunucusunda kaydedildi. CY filtresi; en fazla '+maxAds+' kart. Video varsa yalnız görünen kare kaydedildi. Görsel analizi ayrı kuyrukta işlenir.'};
