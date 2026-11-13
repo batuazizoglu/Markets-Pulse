@@ -76,6 +76,27 @@ test('provider running and ambiguous creation history, AI candidates, and spend 
   }finally{await db.close();}
 });
 
+test('credential rejection before provider start gets one day-scoped retry after token rotation',async()=>{
+  const db=await fixture();
+  try{
+    const old=(await db.query("SELECT id FROM ad_cloud_jobs WHERE brand='GNÇ Kıbrıs'")).rows[0];
+    await db.query("INSERT INTO ad_provider_runs(job_id,state,max_run_usd,last_error,created_at,updated_at,finished_at) VALUES($1,'error',0.10,'PROVIDER_AUTH_FAILED','2026-11-12T04:00:00Z','2026-11-12T04:00:00Z','2026-11-12T04:00:00Z')",[old.id]);
+    const before={run:(await db.query('SELECT * FROM ad_provider_runs WHERE job_id=$1',[old.id])).rows[0],budget:(await db.query('SELECT * FROM ad_provider_budget')).rows};
+    const options={env,now:new Date('2026-11-13T01:00:00Z')};
+    const result=await queueProviderHandoff(db,HOME_INTERNET_SOURCES,'handoff-test',options);
+    assert.equal(result.queued,verified.length);
+    const records=(await db.query("SELECT batch_key,status,attempts FROM ad_cloud_jobs WHERE brand='GNÇ Kıbrıs' ORDER BY id")).rows;
+    assert.deepEqual(records,[
+      {batch_key:'old-browser',status:'error',attempts:3},
+      {batch_key:'provider-credential-recovery-2026-11-13-321385064564918',status:'queued',attempts:0}
+    ]);
+    assert.deepEqual((await db.query('SELECT * FROM ad_provider_runs WHERE job_id=$1',[old.id])).rows[0],before.run);
+    assert.deepEqual((await db.query('SELECT * FROM ad_provider_budget')).rows,before.budget);
+    assert.deepEqual(await queueProviderHandoff(db,HOME_INTERNET_SOURCES,'handoff-test',options),{recovered:0,queued:0,brands:[]});
+    assert.equal((await db.query("SELECT count(*)::int n FROM ad_cloud_jobs WHERE brand='GNÇ Kıbrıs'")).rows[0].n,2);
+  }finally{await db.close();}
+});
+
 test('a queued future retry is retained without shortening its wait or creating a duplicate',async()=>{
   const db=await fixture();
   try{

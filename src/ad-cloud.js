@@ -66,9 +66,9 @@ export async function queueNewCloudSources(pool,sources,owner){
     return added;
   });
 }
-export async function queueProviderHandoff(pool,sources,owner,{env=process.env}={}){
+export async function queueProviderHandoff(pool,sources,owner,{env=process.env,now=new Date()}={}){
   if(providerConfig(env).mode!=='apify')return {recovered:0,queued:0,brands:[]};
-  const verified=verifiedCloudSources(sources);
+  const verified=verifiedCloudSources(sources),day=localCloudTime(now).day;
   return transaction(pool,async db=>{
     await assertLease(db,owner);
     // The acquired worker lease proves these unowned browser captures were interrupted.
@@ -79,17 +79,27 @@ export async function queueProviderHandoff(pool,sources,owner,{env=process.env}=
       AND NOT EXISTS(SELECT 1 FROM ad_provider_runs p WHERE p.job_id=ad_cloud_jobs.id) RETURNING id`,[verified.map(source=>source.page_id)]);
     const brands=[];
     for(const source of verified){
-      // Any provider history includes ambiguous starts and must prevent a second bootstrap run.
-      const history=await db.query(`SELECT p.job_id FROM ad_provider_runs p JOIN ad_cloud_jobs j ON j.id=p.job_id
-        WHERE j.source_json->>'page_id'=$1 LIMIT 1`,[source.page_id]);
-      if(history.rows.length)continue;
+      // Accepted or ambiguous provider starts must never be duplicated. A credential
+      // rejection before a supplier run exists is different: after key rotation it is
+      // safe to create one durable, day-scoped recovery job without mutating history.
+      const history=(await db.query(`SELECT p.state,p.run_id,p.last_error FROM ad_provider_runs p
+        JOIN ad_cloud_jobs j ON j.id=p.job_id WHERE j.source_json->>'page_id'=$1
+        ORDER BY p.created_at DESC,p.job_id DESC LIMIT 1`,[source.page_id])).rows[0];
+      const credentialRetry=history && history.state==='error' && !history.run_id &&
+        ['PROVIDER_AUTH_FAILED','PROVIDER_ACCESS_DENIED'].includes(history.last_error);
+      if(history&&!credentialRetry)continue;
       // A future retry remains the source's existing queue entry; never shorten its wait.
       const queued=await db.query(`SELECT id FROM ad_cloud_jobs WHERE source_json->>'page_id'=$1
         AND status IN ('queued','retry') AND attempts<3 LIMIT 1`,[source.page_id]);
       if(queued.rows.length)continue;
       const result=await db.query(`INSERT INTO ad_cloud_jobs(batch_key,brand,source_json,note)
-        VALUES($1,$2,$3::jsonb,'Doğrulanmış reklam sayfası ilk sağlayıcı aktarımı için kuyruğa alındı.')
-        ON CONFLICT(batch_key,brand) DO NOTHING RETURNING id`,['provider-source-'+source.page_id,source.brand,JSON.stringify(source)]);
+        VALUES($1,$2,$3::jsonb,$4)
+        ON CONFLICT(batch_key,brand) DO NOTHING RETURNING id`,[
+        credentialRetry?'provider-credential-recovery-'+day+'-'+source.page_id:'provider-source-'+source.page_id,
+        source.brand,JSON.stringify(source),credentialRetry
+          ?'Sağlayıcı anahtarı yenilendi; ücretli çalışma başlamadan reddedilen aktarım yeniden kuyruğa alındı.'
+          :'Doğrulanmış reklam sayfası ilk sağlayıcı aktarımı için kuyruğa alındı.'
+      ]);
       if(result.rows.length)brands.push(source.brand);
     }
     return {recovered:recovered.rows.length,queued:brands.length,brands};
