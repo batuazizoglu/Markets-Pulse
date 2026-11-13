@@ -34,16 +34,16 @@ test('missing evidence cannot poison the queue or consume a paid model call',asy
   }finally{await db.close()}
 });
 
-test('cloud scheduling persists daily deduplication, rotates competitors and throttles manual scans',async()=>{
+test('cloud scheduling persists daily deduplication, covers every verified page and throttles manual scans',async()=>{
   assert.deepEqual(localCloudTime(new Date('2026-09-18T03:00:00Z')),{day:'2026-09-18',hour:6});
   assert.equal(localCloudTime(new Date('2026-12-18T04:00:00Z')).hour,6);
-  const db=await dbFixture();
+  const db=await dbFixture(),total=verifiedCloudSources(HOME_INTERNET_SOURCES).length;
   try{
     assert.equal((await queueCloudReview(db,HOME_INTERNET_SOURCES,{now:new Date('2026-09-18T02:00:00Z')})).queued,0);
-    const first=await queueCloudReview(db,HOME_INTERNET_SOURCES,{now:new Date('2026-09-18T03:00:00Z')});assert.equal(first.queued,7);
+    const first=await queueCloudReview(db,HOME_INTERNET_SOURCES,{now:new Date('2026-09-18T03:00:00Z')});assert.equal(first.queued,total);
     assert.equal((await queueCloudReview(db,HOME_INTERNET_SOURCES,{now:new Date('2026-09-18T05:00:00Z')})).queued,0);
     await queueCloudReview(db,HOME_INTERNET_SOURCES,{manual:true});assert.equal((await queueCloudReview(db,HOME_INTERNET_SOURCES,{manual:true})).rate_limited,true);
-    assert.equal((await db.query('SELECT count(*)::int n FROM ad_cloud_jobs')).rows[0].n,7);
+    assert.equal((await db.query('SELECT count(*)::int n FROM ad_cloud_jobs')).rows[0].n,total);
   }finally{await db.close()}
 });
 test('unverified brands never displace verified ISP pages from the next daily or manual batch',async()=>{

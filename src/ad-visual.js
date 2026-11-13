@@ -252,7 +252,7 @@ export async function getAdVisuals(pool,{now=new Date(),...options}={}){
     pool.query('SELECT a.brand,a.category,count(*)::int count FROM ad_visual_items a '+live.join+' WHERE '+visibility+' GROUP BY a.brand,a.category',liveAdWindow(now)),pendingMediaCounts(pool,now),getCloudSourceCoverage(pool,{end:now})
   ]);
   const status={...sync.rows[0],...(sourceCoverage?{checked_at:sourceCoverage.checked_at,status:sourceCoverage.status,last_error:sourceCoverage.last_error,coverage_json:sourceCoverage.coverage}:{})};
-  const stale=t=>!t||+now-+new Date(t)>48*3600000;
+  const stale=t=>!t||+now-+new Date(t)>AD_ACTIVE_MAX_AGE_HOURS*3600000;
   const hasMore=data.rows.length>limit,page=data.rows.slice(0,limit),last=page.at(-1);
   const groups=Object.fromEntries(Object.keys(categories).map(k=>[k,0])),brandGroups=Object.create(null);let total=0;
   for(const row of counts.rows){

@@ -80,16 +80,17 @@ test('winter scheduling uses local 06:00 and preserves a pending alias page with
   assert.deepEqual((await db.query("SELECT * FROM ad_cloud_jobs WHERE batch_key='prior-alias'")).rows,prior);
 }));
 
-test('browser daily batches retain Telsim plus six competitors and rotate verified pages',async()=>fixture(async({db,sources})=>{
-  assert.equal((await queueCloudReview(db,sources,{env:{},now:new Date('2030-07-01T03:00:00Z')})).queued,7);
-  const first=await assertUniqueJobs(db,7);
+test('browser daily batches include every unique verified advertiser page',async()=>fixture(async({db,sources,verified})=>{
+  assert.equal((await queueCloudReview(db,sources,{env:{},now:new Date('2030-07-01T03:00:00Z')})).queued,verified.length);
+  const first=await assertUniqueJobs(db,verified.length);
   assert.equal(first[0].brand,'Telsim');
+  assert.ok(first.some(row=>row.brand==='KKTCELL'));
   await db.query("UPDATE ad_cloud_jobs SET status='no_ads',finished_at=NOW()");
   const next=await queueCloudReview(db,sources,{env:{},now:new Date('2030-07-02T03:00:00Z')});
-  assert.equal(next.queued,7);
+  assert.equal(next.queued,verified.length);
   const rows=(await db.query('SELECT brand FROM ad_cloud_jobs WHERE batch_key=$1',[next.batch_key])).rows;
   assert.ok(rows.some(row=>row.brand==='Telsim'));
-  assert.ok(rows.filter(row=>row.brand!=='Telsim').every(row=>!first.some(old=>old.brand===row.brand)));
+  assert.equal(rows.length,verified.length);
 }));
 
 test('initial registration deduplicates shared advertiser pages and historical alias captures across restarts',async()=>fixture(async({db,sources,verified})=>{

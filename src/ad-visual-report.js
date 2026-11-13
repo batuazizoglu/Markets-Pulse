@@ -1,4 +1,5 @@
 import {AD_CATEGORIES} from './ad-visual.js';
+import {AD_ACTIVE_MAX_AGE_HOURS} from './ad-live.js';
 const esc=v=>String(v??'—').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const customCategory=key=>typeof key==='string'&&key.length<=80&&/^auto-[a-z0-9]+(?:-[a-z0-9]+)*$/.test(key);
 const categoryName=value=>typeof value==='string'&&value.trim()&&value.length<=60?value.trim():null;
@@ -34,7 +35,7 @@ function paragraphChunks(value,limit=550){
 }
 export function adVisualReportHtml(data,{mode='email',imageSrc=image=>'cid:'+image.cid}={}){
   if(!data)return '';
-  const stale=!data.checked_at||Date.now()-+new Date(data.checked_at)>48*3600000;
+  const stale=!data.checked_at||Date.now()-+new Date(data.checked_at)>AD_ACTIVE_MAX_AGE_HOURS*3600000;
   const stamp=data.checked_at?dateLabel(data.checked_at):'Henüz inceleme yok';
   const rows=data.rows||[];
   let html='<section class="ad-report" data-report-mode="'+(mode==='pdf'?'pdf':'email')+'" style="margin:24px 0;font-family:Arial,sans-serif;font-size:14px;line-height:1.55;color:#172d3c"><div class="ad-report-header"><h2 style="font-size:22px;margin:0 0 10px">Reklam Görsel Analizi</h2><p style="margin:0 0 16px;color:#526572">Son kontrol: '+esc(stamp)+'. '+(stale?'İnceleme güncel değil. ':data.status!=='ok'?'Kapsam kısmi; kaynak durumunu kontrol edin. ':'')+(data.last_error?'Son veri aktarımı başarısız. ':'')+'Dönemde '+rows.filter(x=>x.event_type==='first_seen').length+' ilk gözlem, '+rows.filter(x=>x.event_type==='changed').length+' teklif / durum değişikliği. İlk gözlem reklamın o gün yayına başladığı anlamına gelmez.</p></div>';
