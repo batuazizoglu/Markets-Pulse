@@ -5,12 +5,17 @@ import {SCHEMA_SQL} from '../src/schema.js';
 import {HOME_INTERNET_SOURCES} from '../src/home-internet.js';
 import {ISP_SOCIALS,socialDirectory} from '../src/isp-registry.js';
 import {adLibraryUrl} from '../src/ad-library-url.js';
-import {adLibrarySource,captureCloudAds} from '../src/ad-cloud-capture.js';
+import {DEFAULT_CAPTURE_MAX_ADS,DEFAULT_CAPTURE_MAX_SCROLLS,adLibrarySource,captureCloudAds} from '../src/ad-cloud-capture.js';
 import {startProviderRun} from '../src/ad-provider-client.js';
 import {queueNewCloudSources} from '../src/ad-cloud.js';
 
 const advertiser='Kuzey Kıbrıs Turkcell';
 const providerEnv={AD_CAPTURE_PROVIDER:'apify',APIFY_TOKEN:'synthetic-test-token',APIFY_MAX_RUN_USD:'0.10',APIFY_DAILY_BUDGET_USD:'1.00'};
+
+test('browser capture capacity covers the current thirty-ad Telsim catalogue',()=>{
+  assert.ok(DEFAULT_CAPTURE_MAX_ADS>=30);
+  assert.ok(DEFAULT_CAPTURE_MAX_SCROLLS>=20);
+});
 
 test('Turkcell Meta shortcuts use verified advertiser pages and preserve internal brand keys',()=>{
   const directory=socialDirectory(HOME_INTERNET_SOURCES);

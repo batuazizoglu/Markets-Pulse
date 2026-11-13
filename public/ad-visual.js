@@ -51,7 +51,7 @@ function sourceDirectory(data){
     const waiting=provider?.enabled&&provider.configured===false;
     return {...s,capture_brand,shared,verified,status:waiting?'waiting_config':s.provider?(s.provider.coverage_complete===true&&s.provider.ads===0?'no_ads':s.provider.state):latest?.status||(verified?'not_scanned':'unverified'),note:waiting?provider.message:s.provider?(s.provider.last_error||''):latest?.note||'',
       checked_at:s.provider?.updated_at||(s.live?(s.live.finished_at||null):s.legacy?.checked_at),available_at:s.live?.available_at,
-      captured:s.provider?.captured??s.live?.captured??0,archive_count:data.brand_groups?Object.values(data.brand_groups[capture_brand]||{}).reduce((n,v)=>n+count(v),0):null,pending_count:data.pending_media?count(data.pending_media.brand_totals?.[capture_brand]):null,url:s.ad_library_url||s.legacy?.source_url,country:s.country||s.legacy?.country,
+      captured:s.provider?.captured??s.live?.captured??0,active_count:s.live?count(s.live.active_count):null,archive_count:data.brand_groups?Object.values(data.brand_groups[capture_brand]||{}).reduce((n,v)=>n+count(v),0):null,pending_count:data.pending_media?count(data.pending_media.brand_totals?.[capture_brand]):null,url:s.ad_library_url||s.legacy?.source_url,country:s.country||s.legacy?.country,
       rows:(data.rows||[]).filter(row=>row.brand===capture_brand)};
   }).sort((a,b)=>a.brand.localeCompare(b.brand,'tr'));
 }
@@ -64,6 +64,7 @@ function sourceCard(source){
     (source.country?'<span>Ülke filtresi: '+esc(source.country==='CY'?'Kıbrıs (CY)':source.country)+'</span>':'')+
     (source.note?'<p>'+esc(source.note)+'</p>':'')+
     (source.provider?providerCounters(source.provider):'')+
+    (source.active_count!==null?'<p>DB’de son '+activeWindowHours()+' saatte doğrulanan aktif reklam: '+count(source.active_count)+'</p>':'')+
     (source.archive_count!==null?'<p>'+(state.view==='archive'?'Arşivdeki analiz: ':'Aktif reklam analizi: ')+count(source.archive_count)+'</p>':'')+
     (pending?'<p>AI sonucu yayınlanmamış görsel: '+pending+'</p>':source.captured>0&&!(source.archive_count??source.rows.length)?'<p>Görseller kaydedildi; analiz sonucu henüz yayınlanmadı.</p>':'')+
     '<span>'+(source.provider?'Sağlayıcı son durumu: ':'Son tamamlanan tarama: ')+stamp(source.checked_at)+'</span>'+

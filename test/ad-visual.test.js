@@ -187,7 +187,7 @@ test('registered ISPs remain selectable without images, live blocking supersedes
 });
 test('source states distinguish a successful empty scan, retry and unpublished analysis while escaping source text',async()=>{
   const source_directory=['Boş sonuç','Yeniden denenecek','AI sonucu beklenen','<img src=x onerror=bad()>'].map((brand,i)=>({brand,page_id:'12345678'+i,ad_library_url:i===3?'javascript:bad()':'https://www.facebook.com/ads/library/?view_all_page_id=12345678'+i}));
-  const sources=[{brand:'Boş sonuç',status:'no_ads',captured:0,finished_at:iso(0)},{brand:'Yeniden denenecek',status:'retry',captured:0,available_at:iso(3),note:'Proxy bağlantısı kurulamadı.'},{brand:'AI sonucu beklenen',status:'partial',captured:2,finished_at:iso(0)},{brand:source_directory[3].brand,status:'blocked',captured:0,note:'<script>bad()</script>'}];
+  const sources=[{brand:'Boş sonuç',status:'no_ads',captured:0,active_count:0,finished_at:iso(0)},{brand:'Yeniden denenecek',status:'retry',captured:0,available_at:iso(3),note:'Proxy bağlantısı kurulamadı.'},{brand:'AI sonucu beklenen',status:'partial',captured:2,active_count:2,finished_at:iso(0)},{brand:source_directory[3].brand,status:'blocked',captured:0,note:'<script>bad()</script>'}];
   const dom=new JSDOM('<main class="shell"></main>',{url:'https://www.marketspulse.cloud/#ads',runScripts:'outside-only'});
   dom.window.fetch=async()=>({ok:true,json:async()=>({rows:[],source_directory,cloud:{sources}})});
   try{
@@ -196,7 +196,8 @@ test('source states distinguish a successful empty scan, retry and unpublished a
     for(const [brand,pattern] of [['Boş sonuç',/Son taramada bu filtrede reklam bulunamadı/],['Yeniden denenecek',/Sonraki deneme/],['AI sonucu beklenen',/Görseller kaydedildi; analiz sonucu henüz yayınlanmadı/],[source_directory[3].brand,/<script>bad\(\)<\/script>/]]){
       const filter=d.querySelector('[data-av-brand]');filter.value=brand;filter.dispatchEvent(new dom.window.Event('change',{bubbles:true}));
       assert.match(d.querySelector('.av-source-focus').textContent,pattern);assert.equal(d.querySelectorAll('.av-card').length,0);
-      if(brand==='Boş sonuç')assert.match(d.querySelector('.av-empty').textContent,/Yeni taramalarda sonuç değişebilir/);
+      if(brand==='Boş sonuç'){assert.match(d.querySelector('.av-empty').textContent,/Yeni taramalarda sonuç değişebilir/);assert.match(d.querySelector('.av-source-focus').textContent,/DB’de son 30 saatte doğrulanan aktif reklam: 0/)}
+      if(brand==='AI sonucu beklenen')assert.match(d.querySelector('.av-source-focus').textContent,/DB’de son 30 saatte doğrulanan aktif reklam: 2/);
     }
     assert.equal(d.querySelector('.av-source-focus a'),null);assert.equal(d.querySelectorAll('script,img').length,0);
   }finally{dom.window.close()}

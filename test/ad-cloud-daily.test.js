@@ -93,6 +93,24 @@ test('browser daily batches include every unique verified advertiser page',async
   assert.equal(rows.length,verified.length);
 }));
 
+test('database policy changes the daily scan hour without a deployment',async()=>fixture(async({db,sources,verified})=>{
+  await db.query("UPDATE ad_lifecycle_policy SET daily_scan_hour=9,updated_at=NOW() WHERE id=1");
+  assert.equal((await queueCloudReview(db,sources,{env,now:new Date('2030-07-01T05:59:59Z')})).queued,0);
+  const run=await queueCloudReview(db,sources,{env,now:new Date('2030-07-01T06:00:00Z')});
+  assert.equal(run.queued,verified.length);
+  const status=await getCloudStatus(db,{env,sources});
+  assert.equal(status.schedule.daily_at,'09:00');
+  assert.match(status.schedule.description,/09:00/);
+}));
+
+test('a failed database batch with no current ads is recovered before the normal scan hour',async()=>fixture(async({db,sources,verified})=>{
+  for(const source of verified)await db.query(`INSERT INTO ad_cloud_jobs(batch_key,brand,source_json,status,finished_at)
+    VALUES('failed-prior',$1,$2::jsonb,'error',$3)`,[source.brand,JSON.stringify(source),new Date('2030-07-01T02:30:00Z')]);
+  const run=await queueCloudReview(db,sources,{env:{},now:new Date('2030-07-01T02:45:00Z')});
+  assert.equal(run.recovery,true);assert.equal(run.queued,verified.length);
+  assert.equal(run.batch_key,'daily-2030-07-01');
+}));
+
 test('initial registration deduplicates shared advertiser pages and historical alias captures across restarts',async()=>fixture(async({db,sources,verified})=>{
   const alias=socialDirectory(sources).find(source=>source.brand===aliasBrand);
   await db.query("INSERT INTO ad_cloud_jobs(batch_key,brand,source_json,status) VALUES('historical-alias',$1,$2::jsonb,'no_ads')",[alias.brand,JSON.stringify(alias)]);

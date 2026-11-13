@@ -1,6 +1,6 @@
 import {randomUUID,createHash} from 'node:crypto';
 import {getCloudSourceCoverage} from './ad-source-coverage.js';
-import {recordAdStatus,retireMissingAds} from './ad-live.js';
+import {AD_LIFECYCLE_DEFAULTS,getAdLifecyclePolicy,liveAdWindow,recordAdStatus,retireMissingAds} from './ad-live.js';
 import {socialDirectory,verifiedFixedIspPageId} from './isp-registry.js';
 import {captureCloudAds,adLibrarySource} from './ad-cloud-capture.js';
 import {captureTransportStatus} from './ad-capture-proxy.js';
@@ -15,8 +15,12 @@ import {normalizeProviderJpeg} from './ad-provider-image.js';
 import {requireOperationalAdmin} from './operational-access.js';
 
 export const CLOUD_SCHEDULE={enabled:true,description:'Bulutta her gün 06:00; doğrulanmış tüm reklam sayfaları',timezone:'Asia/Famagusta',daily_at:'06:00'};
-export function localCloudTime(now=new Date()){
-  const p=Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Famagusta',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',hourCycle:'h23'}).formatToParts(now).map(x=>[x.type,x.value]));
+export function cloudSchedule(policy=AD_LIFECYCLE_DEFAULTS){
+  const hour=String(policy.daily_scan_hour).padStart(2,'0')+':00';
+  return {enabled:true,description:'Veritabanı planı: her gün '+hour+'; doğrulanmış tüm reklam sayfaları',timezone:policy.timezone,daily_at:hour};
+}
+export function localCloudTime(now=new Date(),timezone=AD_LIFECYCLE_DEFAULTS.timezone){
+  const p=Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:timezone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',hourCycle:'h23'}).formatToParts(now).map(x=>[x.type,x.value]));
   return {day:p.year+'-'+p.month+'-'+p.day,hour:Number(p.hour)};
 }
 export function verifiedCloudSources(sources){
@@ -92,11 +96,25 @@ export async function queueProviderHandoff(pool,sources,owner,{env=process.env}=
   });
 }
 export async function queueCloudReview(pool,sources,{manual=false,now=new Date(),env=process.env}={}){
-  const local=localCloudTime(now);
-  if(!manual&&local.hour<6)return {queued:0};
   return transaction(pool,async db=>{
+    const policy=await getAdLifecyclePolicy(db),local=localCloudTime(now,policy.timezone);
     const control=(await db.query('SELECT * FROM ad_cloud_control WHERE id=1 FOR UPDATE')).rows[0];
     if(!manual&&control.scheduled_day===local.day)return {queued:0};
+    let recovery=false;
+    if(!manual&&local.hour<policy.daily_scan_hour){
+      const directory=verifiedCloudSources(sources),cutoff=liveAdWindow(now,policy)[0];
+      const [active,successful,failed]=await Promise.all([
+        db.query("SELECT COUNT(*)::int count FROM ad_live_status WHERE ad_status='active' AND checked_at>=$1 AND checked_at<=$2",[cutoff,new Date(+now+300000)]),
+        db.query(`SELECT COUNT(DISTINCT source_json->>'page_id')::int count FROM ad_cloud_jobs
+          WHERE finished_at>=$1 AND status IN ('partial','complete','no_ads')
+          AND source_json->>'page_id'=ANY($2::text[])`,[cutoff,directory.map(source=>source.page_id)]),
+        db.query(`SELECT COUNT(DISTINCT source_json->>'page_id')::int count FROM ad_cloud_jobs
+          WHERE finished_at>=$1 AND status IN ('error','blocked','start_unknown')
+          AND source_json->>'page_id'=ANY($2::text[])`,[cutoff,directory.map(source=>source.page_id)])
+      ]);
+      recovery=active.rows[0].count===0&&failed.rows[0].count>0&&successful.rows[0].count<directory.length;
+      if(!recovery)return {queued:0};
+    }
     if(manual&&control.manual_after&&+new Date(control.manual_after)>+now)return {queued:0,rate_limited:true};
     if(manual){
       await db.query('UPDATE ad_cloud_control SET manual_after=$1 WHERE id=1',[new Date(+now+5*60000)]);
@@ -116,7 +134,7 @@ export async function queueCloudReview(pool,sources,{manual=false,now=new Date()
       const r=await db.query('INSERT INTO ad_cloud_jobs(batch_key,brand,source_json) VALUES($1,$2,$3::jsonb) ON CONFLICT DO NOTHING RETURNING id',[batch,source.brand,JSON.stringify(source)]);queued+=r.rows.length;
     }
     if(!manual)await db.query('UPDATE ad_cloud_control SET scheduled_day=$1 WHERE id=1',[local.day]);
-    return {queued,batch_key:batch};
+    return {queued,batch_key:batch,...(recovery?{recovery:true}:{})};
   });
 }
 export async function queueStoredAdReviews(pool,sources,{manual=false,key=null,now=new Date()}={}){
@@ -201,7 +219,8 @@ export async function repairReviewCategories(pool,sources,owner,{now=new Date()}
     const nextAfter=processed===rows.length&&rows.length<400?null:lastKey;
     await db.query('UPDATE ad_cloud_control SET category_repair_after=$1 WHERE id=1 AND category_repair_after IS DISTINCT FROM $1',[nextAfter]);
     if(!repairs.length)return {reclassified:0,categories:{}};
-    const feed=validateAdFeed({schema_version:1,producer:'cloud-vision',schedule:sync.schedule_json||CLOUD_SCHEDULE,
+    const schedule=sync.schedule_json||cloudSchedule(await getAdLifecyclePolicy(db));
+    const feed=validateAdFeed({schema_version:1,producer:'cloud-vision',schedule,
       run:{id:'category-'+randomUUID(),checked_at:now.toISOString(),status:['ok','partial','blocked','error'].includes(sync.status)?sync.status:'partial',coverage:sync.coverage_json||[]},
       ads:repairs.map(repair=>repair.updated)},sources,now);
     const imported=await importAdFeed(db,feed,{reanalysis:true,existingTransaction:true,preserveSync:true,
@@ -259,9 +278,9 @@ async function cloudCoverage(pool){
 async function publishCloudAnalysis(pool,sources,candidate,analysis,owner){
   // The worker lease serializes publication and capture; fence expired workers before importing.
   await transaction(pool,db=>assertLease(db,owner));
-  const at=new Date().toISOString(),coverage=await cloudCoverage(pool);
+  const at=new Date().toISOString(),coverage=await cloudCoverage(pool),schedule=cloudSchedule(await getAdLifecyclePolicy(pool));
   const {category_assignment:previousAssignment,...payload}=candidate.payload;
-  const feed=validateAdFeed({schema_version:1,producer:'cloud-vision',schedule:CLOUD_SCHEDULE,
+  const feed=validateAdFeed({schema_version:1,producer:'cloud-vision',schedule,
     run:{id:'cloud-'+randomUUID(),checked_at:at,status:coverage.length&&coverage.every(x=>['ok','no_ads'].includes(x.status))?'ok':'partial',coverage},ads:[{...payload,...analysis}]},sources);
   await importAdFeed(pool,feed,{reanalysis:candidate.review_round>0,fetcher:async()=>{throw new Error('Cloud evidence missing')}});
   await pool.query("UPDATE ad_cloud_candidates SET status='analyzed',analysis_json=$1::jsonb,analyzed_at=NOW(),last_error=NULL WHERE ad_key=$2 AND fingerprint=$3",[JSON.stringify(analysis),candidate.ad_key,candidate.fingerprint]);
@@ -279,7 +298,7 @@ export async function analyzeNextCloudCandidate(pool,sources,owner,{env=process.
     if(!images.length)throw new Error('CLOUD_EVIDENCE_MISSING');
     let analysis=candidate.analysis_json;
     if(!analysis){
-      const day=localCloudTime().day;
+      const policy=await getAdLifecyclePolicy(pool),day=localCloudTime(new Date(),policy.timezone).day;
       const reservation=await pool.query(`UPDATE ad_cloud_control SET vision_day=$1,
         vision_calls=CASE WHEN vision_day=$1 THEN vision_calls+1 ELSE 1 END
         WHERE id=1 AND lease_owner=$2 AND lease_until>NOW() AND (vision_day IS DISTINCT FROM $1 OR vision_calls<$3) RETURNING vision_calls`,[day,owner,config.dailyLimit]);
@@ -301,18 +320,21 @@ export async function analyzeNextCloudCandidate(pool,sources,owner,{env=process.
 }
 export async function getCloudStatus(pool,{env=process.env,sources=[]}={}){
   const config=visionConfig(env);
-  const [control,jobs,counts,errors,transport,provider]=await Promise.all([
+  const [control,jobs,counts,errors,transport,provider,policy]=await Promise.all([
     pool.query('SELECT heartbeat_at,vision_day,vision_calls,capture_after,scheduled_day FROM ad_cloud_control WHERE id=1'),
-    pool.query("SELECT DISTINCT ON (brand) brand,status,captured,note,created_at,finished_at,available_at FROM ad_cloud_jobs WHERE status<>'imported' ORDER BY brand,created_at DESC,id DESC"),
+    pool.query(`SELECT DISTINCT ON (j.brand) j.brand,j.source_json->>'page_id' page_id,j.status,j.captured,j.note,j.created_at,j.finished_at,j.available_at,
+      COALESCE(live.active_count,0) active_count,live.last_checked_at
+      FROM ad_cloud_jobs j LEFT JOIN ad_source_live_counts live ON live.page_id=j.source_json->>'page_id'
+      WHERE j.status<>'imported' ORDER BY j.brand,j.created_at DESC,j.id DESC`),
     pool.query('SELECT status,count(*)::int count,MAX(analyzed_at) last_analyzed_at FROM ad_cloud_candidates GROUP BY status'),
     pool.query("SELECT last_error,count(*)::int count FROM ad_cloud_candidates WHERE last_error IS NOT NULL AND status IN ('error','retry') GROUP BY last_error ORDER BY count DESC,last_error"),
-    getProxyPoolStatus(pool,{env}),getProviderStatus(pool,{env})]);
+    getProxyPoolStatus(pool,{env}),getProviderStatus(pool,{env}),getAdLifecyclePolicy(pool)]);
   const row=control.rows[0]||{},heartbeat=row.heartbeat_at;
-  return {mode:'cloud',schedule:{...CLOUD_SCHEDULE,last_scheduled_day:row.scheduled_day||null,verified_pages_count:verifiedCloudSources(sources).length},capture_transport:transport,capture_provider:provider,vision_configured:config.configured,
+  return {mode:'cloud',schedule:{...cloudSchedule(policy),last_scheduled_day:row.scheduled_day||null,verified_pages_count:verifiedCloudSources(sources).length},capture_transport:transport,capture_provider:provider,vision_configured:config.configured,
     analysis_status:config.configured?'configured':'waiting_config',
     message:!config.configured?'Bulut taraması etkin. Görsel analiz için sunucu API bağlantısı eksik; kaydedilen görseller kuyrukta bekler.':errors.rows.length?'Son görsel analizi tamamlanamadı. Kayıtlar kuyrukta korunuyor; servis bağlantısı ve kota kontrol edilmeli.':'Görseller sunucuda analiz edilir.',
     worker_heartbeat:heartbeat||null,worker_online:Boolean(heartbeat&&Date.now()-+new Date(heartbeat)<180000),
-    calls_today:row.vision_day===localCloudTime().day?row.vision_calls:0,daily_limit:config.dailyLimit,capture_after:row.capture_after||null,
+    calls_today:row.vision_day===localCloudTime(new Date(),policy.timezone).day?row.vision_calls:0,daily_limit:config.dailyLimit,capture_after:row.capture_after||null,
     candidates:Object.fromEntries(counts.rows.map(x=>[x.status,x.count])),errors:errors.rows.map(x=>({code:/^(VISION_|CLOUD_)[A-Z0-9_]+$/.test(x.last_error)?x.last_error:'VISION_VALIDATION_ERROR',count:x.count})),sources:jobs.rows};
 }
 export function createCloudWorker(pool,sources,{capture=captureCloudAds,analyze=analyzeCloudImage,env=process.env,log=console.log,providerTick=runProviderTick}={}){
@@ -421,7 +443,7 @@ export function createCloudWorker(pool,sources,{capture=captureCloudAds,analyze=
       }
       const analysis=await analyzeNextCloudCandidate(pool,sources,owner,{env,analyze});
       const status=await getCloudStatus(pool,{env,sources});
-      if(!reportedSources){log('[ad-cloud-source-status]',JSON.stringify(status.sources.map(s=>({brand:s.brand,status:s.status,http_status:Number(s.note?.match(/HTTP (\d{3})/)?.[1])||null}))));reportedSources=true}
+      if(!reportedSources){log('[ad-cloud-source-status]',JSON.stringify(status.sources.map(s=>({brand:s.brand,status:s.status,active_count:s.active_count||0,http_status:Number(s.note?.match(/HTTP (\d{3})/)?.[1])||null}))));reportedSources=true}
       log('[ad-cloud-worker]',JSON.stringify({mode:'cloud',capture_transport:transport.mode,capture_configured:transport.configured,capture_code:transport.code,proxy_count:status.capture_transport.proxy_count||0,proxy_available:status.capture_transport.available_count||0,scan_waiting:scan?.status?.startsWith('waiting')?scan.reason:null,analysis:analysis.status,code:analysis.code||null,brand:analysis.brand||null,category:analysis.category||null,category_evidence_missing:analysis.category_evidence_missing??null,pass:analysis.pass||null,vision_configured:status.vision_configured,candidates:status.candidates,errors:status.errors,calls_today:status.calls_today,scheduled_day:status.schedule.last_scheduled_day}));
       return {scan,analysis};
     }catch(e){log('[ad-cloud-worker]',JSON.stringify({status:'error',code:/^CLOUD_[A-Z_]+$/.test(e.message)?e.message:'WORKER_ERROR'}));return {status:'error'}}

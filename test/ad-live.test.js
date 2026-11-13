@@ -13,6 +13,23 @@ const ad=(id,status='active',hours=1)=>({key:`${page}:${id}:1`,page_id:page,ad_i
 async function seed(db,a){await db.query('INSERT INTO ad_visual_items(ad_key,brand,category,first_seen_at,observed_at,meaning_hash,analysis_json) VALUES($1,$2,$3,$4,$4,$5,$6)',[a.key,a.brand,a.category,a.observed_at,'seed',a]);}
 async function setup(){const db=new PGlite();await db.exec(SCHEMA_SQL);return db;}
 
+test('database policy controls current visibility and keeps an append-only status audit',async()=>{
+  const db=await setup(),a=ad('900001','active',3);
+  try{
+    await seed(db,a);await recordAdStatus(db,a);
+    assert.equal((await getAdVisuals(db,{now})).total,1);
+    await db.query("UPDATE ad_lifecycle_policy SET active_max_age_hours=2,updated_at=NOW() WHERE id=1");
+    const current=await getAdVisuals(db,{now}),archive=await getAdVisuals(db,{now,view:'archive'});
+    assert.equal(current.total,0);assert.equal(current.visibility.max_observation_age_hours,2);
+    assert.equal(archive.rows[0].archive_reason,'outdated');
+    await recordAdStatus(db,{...a,ad_status:'inactive',observed_at:at(0)});
+    const history=(await db.query('SELECT ad_status,source FROM ad_live_status_history WHERE page_id=$1 AND ad_id=$2 ORDER BY checked_at',[page,a.ad_id])).rows;
+    assert.deepEqual(history,[{ad_status:'active',source:'observation'},{ad_status:'inactive',source:'observation'}]);
+    await db.exec(SCHEMA_SQL);
+    assert.equal((await db.query('SELECT count(*)::int count FROM ad_live_status_history WHERE page_id=$1 AND ad_id=$2',[page,a.ad_id])).rows[0].count,2);
+  }finally{await db.close();}
+});
+
 test('only fresh explicit active observations enter rows, totals, brand filters and keyset pages',async()=>{
   const db=await setup();
   try{
@@ -54,6 +71,8 @@ test('complete source scans retire missing ads across variants but older scans a
     for(const a of [ad('300001'),ad('300002'),{...ad('300003'),page_id:'12345678'}]){await seed(db,a);await recordAdStatus(db,a);}
     await retireMissingAds(db,page,['300001'],at(0));
     assert.deepEqual((await getAdVisuals(db,{now})).rows.map(x=>x.ad_id).sort(),['300001','300003']);
+    assert.deepEqual((await db.query("SELECT ad_id,ad_status,source FROM ad_live_status_history WHERE page_id=$1 AND source='complete_scan' ORDER BY ad_id",[page])).rows,
+      [{ad_id:'300002',ad_status:'inactive',source:'complete_scan'}]);
     await recordAdStatus(db,{...ad('300002'),observed_at:new Date(+now+1000).toISOString()});
     await retireMissingAds(db,page,[],at(0));
     assert.deepEqual((await getAdVisuals(db,{now})).rows.map(x=>x.ad_id).sort(),['300002','300003']);
