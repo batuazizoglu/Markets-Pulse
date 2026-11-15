@@ -285,10 +285,10 @@ export async function saveCloudCapture(pool,candidate,job,owner){
 async function cloudCoverage(pool){
   return (await getCloudSourceCoverage(pool))?.coverage||[];
 }
-async function publishCloudAnalysis(pool,sources,candidate,analysis,owner){
+async function publishCloudAnalysis(pool,sources,candidate,analysis,owner,policy){
   // The worker lease serializes publication and capture; fence expired workers before importing.
   await transaction(pool,db=>assertLease(db,owner));
-  const at=new Date().toISOString(),coverage=await cloudCoverage(pool),schedule=cloudSchedule(await getAdLifecyclePolicy(pool));
+  const at=new Date().toISOString(),coverage=await cloudCoverage(pool),schedule=cloudSchedule(policy);
   const {category_assignment:previousAssignment,...payload}=candidate.payload;
   const feed=validateAdFeed({schema_version:1,producer:'cloud-vision',schedule,
     run:{id:'cloud-'+randomUUID(),checked_at:at,status:coverage.length&&coverage.every(x=>['ok','no_ads'].includes(x.status))?'ok':'partial',coverage},ads:[{...payload,...analysis}]},sources);
@@ -306,9 +306,11 @@ export async function analyzeNextCloudCandidate(pool,sources,owner,{env=process.
       if(!bytes||hash(Buffer.from(bytes))!==img.sha256)throw new Error('CLOUD_EVIDENCE_MISSING');images.push(Buffer.from(bytes));
     }
     if(!images.length)throw new Error('CLOUD_EVIDENCE_MISSING');
+    // Use the same policy for the quota day and the schedule attached to this publication.
+    const policy=await getAdLifecyclePolicy(pool);
     let analysis=candidate.analysis_json;
     if(!analysis){
-      const policy=await getAdLifecyclePolicy(pool),day=localCloudTime(new Date(),policy.timezone).day;
+      const day=localCloudTime(new Date(),policy.timezone).day;
       const reservation=await pool.query(`UPDATE ad_cloud_control SET vision_day=$1,
         vision_calls=CASE WHEN vision_day=$1 THEN vision_calls+1 ELSE 1 END
         WHERE id=1 AND lease_owner=$2 AND lease_until>NOW() AND (vision_day IS DISTINCT FROM $1 OR vision_calls<$3) RETURNING vision_calls`,[day,owner,config.dailyLimit]);
@@ -320,7 +322,7 @@ export async function analyzeNextCloudCandidate(pool,sources,owner,{env=process.
       // Keep a successful response if publication fails; retrying must not buy the same inference again.
       await transaction(pool,async db=>{await assertLease(db,owner);await db.query('UPDATE ad_cloud_candidates SET analysis_json=$1::jsonb WHERE ad_key=$2 AND fingerprint=$3',[JSON.stringify(analysis),candidate.ad_key,candidate.fingerprint])});
     }
-    await publishCloudAnalysis(pool,sources,candidate,analysis,owner);
+    await publishCloudAnalysis(pool,sources,candidate,analysis,owner,policy);
     return {status:'analyzed',brand:candidate.payload.brand,ad_id:candidate.payload.ad_id,category:analysis.category,category_evidence_missing:analysis.category_evidence==='Kategori için açık ve doğrulanabilir ifade bulunamadı.',pass:analysis.ai_analysis?.pass||1};
   }catch(e){
     const code=/^(VISION_[A-Z0-9_]+|CLOUD_[A-Z0-9_]+)$/.test(e.message)?e.message:'VISION_VALIDATION_ERROR';
