@@ -103,6 +103,18 @@ test('database policy changes the daily scan hour without a deployment',async()=
   assert.match(status.schedule.description,/09:00/);
 }));
 
+test('daily scheduling uses the configured local day and hour across UTC midnight',async()=>fixture(async({db,sources,verified})=>{
+  await db.query("UPDATE ad_lifecycle_policy SET timezone='Europe/Istanbul',daily_scan_hour=1 WHERE id=1");
+  const queueAt=instant=>queueCloudReview(db,sources,{env,now:new Date(instant)});
+  assert.equal((await queueAt('2030-11-30T21:59:59Z')).queued,0);
+  const first=await queueAt('2030-11-30T22:00:00Z');
+  assert.equal(first.batch_key,'daily-2030-12-01');
+  assert.equal(first.queued,verified.length);
+  await db.query("UPDATE ad_cloud_jobs SET status='no_ads',finished_at=NOW()");
+  assert.equal((await queueAt('2030-12-01T00:00:00Z')).queued,0);
+  assert.equal((await queueAt('2030-12-01T22:00:00Z')).batch_key,'daily-2030-12-02');
+}));
+
 test('a failed database batch with no current ads is recovered before the normal scan hour',async()=>fixture(async({db,sources,verified})=>{
   for(const source of verified)await db.query(`INSERT INTO ad_cloud_jobs(batch_key,brand,source_json,status,finished_at)
     VALUES('failed-prior',$1,$2::jsonb,'error',$3)`,[source.brand,JSON.stringify(source),new Date('2030-07-01T02:30:00Z')]);

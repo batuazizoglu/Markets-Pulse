@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto';
 import {getCloudSourceCoverage} from './ad-source-coverage.js';
-import {getAdLifecyclePolicy,liveAdWindow,liveAdSql,recordAdStatus} from './ad-live.js';
+import {getAdLifecyclePolicy,isValidAdTimeZone,liveAdWindow,liveAdSql,recordAdStatus} from './ad-live.js';
 import {isDeepStrictEqual} from 'node:util';
 import {socialDirectory,verifiedFixedIspPageId} from './isp-registry.js';
 import {proposeStoredCategory} from './ad-category-evidence.js';
@@ -96,7 +96,8 @@ export function validateAdFeed(input,sources,now=new Date()){
       review_required:a.review_required===true||a.category==='review',images,...(input.producer==='cloud-vision'&&['image','video_preview'].includes(a.media_kind)?{media_kind:a.media_kind}:{}),...(ai_analysis?{ai_analysis}:{})};
   });
   const schedule=input.schedule;
-  if(!schedule||typeof schedule.enabled!=='boolean'||schedule.timezone!=='Asia/Famagusta'||!clean(schedule.description,200))throw new Error('Zamanlama bilgisi gerekli');
+  if(!schedule||typeof schedule.enabled!=='boolean'||!clean(schedule.description,200))throw new Error('Zamanlama bilgisi gerekli');
+  if(!isValidAdTimeZone(schedule.timezone))throw new Error('Geçersiz reklam saat dilimi');
   return {schema_version:1,producer:input.producer,run:{id:run.id,checked_at:at,status:run.status,coverage},ads,
     schedule:{enabled:schedule.enabled,description:clean(schedule.description,200),timezone:schedule.timezone}};
 }

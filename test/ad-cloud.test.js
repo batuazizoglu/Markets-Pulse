@@ -65,7 +65,7 @@ test('unverified brands never displace verified ISP pages from the next daily or
     assert.ok((await db.query('SELECT source_json FROM ad_cloud_jobs WHERE batch_key=$1',[manual.batch_key])).rows.every(row=>adLibrarySource(row.source_json)));
   }finally{await db.close()}
 });
-test('server capture persists evidence without a model key; subsequent worker analyzes without recapturing',async()=>{
+async function assertStoredCapturePublication(configuredZone,expectedZone){
   const db=await dbFixture();
   try{
     await queueCloudReview(db,HOME_INTERNET_SOURCES,{manual:true});
@@ -76,13 +76,26 @@ test('server capture persists evidence without a model key; subsequent worker an
     // Prevent new captures: test proves persistent backlog is sufficient after process replacement.
     await db.query("UPDATE ad_cloud_jobs SET status='unverified' WHERE status='queued'");
     await db.query("UPDATE ad_cloud_control SET capture_after=NOW()+INTERVAL '1 hour'");
+    if(configuredZone!==null){
+      await db.query('UPDATE ad_lifecycle_policy SET timezone=$1 WHERE id=1',[configuredZone]);
+    }
     let calls=0;
     const second=await createCloudWorker(db,HOME_INTERNET_SOURCES,{capture:async()=>{throw Error('must not recapture')},env,analyze:async c=>{calls++;return normalizeVision(vision(),c)},log:()=>{}})();
-    assert.equal(second.analysis.status,'analyzed');assert.equal(calls,1);
-    const data=await getAdVisuals(db);assert.equal(data.groups.mnp,1);assert.equal(data.rows[0].offer.price_try,799);assert.equal(data.monitoring.schedule.timezone,'Asia/Famagusta');
+    assert.equal(second.analysis.status,'analyzed',second.analysis.code);assert.equal(calls,1);
+    const data=await getAdVisuals(db);assert.equal(data.groups.mnp,1);assert.equal(data.rows[0].offer.price_try,799);
+    assert.equal(data.monitoring.schedule.timezone,expectedZone);
     assert.equal((await db.query('SELECT count(*)::int n FROM ad_visual_versions')).rows[0].n,1);
   }finally{await db.close()}
-});
+}
+for(const [configuredZone,expectedZone] of [
+  [null,'Asia/Famagusta'],
+  ['UTC','UTC'],
+  ['Europe/Istanbul','Europe/Istanbul'],
+  ['Invalid/Zone','Asia/Famagusta']
+]){
+  test(`stored capture publishes without recapturing using the ${configuredZone ?? 'default'} policy timezone`,
+    ()=>assertStoredCapturePublication(configuredZone,expectedZone));
+}
 test('missing primary proxy preserves queued attempts while stored images are analyzed',async()=>{
   const db=await dbFixture();const logs=[];
   try{
