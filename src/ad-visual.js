@@ -240,7 +240,7 @@ export async function getAdVisuals(pool,{now=new Date(),...options}={}){
   const [categories,policy]=await Promise.all([getAdCategories(pool),getAdLifecyclePolicy(pool)]);
   const {limit,brand,category,view,after}=pageInput(options,categories),params=liveAdWindow(now,policy);
   // IS NOT TRUE includes unknown/null source status in the archive as well.
-  const active=`a.activity_status='active' AND a.activity_checked_at>=$1::timestamptz AND a.activity_checked_at<=$2::timestamptz AND NOT a.superseded`;
+  const active=`a.activity_status='active' AND a.activity_checked_at>=$1::timestamptz AND a.activity_checked_at<=$2::timestamptz AND NOT a.superseded AND NOT a.missed_latest_check`;
   const visibility=view==='archive'?`(${active}) IS NOT TRUE`:active,where=[visibility];
   if(brand){params.push(brand);where.push('a.brand=$'+params.length)}
   if(category){params.push(category);where.push('a.category=$'+params.length)}
@@ -249,7 +249,7 @@ export async function getAdVisuals(pool,{now=new Date(),...options}={}){
   const [data,sync,counts,pendingMedia,sourceCoverage]=await Promise.all([
     pool.query(`SELECT a.ad_key,a.first_seen_at,a.observed_at,a.activity_checked_at,a.activity_status,a.superseded,
       CASE WHEN a.superseded THEN 'superseded' WHEN a.activity_status='inactive' THEN 'inactive'
-        WHEN a.activity_status<>'active' THEN 'unverified' ELSE 'outdated' END archive_reason,
+        WHEN a.activity_status<>'active' THEN 'unverified' WHEN a.missed_latest_check THEN 'not_seen' ELSE 'outdated' END archive_reason,
       to_char(a.observed_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') cursor_time,
       a.analysis_json,c.status ai_queue_status,c.analyzed_at,c.review_round
       FROM ad_visual_lifecycle a LEFT JOIN ad_cloud_candidates c ON c.ad_key=a.ad_key

@@ -18,8 +18,9 @@ export function liveAdSql(alias,json='analysis_json'){
   const payload=`${alias}.${json}`;
   const checked=`COALESCE(l.checked_at,${alias}.observed_at)`;
   const status=`COALESCE(l.ad_status,${payload}->>'ad_status')`;
-  return {join:`LEFT JOIN ad_live_status l ON l.page_id=${payload}->>'page_id' AND l.ad_id=${payload}->>'ad_id'`,checked,status,
-    where:`${status}='active' AND ${checked}>=$1::timestamptz AND ${checked}<=$2::timestamptz`};
+  return {join:`LEFT JOIN ad_live_status l ON l.page_id=${payload}->>'page_id' AND l.ad_id=${payload}->>'ad_id'
+    LEFT JOIN ad_latest_provider_check scan ON scan.page_id=${payload}->>'page_id'`,checked,status,
+    where:`${status}='active' AND (scan.checked_at IS NULL OR ${checked}>=scan.checked_at) AND ${checked}>=$1::timestamptz AND ${checked}<=$2::timestamptz`};
 }
 export async function recordAdStatus(db,ad){
   const at=ad.status_observed_at||ad.observed_at;

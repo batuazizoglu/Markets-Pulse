@@ -24,6 +24,7 @@ async function fixture(overrides={}) {
     startProviderRun:async()=>{starts++;return {id:'run12345',status:'RUNNING',defaultDatasetId:'dataset12345',usageTotalUsd:0};},
     getProviderRun:async()=>{polls++;return {id:'run12345',status:'SUCCEEDED',defaultDatasetId:'dataset12345',usageTotalUsd:0.01};},
     findProviderRun:async()=>null,
+    getProviderSourceCount:async()=>null,
     getProviderItems:async(id,{offset})=>({items:offset?[]:[rawAd()],total:1,offset,count:offset?0:1}),
     fetchProviderImage:async()=>{fetches++;return {bytes:jpeg,mime:'image/jpeg'};},
     ...overrides
@@ -110,6 +111,34 @@ test('a persisted creation fence is never automatically repeated after process i
     await f.tick();await f.db.query("UPDATE ad_provider_runs SET state='creating',run_id=NULL,dataset_id=NULL");
     assert.equal((await f.tick()).status,'start_unknown');assert.equal(f.stats().starts,1);
   } finally {await f.db.close();}
+});
+
+test('an old ambiguous Xrealnet start does not consume the next independent daily check',async()=>{
+  const f=await fixture();
+  try{
+    const today=new Date(),old=new Date(+today-32*86400000);
+    const source=(await f.db.query("SELECT source_json FROM ad_cloud_jobs WHERE brand='Xrealnet'")).rows[0].source_json;
+    await f.db.query("UPDATE ad_cloud_jobs SET status='error'");
+    const original=(await f.db.query(`INSERT INTO ad_cloud_jobs(batch_key,brand,source_json,status,created_at,attempts)
+      VALUES('old-ambiguous','Xrealnet',$1,'blocked',$2,1) RETURNING id`,[source,old])).rows[0];
+    await f.db.query(`INSERT INTO ad_provider_runs(job_id,state,max_run_usd,created_at,updated_at,next_poll_at,last_error)
+      VALUES($1,'start_unknown',0.1,$2,$2,$3,'PROVIDER_UNAVAILABLE')`,[original.id,old,new Date(+today+3600000)]);
+    await f.db.query(`INSERT INTO ad_cloud_jobs(batch_key,brand,source_json,created_at)
+      VALUES('daily-old-ticket','Xrealnet',$1,$2)`,[source,old]);
+    await f.db.query("UPDATE ad_lifecycle_policy SET daily_scan_hour=0");
+    const daily=await queueCloudReview(f.db,HOME_INTERNET_SOURCES,{now:today,env});
+    assert.ok(daily.queued>0);
+    await f.db.query("UPDATE ad_cloud_jobs SET status='error' WHERE brand<>'Xrealnet'");
+    f.advance(60000); // The worker observes jobs after their database available_at.
+    const fresh=await f.tick();
+    assert.equal(fresh.status,'running');
+    assert.equal((await f.db.query('SELECT batch_key FROM ad_cloud_jobs WHERE id=$1',[fresh.job_id])).rows[0].batch_key,daily.batch_key);
+    assert.equal((await f.db.query("SELECT status FROM ad_cloud_jobs WHERE batch_key='daily-old-ticket'")).rows[0].status,'skipped');
+    assert.equal((await f.db.query('SELECT state FROM ad_provider_runs WHERE job_id=$1',[original.id])).rows[0].state,'start_unknown');
+    assert.equal((await f.tick()).status,'waiting_provider');
+    assert.equal(f.stats().starts,1);
+    assert.equal((await queueCloudReview(f.db,HOME_INTERNET_SOURCES,{now:today,env})).queued,0);
+  }finally{await f.db.close();}
 });
 
 test('read-only reconciliation resumes a known old run without another start, spend or fresh observation',async()=>{
@@ -269,6 +298,41 @@ test('an individual complete flag without the source ad count remains partial',a
     assert.equal((await f.run()).expected_ads,null);assert.equal((await f.run()).coverage_complete,false);
     assert.equal((await getProviderStatus(f.db,{env})).runs[0].coverage_complete,false);
   } finally {await f.db.close();}
+});
+
+test('a capped independent count can confirm a positive scan only when distinct ad IDs match',async()=>{
+  for(const expected of [1,2,null]){
+    const caps=[];
+    const f=await fixture({
+      startProviderRun:async(_,options)=>{caps.push(options.maxUsd);return {id:'run12345',status:'RUNNING',defaultDatasetId:'dataset12345'};},
+      getProviderSourceCount:async(source,options)=>{assert.equal(source.page_id,'164143610515');caps.push(options.maxUsd);return expected;},
+      getProviderItems:async()=>({items:[rawAd('999999',4),rawAd('999999',4)],count:2,offset:0,total:2})
+    });
+    try{
+      await toDownload(f);
+      assert.equal((await f.tick()).status,'downloading');
+      const last=await f.tick();
+      assert.equal(last.status,expected===1?'complete':'partial');
+      assert.equal(last.ads,1);assert.equal(last.assets,4);
+      assert.deepEqual(caps,[0.08,0.02]);
+      const budget=(await f.db.query('SELECT * FROM ad_provider_budget')).rows[0];
+      assert.equal(Number(budget.reserved_usd),0.10);assert.equal(budget.starts,2);
+    }finally{await f.db.close();}
+  }
+});
+
+test('a crash after reserving a count, or an explicitly incomplete source, cannot issue a count POST',async()=>{
+  let calls=0;
+  const f=await fixture({getProviderSourceCount:async()=>{calls++;return 1;}});
+  try{
+    await toDownload(f);
+    await f.db.query('UPDATE ad_provider_runs SET count_attempted=TRUE');
+    assert.equal((await f.tick()).status,'partial');
+    await f.db.query("UPDATE ad_provider_runs SET state='downloading',count_attempted=FALSE,coverage_denied=TRUE");
+    assert.equal((await f.tick()).status,'partial');
+    assert.equal((await f.run()).count_attempted,false);
+    assert.equal(calls,0);
+  }finally{await f.db.close();}
 });
 
 test('failed provider runs still import their available partial dataset and preserve video previews',async()=>{

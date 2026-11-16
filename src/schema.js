@@ -412,25 +412,36 @@ INSERT INTO ad_cloud_capture_links(job_id,ad_key) SELECT job_id,ad_key FROM ad_c
 ALTER TABLE ad_cloud_candidates ADD COLUMN IF NOT EXISTS review_round INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE ad_cloud_control ADD COLUMN IF NOT EXISTS analysis_manual_after TIMESTAMPTZ;
 ALTER TABLE ad_cloud_control ADD COLUMN IF NOT EXISTS capture_after TIMESTAMPTZ;
+${PROVIDER_SCHEMA_SQL}
+
+-- Use the observation time, not the time an old dataset finished importing.
+-- This also covers runs finished before this view was introduced.
+CREATE OR REPLACE VIEW ad_latest_provider_check AS
+SELECT j.source_json->>'page_id' AS page_id, MAX(r.created_at) AS checked_at
+FROM ad_provider_runs r JOIN ad_cloud_jobs j ON j.id=r.job_id
+WHERE r.state IN ('partial','complete','error','start_unknown') AND r.finished_at IS NOT NULL
+GROUP BY j.source_json->>'page_id';
 CREATE OR REPLACE VIEW ad_visual_lifecycle AS
 SELECT a.ad_key,a.brand,a.category,a.first_seen_at,a.observed_at,a.meaning_hash,a.analysis_json,
   COALESCE(l.checked_at,a.observed_at) activity_checked_at,
   COALESCE(l.ad_status,NULLIF(a.analysis_json->>'ad_status',''),'unknown') activity_status,
   EXISTS(SELECT 1 FROM ad_cloud_candidates newer WHERE newer.ad_key=a.ad_key AND newer.observed_at>a.observed_at) superseded,
-  policy.active_max_age_hours
+  policy.active_max_age_hours,
+  COALESCE(COALESCE(l.checked_at,a.observed_at) < scan.checked_at,FALSE) AS missed_latest_check
 FROM ad_visual_items a
 CROSS JOIN ad_lifecycle_policy policy
-LEFT JOIN ad_live_status l ON l.page_id=a.analysis_json->>'page_id' AND l.ad_id=a.analysis_json->>'ad_id';
+LEFT JOIN ad_live_status l ON l.page_id=a.analysis_json->>'page_id' AND l.ad_id=a.analysis_json->>'ad_id'
+LEFT JOIN ad_latest_provider_check scan ON scan.page_id=a.analysis_json->>'page_id';
 CREATE OR REPLACE VIEW ad_source_live_counts AS
 SELECT l.page_id,
-  COUNT(*) FILTER(WHERE l.ad_status='active' AND l.checked_at>=NOW()-make_interval(hours=>policy.active_max_age_hours) AND l.checked_at<=NOW()+INTERVAL '5 minutes')::int active_count,
+  COUNT(*) FILTER(WHERE l.ad_status='active' AND (scan.checked_at IS NULL OR l.checked_at>=scan.checked_at) AND l.checked_at>=NOW()-make_interval(hours=>policy.active_max_age_hours) AND l.checked_at<=NOW()+INTERVAL '5 minutes')::int active_count,
   COUNT(*) FILTER(WHERE l.ad_status='inactive')::int inactive_count,
   MAX(l.checked_at) last_checked_at
 FROM ad_live_status l
+LEFT JOIN ad_latest_provider_check scan ON scan.page_id=l.page_id
 CROSS JOIN ad_lifecycle_policy policy
 GROUP BY l.page_id;
 ALTER TABLE ad_visual_versions DROP CONSTRAINT IF EXISTS ad_visual_versions_event_type_check;
 ALTER TABLE ad_visual_versions ADD CONSTRAINT ad_visual_versions_event_type_check CHECK(event_type IN ('first_seen','changed','analysis_updated','category_updated'));
 
-${PROVIDER_SCHEMA_SQL}
 `;

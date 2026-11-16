@@ -1,7 +1,7 @@
 (()=>{
 const coreLabels={home:'Ev İnterneti',gsm:'GSM Paketleri',mnp:'MNP / Numara Taşıma',review:'Diğer / Belirsiz'};
 const state={data:null,view:'active',category:'home',brand:'all',loading:null,loaded:0,views:new Map(),requests:new Map(),generation:0};
-const archiveReasons={inactive:'Son kontrolde pasif',unverified:'Aktifliği doğrulanmadı',outdated:'Güncel aktiflik doğrulaması yok',superseded:'Daha yeni görsel kaydı var'};
+const archiveReasons={inactive:'Son kontrolde pasif',not_seen:'Son taramada doğrulanmadı',unverified:'Aktifliği doğrulanmadı',outdated:'Güncel aktiflik doğrulaması yok',superseded:'Daha yeni görsel kaydı var'};
 const isAdmin=()=>Boolean(window.MarketPulseAccess?.isAdmin());
 const accessReady=()=>Promise.resolve(window.MarketPulseAccess?.ready).catch(()=>null);
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));

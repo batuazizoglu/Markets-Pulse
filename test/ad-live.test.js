@@ -116,3 +116,38 @@ test('archive is the exact complement of current ads, including unknown status a
     assert.equal((await db.query('SELECT count(*)::int n FROM ad_visual_items')).rows[0].n,7);
   }finally{await db.close();}
 });
+
+test('a partial KKTCELL scan moves yesterday-only ads to archive without asserting inactivity',async()=>{
+  const db=await setup(),kktcell='127496543986832';
+  try{
+    const cards=Array.from({length:5},(_,i)=>{
+      const a=ad(String(600001+i),'active',24);
+      return {...a,brand:'KKTCELL',page_id:kktcell,key:[kktcell,a.ad_id,'1'].join(':')};
+    });
+    for(const card of cards){await seed(db,card);await recordAdStatus(db,card);}
+    await seed(db,ad('700001')); // Another page keeps its own observations.
+    const job=(await db.query(`INSERT INTO ad_cloud_jobs(batch_key,brand,source_json)
+      VALUES('partial-daily','KKTCELL',$1) RETURNING id`,[{page_id:kktcell}])).rows[0];
+    await db.query(`INSERT INTO ad_provider_runs(job_id,state,max_run_usd,created_at,finished_at)
+      VALUES($1,'partial',0.1,$2,$3)`,[job.id,at(1),at(0)]);
+    for(const card of cards.slice(0,4))await recordAdStatus(db,{...card,observed_at:at(1)});
+    const missing=cards[4];
+    await db.query('INSERT INTO ad_visual_evidence(sha256,jpeg) VALUES($1,$2)',[hash,jpeg]);
+    const pending={...missing,variant_id:'2',key:[kktcell,missing.ad_id,'2'].join(':')};
+    await db.query('INSERT INTO ad_cloud_candidates(ad_key,job_id,fingerprint,payload,observed_at) VALUES($1,$2,$3,$4,$5)',
+      [pending.key,job.id,'older',pending,pending.observed_at]);
+    await db.exec(SCHEMA_SQL);
+    const active=await getAdVisuals(db,{now,brand:'KKTCELL'}),archive=await getAdVisuals(db,{now,brand:'KKTCELL',view:'archive'});
+    assert.deepEqual(active.rows.map(a=>a.ad_id).sort(),cards.slice(0,4).map(a=>a.ad_id));
+    assert.deepEqual(archive.rows.map(a=>[a.ad_id,a.archive_reason,a.ad_status]),[[missing.ad_id,'not_seen','active']]);
+    assert.equal((await getPendingAdVisuals(db,{now,brand:'KKTCELL'})).total,0);
+    assert.equal((await db.query('SELECT active_count FROM ad_source_live_counts WHERE page_id=$1',[kktcell])).rows[0].active_count,4);
+    assert.equal((await getAdVisuals(db,{now,brand:'Telsim'})).pagination.total,1);
+    // An old dataset finishing late cannot move the cutoff backwards.
+    const old=(await db.query("INSERT INTO ad_cloud_jobs(batch_key,brand,source_json) VALUES('delayed','KKTCELL',$1) RETURNING id",[{page_id:kktcell}])).rows[0];
+    await db.query("INSERT INTO ad_provider_runs(job_id,state,max_run_usd,created_at,finished_at) VALUES($1,'partial',0.1,$2,$3)",[old.id,at(25),at(0)]);
+    assert.equal((await getAdVisuals(db,{now,brand:'KKTCELL'})).pagination.total,4);
+    await recordAdStatus(db,{...missing,observed_at:at(0)});
+    assert.equal((await getAdVisuals(db,{now,brand:'KKTCELL'})).pagination.total,5);
+  }finally{await db.close();}
+});

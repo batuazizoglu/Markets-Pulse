@@ -1,16 +1,16 @@
 import {createHash} from 'node:crypto';
 import {socialDirectory} from './isp-registry.js';
 import {adLibrarySource} from './ad-cloud-capture.js';
-import {providerConfig,providerHttpDiagnostics,startProviderRun,getProviderRun,findProviderRun,getProviderItems,fetchProviderImage} from './ad-provider-client.js';
+import {providerConfig,providerHttpDiagnostics,startProviderRun,getProviderRun,findProviderRun,getProviderItems,getProviderSourceCount,fetchProviderImage} from './ad-provider-client.js';
 import {normalizeProviderItem} from './ad-provider-normalize.js';
-import {recordAdStatus,retireMissingAds} from './ad-live.js';
+import {getAdLifecyclePolicy,recordAdStatus,retireMissingAds} from './ad-live.js';
 
 const ACTIVE = ['creating','running','importing','downloading'];
 const ID = /^\d{5,30}$/;
-const CLIENT = {startProviderRun,getProviderRun,findProviderRun,getProviderItems,fetchProviderImage,normalizeProviderItem};
+const CLIENT = {startProviderRun,getProviderRun,findProviderRun,getProviderItems,getProviderSourceCount,fetchProviderImage,normalizeProviderItem};
 const sha = value => createHash('sha256').update(value).digest('hex');
 const safeCode = error => /^(?:PROVIDER|MEDIA|CLOUD)_[A-Z0-9_]+$/.test(error?.code || error?.message || '') ? (error.code || error.message) : 'PROVIDER_OPERATION_FAILED';
-const dayAt = date => new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Famagusta',year:'numeric',month:'2-digit',day:'2-digit'}).format(date);
+const dayAt = (date,timeZone='Asia/Famagusta') => new Intl.DateTimeFormat('en-CA',{timeZone,year:'numeric',month:'2-digit',day:'2-digit'}).format(date);
 const after = (date,delay) => new Date(Math.min(Date.UTC(9999,11,31),+date+delay));
 const delayFor = error => Math.max(60000,Number.isFinite(error?.retry_after_ms) && error.retry_after_ms>0 ? error.retry_after_ms : 60000);
 const isRate = error => error?.http_status===429 || /RATE_LIMITED$/.test(safeCode(error));
@@ -59,7 +59,41 @@ async function finish(db,run,now) {
     const seen=(await db.query('SELECT DISTINCT ad_id FROM ad_provider_assets WHERE job_id=$1',[run.job_id])).rows.map(row=>row.ad_id);
     await retireMissingAds(db,run.source_json.page_id,seen,run.created_at);
   }
-  return {...tally,status:state,job_id:run.job_id,coverage_complete:complete,expected_ads:run.expected_ads,coverage_reasons:complete?[]:providerCoverageReasons(run,tally)};
+  return {...tally,status:state,job_id:run.job_id,brand:run.brand,coverage_complete:complete,expected_ads:run.expected_ads,coverage_reasons:complete?[]:providerCoverageReasons(run,tally)};
+}
+
+async function verifyMissingTotal(run,{atomic,api,env,now}){
+  const allowance=Number(run.count_max_usd);
+  if(!allowance || run.count_attempted || run.coverage_denied || run.limit_reached || !run.source_exhausted || run.rows_rejected ||
+     !run.item_count || (run.coverage_complete && run.expected_ads!=null) ||
+     dayAt(now)!==dayAt(new Date(run.created_at)) || now-new Date(run.created_at)>2*3600000)return;
+
+  const reserved=await atomic(async db=>{
+    // Only a positive, exclusively active dataset can use a separate count as confirmation.
+    // Fence the second POST before networking. A crash cannot spend the allowance twice.
+    const claim=await db.query(`UPDATE ad_provider_runs SET count_attempted=TRUE
+      WHERE job_id=$1 AND NOT count_attempted AND state='downloading'
+        AND EXISTS (SELECT 1 FROM ad_provider_assets WHERE job_id=$1)
+        AND NOT EXISTS (SELECT 1 FROM ad_provider_assets WHERE job_id=$1 AND payload->>'ad_status' IS DISTINCT FROM 'active')
+      RETURNING job_id`,[run.job_id]);
+    if(!claim.rows.length)return false;
+    await db.query('UPDATE ad_provider_budget SET starts=starts+1 WHERE day=$1',[dayAt(now)]);
+    return true;
+  });
+  if(!reserved)return;
+  let total;
+  try{total=await api.getProviderSourceCount(run.source_json,{env,maxUsd:allowance});}
+  catch(error){
+    await atomic(db=>db.query('UPDATE ad_provider_runs SET last_error=$2 WHERE job_id=$1',[run.job_id,safeCode(error)]));
+    return;
+  }
+  if(!Number.isSafeInteger(total)||total<0||total>2147483647)return;
+  const consistent=run.expected_ads==null||run.expected_ads===total;
+  await atomic(db=>db.query(`UPDATE ad_provider_runs SET expected_ads=COALESCE(expected_ads,$2),
+    coverage_complete=$3,coverage_denied=NOT $3 WHERE job_id=$1`,[run.job_id,total,consistent]));
+  run.expected_ads??=total;
+  run.coverage_complete=consistent;
+  run.coverage_denied=!consistent;
 }
 
 /** One bounded provider operation per tick; external runs are never restarted by polling. */
@@ -137,19 +171,30 @@ export async function runProviderTick(pool,sources,{env=process.env,owner,assert
       }
     }
     const directory=socialDirectory(sources);
+    const {timezone}=await getAdLifecyclePolicy(pool);
+    const today=dayAt(stamp(),timezone);
     const eligible=(await pool.query(`SELECT j.* FROM ad_cloud_jobs j LEFT JOIN ad_provider_runs r ON r.job_id=j.id
       WHERE r.job_id IS NULL AND j.status IN ('queued','retry') AND j.available_at<=$1 AND j.attempts<3
       AND NOT EXISTS(SELECT 1 FROM ad_provider_runs old JOIN ad_cloud_jobs prior ON prior.id=old.job_id
-        WHERE prior.source_json->>'page_id'=j.source_json->>'page_id' AND old.state IN ('creating','start_unknown','running','importing','downloading')) ORDER BY j.id`,[stamp()])).rows;
+        WHERE prior.source_json->>'page_id'=j.source_json->>'page_id' AND (
+          old.state IN ('creating','running','importing','downloading')
+          OR (old.state='start_unknown' AND (
+            j.batch_key<>$2 OR old.created_at > $1::timestamptz - INTERVAL '2 hours'
+            OR (old.created_at AT TIME ZONE $3)::date >= $4::date))))
+      ORDER BY j.id`,[stamp(),'daily-'+today,timezone,today])).rows;
     const job=eligible.find(j=>ID.test(String(j.source_json?.page_id || '')) && directory.some(s=>s.brand===j.brand && s.page_id===j.source_json.page_id));
     if(!job)return active.length?waiting():{status:'idle'};
+    // Both actor calls share the single existing per-page reservation.
+    const budgetCents=Math.round(config.maxRunUsd*100);
+    const countCents=Math.min(2,Math.floor(budgetCents/4));
+    const detailMaxUsd=(budgetCents-countCents)/100;
     const reserved=await atomic(async db=>{
       const at=stamp(),day=dayAt(at);
       await db.query('INSERT INTO ad_provider_budget(day) VALUES($1) ON CONFLICT DO NOTHING',[day]);
       const budget=(await db.query('SELECT reserved_usd FROM ad_provider_budget WHERE day=$1 FOR UPDATE',[day])).rows[0];
       if(Number(budget.reserved_usd)+config.maxRunUsd>config.dailyBudgetUsd+0.0000001)return false;
-      const inserted=await db.query(`INSERT INTO ad_provider_runs(job_id,state,max_run_usd,created_at,updated_at,next_poll_at)
-        VALUES($1,'creating',$2,$3,$3,$3) ON CONFLICT DO NOTHING RETURNING job_id`,[job.id,config.maxRunUsd,at]);
+      const inserted=await db.query(`INSERT INTO ad_provider_runs(job_id,state,max_run_usd,created_at,updated_at,next_poll_at,count_max_usd)
+        VALUES($1,'creating',$2,$3,$3,$3,$4) ON CONFLICT DO NOTHING RETURNING job_id`,[job.id,detailMaxUsd,at,countCents/100]);
       if(!inserted.rows.length)return false;
       await db.query('UPDATE ad_provider_budget SET reserved_usd=reserved_usd+$2,starts=starts+1 WHERE day=$1',[day,config.maxRunUsd]);
       await db.query("UPDATE ad_cloud_jobs SET status='running',attempts=attempts+1,started_at=$2,note='Reklam sağlayıcısında çalışma başlatılıyor.' WHERE id=$1",[job.id,at]);
@@ -158,7 +203,7 @@ export async function runProviderTick(pool,sources,{env=process.env,owner,assert
     if(!reserved)return {status:'daily_budget',reason:'PROVIDER_DAILY_BUDGET',job_id:job.id};
     run={job_id:job.id,brand:job.brand,source_json:job.source_json};
     let result;
-    try {result=await api.startProviderRun(job.source_json,{env});}
+    try {result=await api.startProviderRun(job.source_json,{env,maxUsd:detailMaxUsd});}
     catch(error) {return markError(run,error,error?.ambiguous?'start_unknown':'error');}
     // Failure to persist an accepted run leaves the creation fence intact. Never issue another POST.
     return atomic(async db=>{
@@ -202,7 +247,10 @@ export async function runProviderTick(pool,sources,{env=process.env,owner,assert
     return atomic(async db=>{
       const at=stamp();let rejected=0,expected=run.expected_ads,complete=run.coverage_complete,denied=run.coverage_denied,lastError=run.last_error;
       for(const row of normalized) {
-        if(row.expected_count!=null)expected=expected==null?row.expected_count:Math.max(expected,row.expected_count);
+        if(row.expected_count!=null){
+          if(expected!=null && expected!==row.expected_count)denied=true;
+          expected??=row.expected_count;
+        }
         if(row.complete===false)denied=true;
         if(row.complete===true)complete=true;
         if(row.kind==='summary')continue;
@@ -227,6 +275,7 @@ export async function runProviderTick(pool,sources,{env=process.env,owner,assert
   }
   if(run.state==='downloading') {
     if(typeof persistCapture!=='function' || typeof normalizeImage!=='function')throw new Error('PROVIDER_CAPTURE_HELPER_REQUIRED');
+    await verifyMissingTotal(run,{atomic,api,env,now:stamp()});
     const deadline=Date.now()+90000;
     let processed=0,diagnostics={};
     for(;processed<3 && Date.now()<deadline-25000;processed++) {

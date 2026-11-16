@@ -114,7 +114,9 @@ export async function queueCloudReview(pool,sources,{manual=false,now=new Date()
     if(!manual&&local.hour<policy.daily_scan_hour){
       const directory=verifiedCloudSources(sources),cutoff=liveAdWindow(now,policy)[0];
       const [active,successful,failed]=await Promise.all([
-        db.query("SELECT COUNT(*)::int count FROM ad_live_status WHERE ad_status='active' AND checked_at>=$1 AND checked_at<=$2",[cutoff,new Date(+now+300000)]),
+        db.query(`SELECT COUNT(*)::int count FROM ad_live_status l LEFT JOIN ad_latest_provider_check scan USING(page_id)
+          WHERE l.ad_status='active' AND l.checked_at>=$1 AND l.checked_at<=$2
+          AND (scan.checked_at IS NULL OR l.checked_at>=scan.checked_at)`,[cutoff,new Date(+now+300000)]),
         db.query(`SELECT COUNT(DISTINCT source_json->>'page_id')::int count FROM ad_cloud_jobs
           WHERE finished_at>=$1 AND status IN ('partial','complete','no_ads')
           AND source_json->>'page_id'=ANY($2::text[])`,[cutoff,directory.map(source=>source.page_id)]),
@@ -138,6 +140,20 @@ export async function queueCloudReview(pool,sources,{manual=false,now=new Date()
     const directory=verifiedCloudSources(sources);
     const selected=[...directory.filter(x=>x.brand==='Telsim'),...directory.filter(x=>x.brand!=='Telsim').sort((a,b)=>(dates.get(a.brand)||0)-(dates.get(b.brand)||0)||Number(Boolean(b.page_id))-Number(Boolean(a.page_id)))];
     const batch=manual?'manual-'+randomUUID():'daily-'+local.day;let queued=0;
+    if(!manual && providerConfig(env).mode==='apify'){
+      // A ticket queued behind a lost start can survive across many daily batches.
+      // Supersede only unstarted tickets; the original provider run remains reconcilable.
+      await db.query(`UPDATE ad_cloud_jobs j SET status='skipped',finished_at=$1,
+        note='Başlatılmamış eski taramanın yerine güncel günlük kontrol planlandı.'
+        WHERE j.status='queued' AND j.attempts=0 AND j.batch_key<>$2
+          AND j.source_json->>'page_id'=ANY($3::text[])
+          AND NOT EXISTS (SELECT 1 FROM ad_provider_runs p WHERE p.job_id=j.id)
+          AND EXISTS (SELECT 1 FROM ad_provider_runs old JOIN ad_cloud_jobs prior ON prior.id=old.job_id
+            WHERE prior.source_json->>'page_id'=j.source_json->>'page_id' AND old.state='start_unknown'
+            AND old.created_at <= $1::timestamptz - INTERVAL '2 hours'
+            AND (old.created_at AT TIME ZONE $4)::date < $5::date)`,
+        [now,batch,selected.map(s=>s.page_id),policy.timezone,local.day]);
+    }
     for(const source of selected){
       const active=await db.query("SELECT id FROM ad_cloud_jobs WHERE source_json->>'page_id'=$1 AND status IN ('queued','running','retry') LIMIT 1",[source.page_id]);
       if(active.rows.length)continue;

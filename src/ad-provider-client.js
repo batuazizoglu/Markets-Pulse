@@ -87,7 +87,7 @@ async function deadline(operation, ms = 20000) {
   try {return await Promise.race([operation(controller.signal),timeout]);}
   finally {clearTimeout(timer);controller.abort();}
 }
-async function apiRequest(path, {env,fetcher=fetch,method='GET',body,maxBytes=8*1024*1024} = {}) {
+async function apiRequest(path, {env,fetcher=fetch,method='GET',body,maxBytes=8*1024*1024,timeoutMs=20000} = {}) {
   const config = configured(env);
   try {
     return await deadline(async signal => {
@@ -100,7 +100,7 @@ async function apiRequest(path, {env,fetcher=fetch,method='GET',body,maxBytes=8*
       let value;
       try {value=JSON.parse(bytes.toString('utf8'));} catch {throw failure('PROVIDER_RESPONSE_INVALID');}
       return {value,headers:response.headers};
-    });
+    },timeoutMs);
   } catch (error) {
     const known = Object.values(HTTP_CODES).some(code=>error?.code==='PROVIDER_'+code);
     if (known) throw failure(error.code,{...providerHttpDiagnostics(error),...(error?.ambiguous===true?{ambiguous:true}:{}),
@@ -114,14 +114,41 @@ function safeRun(value, ambiguous = false) {
   if (!data || !RUN_ID.test(data.id || '') || !RUN_STATES.has(data.status) || (data.defaultDatasetId != null && !RUN_ID.test(data.defaultDatasetId))) throw failure('PROVIDER_RESPONSE_INVALID',ambiguous ? {ambiguous:true} : {});
   return {id:data.id,status:data.status,defaultDatasetId:data.defaultDatasetId || null,usageTotalUsd:Number.isFinite(data.usageTotalUsd) && data.usageTotalUsd>=0 ? data.usageTotalUsd : null};
 }
-export async function startProviderRun(source, {env=process.env,fetcher=fetch} = {}) {
+async function startAdActor(source,{env,fetcher,maxUsd,onlyTotal}){
   const config = configured(env);
   if (!PAGE_ID.test(String(source?.page_id || ''))) throw failure('PROVIDER_SOURCE_INVALID');
-  const body = {startUrls:[{url:adLibraryUrl(source,{allowKeyword:false})}],onlyTotal:false,includeAboutPage:false,isDetailsPerAd:false,enrichWithEcommerceData:false};
-  const params = new URLSearchParams({waitForFinish:'0',timeout:'900',maxTotalChargeUsd:String(config.maxRunUsd),restartOnError:'false'});
+  const ceiling=maxUsd??config.maxRunUsd;
+  if(!Number.isFinite(ceiling)||ceiling<0.01||ceiling>config.maxRunUsd)throw failure('PROVIDER_BUDGET_REQUIRED');
+  const body = {startUrls:[{url:adLibraryUrl(source,{allowKeyword:false})}],onlyTotal,includeAboutPage:false,isDetailsPerAd:false,enrichWithEcommerceData:false};
+  const params = new URLSearchParams({waitForFinish:onlyTotal?'60':'0',timeout:onlyTotal?'60':'900',maxTotalChargeUsd:String(ceiling),restartOnError:'false'});
   // A create request is deliberately issued once. The caller persists a creation fence before invoking it.
-  const {value} = await apiRequest('/actors/apify~facebook-ads-scraper/runs?'+params,{env,fetcher,method:'POST',body,maxBytes:1024*1024});
+  const {value} = await apiRequest('/actors/apify~facebook-ads-scraper/runs?'+params,{env,fetcher,method:'POST',body,maxBytes:1024*1024,timeoutMs:onlyTotal?70000:20000});
   return safeRun(value,true);
+}
+export function startProviderRun(source,{env=process.env,fetcher=fetch,maxUsd}={}){
+  return startAdActor(source,{env,fetcher,maxUsd,onlyTotal:false});
+}
+
+// The actor's count-only mode returns one source summary per input URL.
+// Pagination totals from the creative dataset measure transport, not source coverage.
+export async function getProviderSourceCount(source,{env=process.env,fetcher=fetch,maxUsd}={}){
+  const run=await startAdActor(source,{env,fetcher,maxUsd,onlyTotal:true});
+  if(run.status!=='SUCCEEDED'||!run.defaultDatasetId)return null;
+  const page=await getProviderItems(run.defaultDatasetId,{env,fetcher,limit:2});
+  if(page.total!==1)return null;
+  const row=page.items[0];
+  if(!row||row.error||row.errorDescription||row.isResultComplete===false||row.totalCountIsMinimum===true||
+    row.adArchiveID||row.adArchiveId||row.ad_id||row.ad_archive_id)return null;
+  if([row.pageId,row.pageID,row.page_id].some(id=>id!=null&&String(id)!==String(source.page_id)))return null;
+  if(row.inputUrl!=null){
+    if(typeof row.inputUrl!=='string'||!URL.canParse(row.inputUrl))return null;
+    const expected=new URL(adLibraryUrl(source,{allowKeyword:false})),actual=new URL(row.inputUrl);
+    expected.searchParams.sort();actual.searchParams.sort();
+    if(expected.href!==actual.href)return null;
+  }
+  const counts=[row.totalCount,row.totalAds,row.adCount].filter(value=>value!=null);
+  if(!counts.length||!counts.every(value=>Number.isSafeInteger(value)&&value>=0&&value<=2147483647&&value===counts[0]))return null;
+  return counts[0];
 }
 export async function getProviderRun(id, {env=process.env,fetcher=fetch} = {}) {
   if (!RUN_ID.test(String(id || ''))) throw failure('PROVIDER_ID_INVALID');

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {providerConfig,providerStatus,providerHttpDiagnostics,startProviderRun,getProviderRun,findProviderRun,getProviderItems,fetchProviderImage,safeProviderImageUrl} from '../src/ad-provider-client.js';
+import {providerConfig,providerStatus,providerHttpDiagnostics,startProviderRun,getProviderRun,findProviderRun,getProviderItems,getProviderSourceCount,fetchProviderImage,safeProviderImageUrl} from '../src/ad-provider-client.js';
 import {adLibraryUrl} from '../src/ad-library-url.js';
 
 const env={AD_CAPTURE_PROVIDER:'apify',APIFY_TOKEN:'secret-test-token',APIFY_MAX_RUN_USD:'0.50',APIFY_DAILY_BUDGET_USD:'2'};
@@ -76,6 +76,30 @@ test('one async run requests every active CY creative with a hard budget and bea
     return json({data:run},201);
   }});
   assert.deepEqual(result,run);assert.equal(calls,1);
+});
+
+test('independent count reads exactly one summary from a successful count-only run for the same page and filters',async()=>{
+  const url=adLibraryUrl(source),header={'x-apify-pagination-total':'1','x-apify-pagination-count':'1','x-apify-pagination-offset':'0'};
+  async function count(row,status='SUCCEEDED'){
+    let requests=0;
+    const result=await getProviderSourceCount(source,{env,maxUsd:0.02,fetcher:async(target,options)=>{
+      requests++;
+      if(options.method==='POST'){
+        assert.equal(JSON.parse(options.body).onlyTotal,true);
+        assert.deepEqual(JSON.parse(options.body).startUrls,[{url}]);
+        assert.equal(new URL(target).searchParams.get('maxTotalChargeUsd'),'0.02');
+        return json({data:{...run,status}});
+      }
+      assert.match(target,/\/datasets\/[^/]+\/items\?/);
+      return json([row],200,header);
+    }});
+    assert.equal(requests,status==='SUCCEEDED'?2:1);
+    return result;
+  }
+  assert.equal(await count({inputUrl:url,totalCount:4}),4);
+  assert.equal(await count({pageId:source.page_id,totalAds:4}),4);
+  for(const row of [{inputUrl:url.replace('country=CY','country=ALL'),totalCount:4},{inputUrl:'bad',totalCount:4},{totalCount:'4'},{totalCount:4,adCount:3},{totalCount:4,totalCountIsMinimum:true},{pageId:'999999',totalCount:4},{adArchiveID:'123456',totalCount:4},{totalCount:4,isResultComplete:false},{error:'blocked',totalCount:0}])assert.equal(await count(row),null);
+  assert.equal(await count({totalCount:4},'TIMED-OUT'),null);
 });
 
 test('ambiguous create failure is marked and never retried; provider error text is redacted',async()=>{
