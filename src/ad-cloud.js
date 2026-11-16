@@ -109,9 +109,24 @@ export async function queueCloudReview(pool,sources,{manual=false,now=new Date()
   return transaction(pool,async db=>{
     const policy=await getAdLifecyclePolicy(db),local=localCloudTime(now,policy.timezone);
     const control=(await db.query('SELECT * FROM ad_cloud_control WHERE id=1 FOR UPDATE')).rows[0];
-    if(!manual&&control.scheduled_day===local.day)return {queued:0};
+    const batch=manual?'manual-'+randomUUID():'daily-'+local.day;
+    let recoveryPages=null;
+    if(!manual&&control.scheduled_day===local.day){
+      if(providerConfig(env).mode!=='apify')return {queued:0};
+      // A daily batch may already have been scheduled while an older ticket
+      // occupied this page. Repair only the missing page in that same batch.
+      const missing=await db.query(`SELECT DISTINCT prior.source_json->>'page_id' page_id
+        FROM ad_provider_runs old JOIN ad_cloud_jobs prior ON prior.id=old.job_id
+        WHERE (old.state='start_unknown' OR old.reconciled_at IS NOT NULL)
+          AND old.created_at <= $1::timestamptz - INTERVAL '2 hours'
+          AND (old.created_at AT TIME ZONE $2)::date < $3::date
+          AND NOT EXISTS (SELECT 1 FROM ad_cloud_jobs today WHERE today.batch_key=$4
+            AND today.source_json->>'page_id'=prior.source_json->>'page_id')`,[now,policy.timezone,local.day,batch]);
+      if(!missing.rows.length)return {queued:0};
+      recoveryPages=new Set(missing.rows.map(r=>r.page_id));
+    }
     let recovery=false;
-    if(!manual&&local.hour<policy.daily_scan_hour){
+    if(!manual&&!recoveryPages&&local.hour<policy.daily_scan_hour){
       const directory=verifiedCloudSources(sources),cutoff=liveAdWindow(now,policy)[0];
       const [active,successful,failed]=await Promise.all([
         db.query(`SELECT COUNT(*)::int count FROM ad_live_status l LEFT JOIN ad_latest_provider_check scan USING(page_id)
@@ -137,9 +152,9 @@ export async function queueCloudReview(pool,sources,{manual=false,now=new Date()
     const dates=new Map(prior.rows.map(r=>[r.brand,+new Date(r.last_at)]));
     // Unverified keyword searches cannot be captured. Every advertiser with a
     // verified numeric page ID receives a daily check.
-    const directory=verifiedCloudSources(sources);
+    const directory=verifiedCloudSources(sources).filter(s=>!recoveryPages||recoveryPages.has(s.page_id));
     const selected=[...directory.filter(x=>x.brand==='Telsim'),...directory.filter(x=>x.brand!=='Telsim').sort((a,b)=>(dates.get(a.brand)||0)-(dates.get(b.brand)||0)||Number(Boolean(b.page_id))-Number(Boolean(a.page_id)))];
-    const batch=manual?'manual-'+randomUUID():'daily-'+local.day;let queued=0;
+    let queued=0;
     if(!manual && providerConfig(env).mode==='apify'){
       // A ticket queued behind a lost start can survive across many daily batches.
       // Supersede only unstarted tickets; the original provider run remains reconcilable.
@@ -149,7 +164,7 @@ export async function queueCloudReview(pool,sources,{manual=false,now=new Date()
           AND j.source_json->>'page_id'=ANY($3::text[])
           AND NOT EXISTS (SELECT 1 FROM ad_provider_runs p WHERE p.job_id=j.id)
           AND EXISTS (SELECT 1 FROM ad_provider_runs old JOIN ad_cloud_jobs prior ON prior.id=old.job_id
-            WHERE prior.source_json->>'page_id'=j.source_json->>'page_id' AND old.state='start_unknown'
+            WHERE prior.source_json->>'page_id'=j.source_json->>'page_id' AND (old.state='start_unknown' OR old.reconciled_at IS NOT NULL)
             AND old.created_at <= $1::timestamptz - INTERVAL '2 hours'
             AND (old.created_at AT TIME ZONE $4)::date < $5::date)`,
         [now,batch,selected.map(s=>s.page_id),policy.timezone,local.day]);

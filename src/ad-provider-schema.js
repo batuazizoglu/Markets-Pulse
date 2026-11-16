@@ -32,6 +32,8 @@ ALTER TABLE ad_provider_runs ADD COLUMN IF NOT EXISTS coverage_denied BOOLEAN NO
 ALTER TABLE ad_provider_runs ADD COLUMN IF NOT EXISTS read_failed_at TIMESTAMPTZ;
 ALTER TABLE ad_provider_runs ADD COLUMN IF NOT EXISTS count_max_usd NUMERIC(12,4) NOT NULL DEFAULT 0;
 ALTER TABLE ad_provider_runs ADD COLUMN IF NOT EXISTS count_attempted BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE ad_provider_runs ADD COLUMN IF NOT EXISTS source_summary_complete BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE ad_provider_runs ADD COLUMN IF NOT EXISTS reconciled_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_ad_provider_runs_pending ON ad_provider_runs(state,next_poll_at);
 CREATE TABLE IF NOT EXISTS ad_provider_assets (
   job_id BIGINT NOT NULL REFERENCES ad_provider_runs(job_id),

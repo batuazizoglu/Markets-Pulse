@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto';
 import {getCloudSourceCoverage} from './ad-source-coverage.js';
-import {getAdLifecyclePolicy,liveAdWindow,liveAdSql,recordAdStatus} from './ad-live.js';
+import {activeVisualSql,getAdLifecyclePolicy,liveAdWindow,liveAdSql,recordAdStatus} from './ad-live.js';
 import {isDeepStrictEqual} from 'node:util';
 import {socialDirectory,verifiedFixedIspPageId} from './isp-registry.js';
 import {proposeStoredCategory} from './ad-category-evidence.js';
@@ -240,8 +240,7 @@ export async function getAdVisuals(pool,{now=new Date(),...options}={}){
   const [categories,policy]=await Promise.all([getAdCategories(pool),getAdLifecyclePolicy(pool)]);
   const {limit,brand,category,view,after}=pageInput(options,categories),params=liveAdWindow(now,policy);
   // IS NOT TRUE includes unknown/null source status in the archive as well.
-  const active=`a.activity_status='active' AND a.activity_checked_at>=$1::timestamptz AND a.activity_checked_at<=$2::timestamptz AND NOT a.superseded AND NOT a.missed_latest_check`;
-  const visibility=view==='archive'?`(${active}) IS NOT TRUE`:active,where=[visibility];
+  const visibility=view==='archive'?`(${activeVisualSql}) IS NOT TRUE`:activeVisualSql,where=[visibility];
   if(brand){params.push(brand);where.push('a.brand=$'+params.length)}
   if(category){params.push(category);where.push('a.category=$'+params.length)}
   if(after){params.push(after.t,after.k);where.push('(a.observed_at<$'+(params.length-1)+'::timestamptz OR (a.observed_at=$'+(params.length-1)+'::timestamptz AND a.ad_key>$'+params.length+'))')}

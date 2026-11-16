@@ -14,6 +14,8 @@ export function liveAdWindow(now=new Date(),policy=AD_LIFECYCLE_DEFAULTS){
   const hours=Number(policy.active_max_age_hours)||AD_ACTIVE_MAX_AGE_HOURS;
   return [new Date(+now-hours*3600000).toISOString(),new Date(+now+300000).toISOString()];
 }
+// Both the published list and the source audit use this predicate on ad_visual_lifecycle AS a.
+export const activeVisualSql=`a.activity_status='active' AND a.activity_checked_at>=$1::timestamptz AND a.activity_checked_at<=$2::timestamptz AND NOT a.superseded AND NOT a.missed_latest_check`;
 export function liveAdSql(alias,json='analysis_json'){
   const payload=`${alias}.${json}`;
   const checked=`COALESCE(l.checked_at,${alias}.observed_at)`;

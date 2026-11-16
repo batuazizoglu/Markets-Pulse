@@ -134,10 +134,11 @@ test('archive is readable by standard users without operational details and vali
 });
 
 test('plain completeness reflects stale analysis, waiting work and partial supplier coverage without exposing reasons',()=>{
-  const complete={rows:[],monitoring:{status:'ok',stale:false,checked_at:seen},pending_media:{total:0},cloud:{worker_online:true,vision_configured:true,candidates:{},sources:[],capture_provider:{enabled:true,configured:true,runs:[{coverage_complete:true}]}}};
+  const complete={rows:[],monitoring:{status:'ok',stale:false,checked_at:seen},pending_media:{total:0},cloud:{worker_online:true,vision_configured:true,candidates:{},sources:[],capture_provider:{enabled:true,configured:true,runs:[{coverage_complete:true,list_matches_latest_scan:true}]}}};
   assert.equal(standardAdVisuals(complete).display_status.incomplete,false);
   const cases=[{monitoring:{status:'partial',checked_at:seen}},{monitoring:{status:'ok',stale:true,checked_at:seen}},{pending_media:{total:1}},
     {cloud:{...complete.cloud,worker_online:false}},{cloud:{...complete.cloud,candidates:{retry:1}}},{cloud:{...complete.cloud,sources:[{status:'blocked'}]}},
+    ...[false,null].map(match=>({cloud:{...complete.cloud,capture_provider:{enabled:true,configured:true,runs:[{coverage_complete:true,list_matches_latest_scan:match}]}}})),
     {cloud:{...complete.cloud,capture_provider:{enabled:true,configured:true,runs:[{coverage_complete:false}]}}}];
   for(const patch of cases)assert.equal(standardAdVisuals({...complete,...patch}).display_status.incomplete,true);
 });

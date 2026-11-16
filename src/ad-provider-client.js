@@ -137,7 +137,7 @@ export async function getProviderSourceCount(source,{env=process.env,fetcher=fet
   const page=await getProviderItems(run.defaultDatasetId,{env,fetcher,limit:2});
   if(page.total!==1)return null;
   const row=page.items[0];
-  if(!row||row.error||row.errorDescription||row.isResultComplete===false||row.totalCountIsMinimum===true||
+  if(!row||row.error||row.errorDescription||[row.isResultComplete,row.coverage_complete].some(v=>v!=null&&v!==true)||row.totalCountIsMinimum===true||
     row.adArchiveID||row.adArchiveId||row.ad_id||row.ad_archive_id)return null;
   if([row.pageId,row.pageID,row.page_id].some(id=>id!=null&&String(id)!==String(source.page_id)))return null;
   if(row.inputUrl!=null){
@@ -146,7 +146,7 @@ export async function getProviderSourceCount(source,{env=process.env,fetcher=fet
     expected.searchParams.sort();actual.searchParams.sort();
     if(expected.href!==actual.href)return null;
   }
-  const counts=[row.totalCount,row.totalAds,row.adCount].filter(value=>value!=null);
+  const counts=[row.totalCount,row.totalAds,row.adCount,row.expected_ads].filter(value=>value!=null);
   if(!counts.length||!counts.every(value=>Number.isSafeInteger(value)&&value>=0&&value<=2147483647&&value===counts[0]))return null;
   return counts[0];
 }
@@ -167,7 +167,7 @@ export async function findProviderRun(source,{createdAt,env=process.env,fetcher=
   const {value}=await apiRequest('/actors/apify~facebook-ads-scraper/runs?'+query,{env,fetcher,maxBytes:1024*1024});
   const data=value?.data;
   if(!data||!Array.isArray(data.items)||data.offset!==0||data.count!==data.items.length||!Number.isSafeInteger(data.total)||data.total<0)throw failure('PROVIDER_RESPONSE_INVALID');
-  if(data.total>3||data.total!==data.items.length)return null;
+  if(data.total>3||data.total!==data.items.length)throw failure('PROVIDER_MATCH_SEARCH_INCOMPLETE');
   const expectedUrl=new URL(adLibraryUrl(source,{allowKeyword:false}));expectedUrl.searchParams.sort();
   const matches=[],seen=new Set();
   for(const item of data.items){
@@ -180,7 +180,8 @@ export async function findProviderRun(source,{createdAt,env=process.env,fetcher=
     let url;try{url=new URL(input.startUrls[0].url);url.searchParams.sort();}catch{continue;}
     if(url.href===expectedUrl.href)matches.push(run);
   }
-  return matches.length===1?matches[0]:null;
+  if(matches.length>1)throw failure('PROVIDER_MATCH_CONFLICT');
+  return matches[0]??null;
 }
 export async function getProviderItems(datasetId, {offset=0,limit=100,env=process.env,fetcher=fetch} = {}) {
   if (!RUN_ID.test(String(datasetId || '')) || !Number.isSafeInteger(offset) || offset<0 || !Number.isSafeInteger(limit) || limit<1 || limit>1000) throw failure('PROVIDER_ID_INVALID');

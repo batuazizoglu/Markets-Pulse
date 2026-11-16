@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {PGlite} from '@electric-sql/pglite';
 import {SCHEMA_SQL} from '../src/schema.js';
 import {HOME_INTERNET_SOURCES} from '../src/home-internet.js';
-import {queueCloudReview,persistCloudCapture} from '../src/ad-cloud.js';
+import {localCloudTime,queueCloudReview,persistCloudCapture} from '../src/ad-cloud.js';
 import {runProviderTick,getProviderStatus} from '../src/ad-provider-worker.js';
 import {recordAdStatus} from '../src/ad-live.js';
 
@@ -125,11 +125,21 @@ test('an old ambiguous Xrealnet start does not consume the next independent dail
       VALUES($1,'start_unknown',0.1,$2,$2,$3,'PROVIDER_UNAVAILABLE')`,[original.id,old,new Date(+today+3600000)]);
     await f.db.query(`INSERT INTO ad_cloud_jobs(batch_key,brand,source_json,created_at)
       VALUES('daily-old-ticket','Xrealnet',$1,$2)`,[source,old]);
-    await f.db.query("UPDATE ad_lifecycle_policy SET daily_scan_hour=0");
+    await f.db.query("UPDATE ad_cloud_control SET scheduled_day=$1",[localCloudTime(today).day]);
     const daily=await queueCloudReview(f.db,HOME_INTERNET_SOURCES,{now:today,env});
-    assert.ok(daily.queued>0);
+    assert.equal(daily.queued,1);
     await f.db.query("UPDATE ad_cloud_jobs SET status='error' WHERE brand<>'Xrealnet'");
     f.advance(60000); // The worker observes jobs after their database available_at.
+    assert.equal((await f.tick()).status,'idle');
+    assert.equal(f.stats().starts,0);
+    await f.db.query('UPDATE ad_provider_runs SET next_poll_at=$1 WHERE job_id=$2',[today,original.id]);
+    f.client.findProviderRun=async()=>{throw err('PROVIDER_MATCH_CONFLICT');};
+    assert.equal((await f.tick()).reason,'PROVIDER_MATCH_CONFLICT');
+    assert.equal((await f.tick()).status,'idle');
+    await f.db.query('UPDATE ad_provider_runs SET next_poll_at=$1 WHERE job_id=$2',[today,original.id]);
+    f.client.findProviderRun=async()=>null;
+    assert.equal((await f.tick()).reason,'PROVIDER_MATCH_UNCONFIRMED');
+    assert.ok((await f.db.query('SELECT reconciled_at FROM ad_provider_runs WHERE job_id=$1',[original.id])).rows[0].reconciled_at);
     const fresh=await f.tick();
     assert.equal(fresh.status,'running');
     assert.equal((await f.db.query('SELECT batch_key FROM ad_cloud_jobs WHERE id=$1',[fresh.job_id])).rows[0].batch_key,daily.batch_key);
@@ -298,6 +308,42 @@ test('an individual complete flag without the source ad count remains partial',a
     assert.equal((await f.run()).expected_ads,null);assert.equal((await f.run()).coverage_complete,false);
     assert.equal((await getProviderStatus(f.db,{env})).runs[0].coverage_complete,false);
   } finally {await f.db.close();}
+});
+
+test('scoped final summary accepts an exact total or explicit coverage across pages and rejects lower bounds',async()=>{
+  const pageID='164143610515';
+  for(const [summary,expected] of [[{pageID,expected_ads:1},1],[{pageID,coverage_complete:true},1],
+    [{pageID,totalCount:1,isResultComplete:true,totalCountIsMinimum:true},null],
+    [{pageID,expected_ads:1,totalCount:2,coverage_complete:true},null],[{coverage_complete:true},null]]){
+    const f=await fixture({getProviderItems:async(id,{offset})=>offset===0?{items:[summary],offset,count:1,total:3}:
+      {items:[rawAd(),rawAd()],offset,count:2,total:3}});
+    try{
+      await toImport(f);await f.tick();await f.tick();
+      const final=await f.tick();assert.equal(final.status,expected===null?'partial':'complete');
+      assert.equal(final.expected_ads,expected);assert.equal(final.ads,1);
+    }finally{await f.db.close();}
+  }
+});
+
+test('latest scan equality compares all distinct published active IDs and stays unknown for partial, stale or newer queued checks',async()=>{
+  const f=await fixture({getProviderSourceCount:async()=>1});
+  try{
+    await toDownload(f);await f.tick();
+    const page='164143610515',now=f.options.now(),run=await f.run();
+    const match=async(at=now)=>(await getProviderStatus(f.db,{env,now:at})).runs[0].list_matches_latest_scan;
+    assert.equal(await match(),false); // Captured media is still waiting for publication.
+    const publish=async(ad_id,variant)=>f.db.query(`INSERT INTO ad_visual_items(ad_key,brand,category,first_seen_at,observed_at,meaning_hash,analysis_json)
+      VALUES($1,'Telsim','gsm',$2,$2,'seed',$3)`,[[page,ad_id,variant].join(':'),now,{page_id:page,ad_id,ad_status:'active'}]);
+    await publish('888888','1');assert.equal(await match(),false); // Same count, different ID.
+    await f.db.query('DELETE FROM ad_visual_items');
+    await publish('999999','1');await publish('999999','2');assert.equal(await match(),true);
+    assert.equal(await match(new Date(+now+31*3600000)),null);
+    await f.db.query("UPDATE ad_provider_runs SET state='partial',coverage_complete=FALSE WHERE job_id=$1",[run.job_id]);
+    assert.equal(await match(),null);
+    await f.db.query("UPDATE ad_provider_runs SET state='complete',coverage_complete=TRUE WHERE job_id=$1",[run.job_id]);
+    await f.db.query("INSERT INTO ad_cloud_jobs(batch_key,brand,source_json,created_at) VALUES('next','Telsim',$1,$2)",[{page_id:page},now]);
+    assert.equal(await match(),null);
+  }finally{await f.db.close();}
 });
 
 test('a capped independent count can confirm a positive scan only when distinct ad IDs match',async()=>{

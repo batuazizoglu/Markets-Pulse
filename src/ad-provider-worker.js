@@ -3,7 +3,7 @@ import {socialDirectory} from './isp-registry.js';
 import {adLibrarySource} from './ad-cloud-capture.js';
 import {providerConfig,providerHttpDiagnostics,startProviderRun,getProviderRun,findProviderRun,getProviderItems,getProviderSourceCount,fetchProviderImage} from './ad-provider-client.js';
 import {normalizeProviderItem} from './ad-provider-normalize.js';
-import {getAdLifecyclePolicy,recordAdStatus,retireMissingAds} from './ad-live.js';
+import {activeVisualSql,getAdLifecyclePolicy,liveAdWindow,recordAdStatus,retireMissingAds} from './ad-live.js';
 
 const ACTIVE = ['creating','running','importing','downloading'];
 const ID = /^\d{5,30}$/;
@@ -146,14 +146,17 @@ export async function runProviderTick(pool,sources,{env=process.env,owner,assert
       if(unknown){
         // Reserve the read before networking; failed/missing/ambiguous matches
         // retain the creation fence and budget, and are read at most once a day.
-        await atomic(db=>db.query('UPDATE ad_provider_runs SET next_poll_at=$2 WHERE job_id=$1',[unknown.job_id,after(stamp(),86400000)]));
+        await atomic(db=>db.query('UPDATE ad_provider_runs SET next_poll_at=$2,reconciled_at=NULL WHERE job_id=$1',[unknown.job_id,after(stamp(),86400000)]));
         let found;
         try{found=await api.findProviderRun(unknown.source_json,{createdAt:unknown.created_at,env});}
         catch(error){
           if(isRate(error))await atomic(db=>db.query('UPDATE ad_provider_runs SET next_poll_at=GREATEST(next_poll_at,$2) WHERE job_id=$1',[unknown.job_id,after(stamp(),delayFor(error))]));
           return {status:'start_unknown',job_id:unknown.job_id,operation:'reconcile',reason:safeCode(error),...providerHttpDiagnostics(error)};
         }
-        if(!found)return {status:'start_unknown',job_id:unknown.job_id,operation:'reconcile',reason:'PROVIDER_MATCH_UNCONFIRMED'};
+        if(!found){
+          await atomic(db=>db.query("UPDATE ad_provider_runs SET reconciled_at=$2 WHERE job_id=$1 AND state='start_unknown'",[unknown.job_id,stamp()]));
+          return {status:'start_unknown',job_id:unknown.job_id,operation:'reconcile',reason:'PROVIDER_MATCH_UNCONFIRMED'};
+        }
         return atomic(async db=>{
           // A supplier run can belong to only one persisted local job.
           const used=await db.query('SELECT job_id FROM ad_provider_runs WHERE run_id=$1 AND job_id<>$2',[found.id,unknown.job_id]);
@@ -162,10 +165,12 @@ export async function runProviderTick(pool,sources,{env=process.env,owner,assert
           const state=terminal?(found.defaultDatasetId?'importing':'error'):'running',at=stamp();
           await db.query(`UPDATE ad_provider_runs SET run_id=$2,dataset_id=$3,state=$4,usage_usd=$5,
             coverage_denied=coverage_denied OR $6,limit_reached=limit_reached OR $7,
-            updated_at=$8,next_poll_at=$8,finished_at=NULL,read_failed_at=NULL,poll_attempts=0,last_error=$9 WHERE job_id=$1`,
+            updated_at=$8,next_poll_at=$8,reconciled_at=$8,finished_at=CASE WHEN $4='error' THEN $8::timestamptz ELSE NULL END,
+            read_failed_at=NULL,poll_attempts=0,last_error=$9 WHERE job_id=$1`,
             [unknown.job_id,found.id,found.defaultDatasetId,state,found.usageTotalUsd,failed,
               found.usageTotalUsd!=null&&found.usageTotalUsd>=Number(unknown.max_run_usd),at,failed?'PROVIDER_RUN_'+found.status.replace(/-/g,'_'):state==='error'?'PROVIDER_DATASET_MISSING':null]);
-          await db.query('UPDATE ad_cloud_jobs SET status=$2,finished_at=NULL,note=$3 WHERE id=$1',[unknown.job_id,state==='error'?'error':'running','Önceki sağlayıcı çalışması doğrulandı; yeni ücretli çalışma açılmadan mevcut sonuç okunuyor.']);
+          await db.query('UPDATE ad_cloud_jobs SET status=$2,finished_at=$4,note=$3 WHERE id=$1',[unknown.job_id,state==='error'?'error':'running',
+            state==='error'?'Önceki sağlayıcı çalışması bulundu, okunabilir veri kümesi yok.':'Önceki sağlayıcı çalışması bulundu. Mevcut sonuç okunuyor.',state==='error'?at:null]);
           return {status:state,job_id:unknown.job_id,operation:'reconcile',recovered:true};
         });
       }
@@ -179,7 +184,7 @@ export async function runProviderTick(pool,sources,{env=process.env,owner,assert
         WHERE prior.source_json->>'page_id'=j.source_json->>'page_id' AND (
           old.state IN ('creating','running','importing','downloading')
           OR (old.state='start_unknown' AND (
-            j.batch_key<>$2 OR old.created_at > $1::timestamptz - INTERVAL '2 hours'
+            j.batch_key<>$2 OR old.reconciled_at IS NULL OR old.created_at > $1::timestamptz - INTERVAL '2 hours'
             OR (old.created_at AT TIME ZONE $3)::date >= $4::date))))
       ORDER BY j.id`,[stamp(),'daily-'+today,timezone,today])).rows;
     const job=eligible.find(j=>ID.test(String(j.source_json?.page_id || '')) && directory.some(s=>s.brand===j.brand && s.page_id===j.source_json.page_id));
@@ -246,15 +251,20 @@ export async function runProviderTick(pool,sources,{env=process.env,owner,assert
     });
     return atomic(async db=>{
       const at=stamp();let rejected=0,expected=run.expected_ads,complete=run.coverage_complete,denied=run.coverage_denied,lastError=run.last_error;
+      let summaryComplete=run.source_summary_complete;
       for(const row of normalized) {
         if(row.expected_count!=null){
           if(expected!=null && expected!==row.expected_count)denied=true;
           expected??=row.expected_count;
         }
         if(row.complete===false)denied=true;
-        if(row.complete===true)complete=true;
+        // An ad-level flag alone says nothing about the remaining source results.
+        if(row.complete===true && (row.kind==='summary'||row.expected_count!=null))complete=true;
+        if(row.kind==='summary' && row.complete===true)summaryComplete=true;
+        if(row.kind==='summary' && row.expected_count>0 && row.complete!==false)complete=true;
         if(row.kind==='summary')continue;
         if(row.kind!=='ad' || row.page_id!==String(run.source_json.page_id) || !ID.test(row.ad_id) || !Array.isArray(row.assets) || row.assets.length>1000) {rejected++;lastError=row.error || 'PROVIDER_ITEM_INVALID';denied=true;continue;}
+        if(row.ad_status!=='active')denied=true;
         await recordAdStatus(db,{...row,observed_at:run.created_at});
         for(const asset of row.assets) {
           if(!/^[a-zA-Z0-9_-]{1,40}$/.test(asset.variant_id || '') || !['image','video_preview'].includes(asset.kind) || !Array.isArray(asset.urls)) {rejected++;lastError='PROVIDER_ASSET_INVALID';continue;}
@@ -267,10 +277,16 @@ export async function runProviderTick(pool,sources,{env=process.env,owner,assert
         }
       }
       const offset=page.offset+page.count,exhausted=offset===page.total;
+      if(run.item_count!=null && run.dataset_offset>0 && run.item_count!==page.total)denied=true;
+      const tally=await counts(db,run.job_id);
+      // The only positive confirmation without a total is an explicit source-wide
+      // summary. Count distinct IDs only after the last page has been validated.
+      if(exhausted && summaryComplete && !denied && !run.limit_reached && !run.rows_rejected && !rejected && expected==null && tally.ads>0)
+        expected=tally.ads;
       await db.query(`UPDATE ad_provider_runs SET dataset_offset=$2,item_count=$3,expected_ads=$4,rows_imported=rows_imported+$5,
-        rows_rejected=rows_rejected+$6,source_exhausted=$7,coverage_complete=$8,state=$9,last_error=$10,poll_attempts=0,updated_at=$11,next_poll_at=$11,coverage_denied=$12,read_failed_at=NULL WHERE job_id=$1`,
-      [run.job_id,offset,page.total,expected,page.count,rejected,exhausted,complete && !denied,exhausted?'downloading':'importing',lastError,at,denied]);
-      return {status:exhausted?'downloading':'importing',job_id:run.job_id,rows_imported:run.rows_imported+page.count,...await counts(db,run.job_id)};
+        rows_rejected=rows_rejected+$6,source_exhausted=$7,coverage_complete=$8,state=$9,last_error=$10,poll_attempts=0,updated_at=$11,next_poll_at=$11,coverage_denied=$12,source_summary_complete=$13,read_failed_at=NULL WHERE job_id=$1`,
+      [run.job_id,offset,page.total,expected,page.count,rejected,exhausted,complete && !denied,exhausted?'downloading':'importing',lastError,at,denied,summaryComplete]);
+      return {status:exhausted?'downloading':'importing',job_id:run.job_id,rows_imported:run.rows_imported+page.count,...tally};
     });
   }
   if(run.state==='downloading') {
@@ -324,21 +340,37 @@ export async function runProviderTick(pool,sources,{env=process.env,owner,assert
 
 export async function getProviderStatus(pool,{env=process.env,now=new Date()}={}) {
   const config=providerConfig(env),enabled=config.mode==='apify';
+  const window=liveAdWindow(now,await getAdLifecyclePolicy(pool));
   const [budget,runs]=await Promise.all([
     pool.query('SELECT reserved_usd,starts FROM ad_provider_budget WHERE day=$1',[dayAt(now)]),
-    pool.query(`SELECT DISTINCT ON(j.brand) r.*,j.brand,j.source_json->>'page_id' page_id,
-      COUNT(DISTINCT a.ad_id)::int ads,COUNT(a.asset_key)::int assets,
-      COUNT(*) FILTER(WHERE a.status='captured')::int captured,
-      COUNT(*) FILTER(WHERE a.status IN ('pending','retry'))::int pending,
-      COUNT(*) FILTER(WHERE a.status='missing')::int missing,
-      COUNT(*) FILTER(WHERE a.status='error')::int errors
-      FROM ad_provider_runs r JOIN ad_cloud_jobs j ON j.id=r.job_id LEFT JOIN ad_provider_assets a ON a.job_id=r.job_id
-      GROUP BY r.job_id,j.brand,j.source_json ORDER BY j.brand,r.created_at DESC,r.job_id DESC`)
+    pool.query(`WITH latest AS (
+      SELECT DISTINCT ON(j.brand) r.*,j.brand,j.source_json->>'page_id' page_id,j.created_at queued_at
+      FROM ad_provider_runs r JOIN ad_cloud_jobs j ON j.id=r.job_id ORDER BY j.brand,r.created_at DESC,r.job_id DESC
+    ), visible AS (
+      SELECT a.analysis_json->>'page_id' page_id,
+        array_agg(DISTINCT a.analysis_json->>'ad_id' ORDER BY a.analysis_json->>'ad_id') ids
+      FROM ad_visual_lifecycle a WHERE ${activeVisualSql} GROUP BY a.analysis_json->>'page_id'
+    ) SELECT r.*,t.ads,t.assets,t.captured,t.pending,t.missing,t.errors,
+      CASE WHEN r.state='complete' AND r.coverage_complete AND r.source_exhausted
+        AND NOT r.coverage_denied AND NOT r.limit_reached AND r.rows_rejected=0
+        AND r.expected_ads=t.ads AND t.non_active=0 AND t.captured=t.assets
+        AND r.created_at BETWEEN $1 AND $2 AND r.finished_at<=$3
+        AND NOT EXISTS (SELECT 1 FROM ad_cloud_jobs j WHERE j.source_json->>'page_id'=r.page_id
+          AND j.status NOT IN ('imported','skipped') AND (j.created_at,j.id)>(r.queued_at,r.job_id))
+        THEN COALESCE(t.ids,'{}'::text[])=COALESCE(v.ids,'{}'::text[]) END list_matches_latest_scan
+      FROM latest r LEFT JOIN visible v ON v.page_id=r.page_id
+      CROSS JOIN LATERAL (SELECT count(DISTINCT ad_id)::int ads,count(*)::int assets,
+        count(*) FILTER(WHERE status='captured')::int captured,count(*) FILTER(WHERE status IN ('pending','retry'))::int pending,
+        count(*) FILTER(WHERE status='missing')::int missing,count(*) FILTER(WHERE status='error')::int errors,
+        count(*) FILTER(WHERE payload->>'ad_status' IS DISTINCT FROM 'active' OR page_id<>r.page_id) non_active,
+        array_agg(DISTINCT ad_id ORDER BY ad_id) ids FROM ad_provider_assets WHERE job_id=r.job_id) t
+      ORDER BY r.brand`,[...window,now])
   ]);
   return {provider:'apify',enabled,configured:enabled && config.configured,code:config.code,
     message:!enabled?'Reklam sağlayıcısı seçilmedi.':!config.configured?'Reklam sağlayıcısı için bağlantı ve harcama sınırı bekleniyor.':'Reklamlar sağlayıcıdan buluta aktarılır; kapsam ve eksik görseller ayrıca izlenir.',
     daily_budget_usd:config.dailyBudgetUsd,reserved_today_usd:Number(budget.rows[0]?.reserved_usd || 0),starts_today:budget.rows[0]?.starts || 0,
     runs:runs.rows.map(r=>({job_id:r.job_id,brand:r.brand,page_id:r.page_id,state:r.state,ads:r.ads,assets:r.assets,captured:r.captured,pending:r.pending,missing:r.missing,errors:r.errors,
-      rows_imported:r.rows_imported,rows_rejected:r.rows_rejected,source_exhausted:r.source_exhausted,coverage_complete:r.state==='complete',limit_reached:r.limit_reached,
-      expected_ads:r.expected_ads,coverage_reasons:providerCoverageReasons(r,r),last_error:r.last_error,updated_at:r.updated_at}))};
+      rows_imported:r.rows_imported,rows_rejected:r.rows_rejected,source_exhausted:r.source_exhausted,coverage_complete:r.state==='complete'&&r.coverage_complete,limit_reached:r.limit_reached,
+      expected_ads:r.expected_ads,list_matches_latest_scan:r.list_matches_latest_scan,
+      coverage_reasons:providerCoverageReasons(r,r),last_error:r.last_error,updated_at:r.updated_at}))};
 }

@@ -1,5 +1,6 @@
 import {createHash} from 'node:crypto';
 import {safeProviderImageUrl} from './ad-provider-client.js';
+import {adLibraryUrl} from './ad-library-url.js';
 
 const ID = /^\d{5,30}$/;
 const object = value => value && typeof value==='object' && !Array.isArray(value);
@@ -17,14 +18,11 @@ function errorCode(value) {
   const message=String(value || '');
   return /\b429\b|rate.?limit/i.test(message) ? 'PROVIDER_SOURCE_RATE_LIMITED' : /\b40[137]\b|access denied|captcha|log.?in|forbidden/i.test(message) ? 'PROVIDER_SOURCE_ACCESS_DENIED' : 'PROVIDER_SOURCE_ERROR';
 }
-function count(value) {return Number.isSafeInteger(value) && value>=0 ? value : null;}
 function primaryPath(urls) {return new URL(urls[0]).pathname;}
 
 export function normalizeProviderItem(item,source) {
   const result={kind:'invalid',assets:[],expected_count:null,complete:null,error:'PROVIDER_ITEM_INVALID'};
   if (!object(item) || !ID.test(String(source?.page_id || ''))) return result;
-  result.expected_count=count(item.totalCount);
-  result.complete=typeof item.isResultComplete==='boolean' ? item.isResultComplete : null;
   const snapshot=object(item.snapshot) ? item.snapshot : {};
   const page=identity([item.pageID,item.pageId,item.page_id,snapshot.pageId,snapshot.pageID,snapshot.page_id]);
   const ad=identity([item.adArchiveID,item.adArchiveId,item.ad_archive_id,item.ad_id]);
@@ -34,6 +32,21 @@ export function normalizeProviderItem(item,source) {
   }
   if (!page.valid || !ad.valid || (page.value && page.value!==String(source.page_id)) || (inputPage && inputPage!==String(source.page_id))) return {...result,error:'PROVIDER_IDENTITY_MISMATCH'};
   if (item.error || item.errorDescription) return {...result,kind:'error',error:errorCode(String(item.error || '')+' '+String(item.errorDescription || ''))};
+  const totals=[item.totalCount,item.expected_ads].filter(present);
+  const flags=[item.isResultComplete,item.coverage_complete].filter(present);
+  const exact=totals.every(n=>Number.isSafeInteger(n)&&n>=0&&n<=2147483647&&n===totals[0]);
+  let sameScope=true;
+  if(present(item.inputUrl)){
+    const expected=new URL(adLibraryUrl(source)),actual=URL.canParse(item.inputUrl)?new URL(item.inputUrl):null;
+    expected.searchParams.sort();actual?.searchParams.sort();
+    sameScope=actual?.href===expected.href;
+  }
+  if(!exact || item.totalCountIsMinimum===true || !sameScope || flags.some(f=>typeof f!=='boolean'))result.complete=false;
+  else {
+    result.expected_count=totals[0]??null;
+    if(flags.length)result.complete=flags.every(f=>f===true);
+    if(!ad.value && result.complete===true && result.expected_count==null && !page.value && !inputPage)result.complete=null;
+  }
   if (!ad.value) return result.expected_count!==null || result.complete!==null ? {...result,kind:'summary',page_id:page.value || String(source.page_id),error:null} : result;
   if (!page.value) return {...result,error:'PROVIDER_IDENTITY_MISSING'};
   const body=itemText(snapshot), assets=[], seen=new Map();

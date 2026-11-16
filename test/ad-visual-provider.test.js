@@ -78,6 +78,18 @@ test('complete downloads with missing supplier counts explain coverage without c
     const text=d.querySelector('.av-source-focus').textContent;
     assert.match(text,/Kaydedilen: 11/);assert.match(text,/İndirme hatası: 0/);
     assert.match(text,/Sağlayıcı toplam reklam sayısını bildirmedi/);
+    assert.match(text,/birebir eşleşmesi henüz doğrulanmadı/);
     assert.doesNotMatch(text,/Sağlayıcı kapsamı tam olarak doğruladı/);
   }finally{dom.window.close()}
+});
+
+test('a complete source reports a published-list match only on confirmed identity equality',async()=>{
+  for(const [match,message] of [[true,/son tam taramayla birebir eşleşiyor/],[false,/reklam kimlikleri farklı/],[null,/birebir eşleşmesi henüz doğrulanmadı/]]){
+    const dom=await dashboard({cloud:{capture_provider:{enabled:true,configured:true,runs:[{brand:'Nethouse',state:'complete',ads:2,
+      coverage_complete:true,list_matches_latest_scan:match,updated_at:at}]}}});
+    try{
+      const d=dom.window.document,filter=d.querySelector('[data-av-brand]');filter.value='Nethouse';filter.dispatchEvent(new dom.window.Event('change',{bubbles:true}));
+      assert.match(d.querySelector('.av-source-focus').textContent,message);
+    }finally{dom.window.close()}
+  }
 });

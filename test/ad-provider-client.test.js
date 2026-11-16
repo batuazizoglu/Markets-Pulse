@@ -31,11 +31,11 @@ test('lost starts are reconciled only against a unique exact source input using 
   input.startUrls[0].url=adLibraryUrl(source);input.resultsLimit=1;
   assert.equal(await findProviderRun(source,{createdAt,env,fetcher}),null);
   delete input.resultsLimit;
-  for(const items of [[],[candidate,{...candidate,id:'runXYZ12345'}]]){
-    assert.equal(await findProviderRun(source,{createdAt,env,fetcher:async url=>url.includes('/actors/')?json({data:{items,offset:0,count:items.length,total:items.length}}):json(input)}),null);
-  }
+  const lookup=items=>findProviderRun(source,{createdAt,env,fetcher:async url=>url.includes('/actors/')?json({data:{items,offset:0,count:items.length,total:items.length}}):json(input)});
+  assert.equal(await lookup([]),null);
+  await assert.rejects(lookup([candidate,{...candidate,id:'runXYZ12345'}]),{code:'PROVIDER_MATCH_CONFLICT'});
   let bounded=0;
-  assert.equal(await findProviderRun(source,{createdAt,env,fetcher:async()=>{bounded++;return json({data:{items:[candidate],offset:0,count:1,total:10}});}}),null);
+  await assert.rejects(findProviderRun(source,{createdAt,env,fetcher:async()=>{bounded++;return json({data:{items:[candidate],offset:0,count:1,total:10}});}}),{code:'PROVIDER_MATCH_SEARCH_INCOMPLETE'});
   assert.equal(bounded,1,'a truncated search cannot establish a unique match');
   await assert.rejects(findProviderRun(source,{createdAt,env,fetcher:async()=>json({error:env.APIFY_TOKEN},403)}),e=>e.code==='PROVIDER_ACCESS_DENIED'&&!String(e).includes(env.APIFY_TOKEN));
 });
@@ -98,6 +98,8 @@ test('independent count reads exactly one summary from a successful count-only r
   }
   assert.equal(await count({inputUrl:url,totalCount:4}),4);
   assert.equal(await count({pageId:source.page_id,totalAds:4}),4);
+  assert.equal(await count({pageId:source.page_id,expected_ads:4,coverage_complete:true}),4);
+  assert.equal(await count({pageId:source.page_id,expected_ads:4,coverage_complete:false}),null);
   for(const row of [{inputUrl:url.replace('country=CY','country=ALL'),totalCount:4},{inputUrl:'bad',totalCount:4},{totalCount:'4'},{totalCount:4,adCount:3},{totalCount:4,totalCountIsMinimum:true},{pageId:'999999',totalCount:4},{adArchiveID:'123456',totalCount:4},{totalCount:4,isResultComplete:false},{error:'blocked',totalCount:0}])assert.equal(await count(row),null);
   assert.equal(await count({totalCount:4},'TIMED-OUT'),null);
 });
