@@ -51,6 +51,52 @@ test('Super Simple section cleanup appends clean evidence without a false remova
   assert.deepEqual(changes,[{field_name:'Fiyat',old_value:'999',new_value:'1099'}]);
 });
 
+test('proven section footer cleanup is silent while real concurrent price and benefit changes remain',async()=>{
+  const prefix='Super Simple 30\n30 GB\nAşım Yok\n500 DK Ada İçi & TR ve 100 SMS\n₺999\n/ ay\n';
+  for (const controls of ['Detayları Göster\nHemen Başvur','Hemen Başvur','Satın Al']) {
+    const text=prefix+controls,clean=parseCards(text)[0];
+    const legacy={...clean,extras_json:['Aşım Yok','Numara Taşıma Teklifleri','Happy Avantajlar','İlk 6 ay: 100 TL'],
+      raw_text:(text+'\nNumara Taşıma Teklifleri\nHappy Avantajlar\nİlk 6 ay 100 TL').split('\n').join(' | '),
+      product_hash:sha256('legacy section footer '+controls)};
+    await reset();await scan([legacy],true);
+    const original=(await db.query('SELECT * FROM product_versions')).rows[0];
+    assert.equal(await scan([clean]),0);
+    assert.equal(await scan([clean]),0);
+    assert.deepEqual((await db.query('SELECT * FROM product_versions WHERE id=$1',[original.id])).rows[0],original);
+    assert.equal((await db.query('SELECT COUNT(*)::int n FROM product_versions')).rows[0].n,2);
+    await reset();await scan([legacy],true);
+    const updated=text.replace('₺999','₺1099').replace('Aşım Yok','Aşım Yok\n12 ay taahhüt');
+    assert.equal(await scan(parseCards(updated)),2);
+    const changes=(await db.query('SELECT field_name,old_value,new_value FROM changes ORDER BY id')).rows;
+    assert.deepEqual(changes,[
+      {field_name:'Fiyat',old_value:'999',new_value:'1099'},
+      {field_name:'Ek Fayda / Koşul',old_value:'["Aşım Yok"]',new_value:'["Aşım Yok","12 ay taahhüt"]'}
+    ]);
+  }
+});
+
+test('detail-boundary upgrade preserves originals and real changes without publishing neighboring benefits',async()=>{
+  const text='Super Relax 10 GB + 600 DK\n10 GB\nBu tarife sonlanmıştır\n600 DK 1.000 SMS\n₺1879\n/ ay\nDetayları Göster';
+  const neighbor='Super Red 8\n8 GB + 15 GB Özgür Pass\nBu tarife sonlanmıştır\n700 DK 1000 SMS\nİlk 6 ay 2009 TL, İkinci 6 ay 2209 TL\n₺2009\n/ ay\nDetayları Göster';
+  const combined=text+'\n'+neighbor;
+  const legacy={...parseCards(combined.replaceAll('Detayları Göster',''))[0],
+    raw_text:combined.split('\n').join(' | '),product_hash:sha256('legacy detail spill')};
+  await reset();await scan([legacy],true);
+  const original=(await db.query('SELECT * FROM product_versions')).rows[0];
+  assert.equal(await scan(parseCards(combined)),0);
+  assert.equal(await scan(parseCards(combined)),0);
+  assert.deepEqual((await db.query('SELECT * FROM product_versions WHERE id=$1',[original.id])).rows[0],original);
+  assert.equal((await db.query('SELECT COUNT(*)::int n FROM product_versions')).rows[0].n,2);
+  await reset();await scan([legacy],true);
+  const updated=text.replace('₺1879','₺1979').replace('Bu tarife sonlanmıştır','Bu tarife sonlanmıştır\nFatura aşımı yoktur.');
+  assert.equal(await scan(parseCards(updated+'\n'+neighbor)),2);
+  const changes=(await db.query('SELECT field_name,old_value,new_value FROM changes ORDER BY id')).rows;
+  assert.deepEqual(changes,[
+    {field_name:'Fiyat',old_value:'1879',new_value:'1979'},
+    {field_name:'Ek Fayda / Koşul',old_value:'["Bu tarife sonlanmıştır"]',new_value:'["Bu tarife sonlanmıştır","Fatura aşımı yoktur."]'}
+  ]);
+});
+
 test('boundary upgrade separates current products, recovers dated Junior evidence and emits no artificial market change',async()=>{
   await reset();await scan([oldMini()],true);
   const original=(await db.query('SELECT * FROM product_versions')).rows[0];

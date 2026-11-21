@@ -1,7 +1,8 @@
 import zlib from 'zlib';
 import { pool } from './db.js';
 import { TRACKED_FIELDS } from './config.js';
-import { extractRelevantText, parseCards, rebaseCardBoundaries, recoverEmbeddedCards, rebaseCommercialTerms, sha256 } from './parser.js';
+import { rebaseCardBoundaries, recoverEmbeddedCards, rebaseCommercialTerms, sha256 } from './parser.js';
+import { parseValidatedTariffPage } from './tariff-contract.js';
 import { matchCardsToProducts } from './matcher.js';
 import { captureEvidenceScreenshots } from './screenshot.js';
 
@@ -24,19 +25,20 @@ export async function scanAll() {
   }
 }
 
-async function scanSource(source) {
+export async function scanSource(source, {db=pool, fetchPage=fetch, captureEvidence=captureEvidenceScreenshots} = {}) {
   const started = new Date();
   const t0 = Date.now();
   let responseStatus = null;
   let parsedCount = 0;
   let pageHash = null;
-  const prior = await pool.query("SELECT COUNT(*)::int AS c FROM scans WHERE source_id=$1 AND status='ok'", [source.id]);
+  let validation = null;
+  const prior = await db.query("SELECT COUNT(*)::int AS c FROM scans WHERE source_id=$1 AND status='ok'", [source.id]);
   const baseline = (prior.rows[0]?.c || 0) === 0;
-  const ins = await pool.query("INSERT INTO scans(source_id,started_at,status) VALUES($1,$2,'running') RETURNING id", [source.id, started]);
+  const ins = await db.query("INSERT INTO scans(source_id,started_at,status) VALUES($1,$2,'running') RETURNING id", [source.id, started]);
   const scanId = ins.rows[0].id;
 
   try {
-    const response = await fetch(source.url, {
+    const response = await fetchPage(source.url, {
       headers: {
         'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36',
         'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
@@ -49,58 +51,149 @@ async function scanSource(source) {
     });
     responseStatus = response.status;
     const html = await response.text();
-    const relevantText = extractRelevantText(html, source.name);
+    // Retain a response fingerprint even if validation rejects the payload.
+    pageHash = sha256(html);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    assertSourceResponseUrl(source.url, response.url);
+    // Validate the complete HTML card catalogue before deduplication or any
+    // product writes: a dropped malformed card must never imply a removal.
+    const parsed = parseValidatedTariffPage(html, source);
+    const {relevantText} = parsed;
+    validation = parsed.validation || null;
     pageHash = sha256(relevantText);
-    const cards = dedupeCards(parseCards(relevantText));
+    const cards = dedupeCards(parsed.cards);
     parsedCount = cards.length;
 
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
     if (cards.length === 0) throw new Error('Parser returned 0 tariff cards; source layout may have changed.');
 
-    const changeCount = await processCards(source, scanId, cards, baseline, started);
-    const removedCount = await processMissing(source, scanId, cards, baseline, started);
-    const meaningfulChanges = changeCount + removedCount;
+    // Publish versions, changes, absence counters and the successful scan as
+    // one unit. A failed write cannot leak a partly updated catalogue/email.
+    const meaningfulChanges = await scanTransaction(db, async client => {
+      await assertExcludedTariffsUntracked(source, validation, client);
+      await assertNoAmbiguousVariantCollapse(source, parsed.cards, cards, client);
+      const changeCount = await processCards(source, scanId, cards, baseline, started, client);
+      const removedCount = await processMissing(source, scanId, cards, baseline, started, client);
+      await client.query(`UPDATE scans SET finished_at=clock_timestamp(), status='ok', http_status=$1, response_ms=$2, page_hash=$3, parsed_count=$4, error=NULL WHERE id=$5`,
+        [responseStatus, Date.now()-t0, pageHash, parsedCount, scanId]);
+      return changeCount + removedCount;
+    });
 
-    await pool.query(`UPDATE scans SET finished_at=NOW(), status='ok', http_status=$1, response_ms=$2, page_hash=$3, parsed_count=$4, error=NULL WHERE id=$5`,
-      [responseStatus, Date.now()-t0, pageHash, parsedCount, scanId]);
-
-    const lastEvidence = await pool.query(`SELECT captured_at,(screenshot_png IS NOT NULL) has_screenshot,(focused_screenshot_png IS NOT NULL) has_focus FROM snapshots WHERE source_id=$1 ORDER BY captured_at DESC LIMIT 1`,[source.id]);
-    const previous = lastEvidence.rows[0];
-    const evidenceDue = !previous || !previous.has_screenshot || !previous.has_focus || (Date.now()-new Date(previous.captured_at).getTime() >= 24*60*60*1000);
     let screenshotOk = null;
     let focusOk = null;
-    if (baseline || meaningfulChanges > 0 || evidenceDue) {
-      let fullScreenshot = null;
-      let focusedScreenshot = null;
-      let screenshotError = null;
-      let focusedScreenshotError = null;
-      let screenshotMeta = null;
-      try {
-        const evidence = await captureEvidenceScreenshots(source.url);
-        fullScreenshot = evidence?.fullPage || null;
-        focusedScreenshot = evidence?.focused || null;
-        screenshotMeta = evidence?.meta || null;
-        screenshotOk = Boolean(fullScreenshot?.length);
-        focusOk = Boolean(focusedScreenshot?.length);
-        if (!focusOk) focusedScreenshotError = 'Tarife kart alanı otomatik olarak bulunamadı.';
-      } catch (e) {
-        screenshotError = e?.message || String(e);
-        focusedScreenshotError = screenshotError;
-        screenshotOk = false;
-        focusOk = false;
-        console.error('[screenshot]', source.slug, screenshotError);
+    let evidenceError = null;
+    // Visual evidence is supplementary. Its failure after the commit must
+    // not relabel a validated, atomically published scan as failed.
+    try {
+      const lastEvidence = await db.query(`SELECT captured_at,(screenshot_png IS NOT NULL) has_screenshot,(focused_screenshot_png IS NOT NULL) has_focus FROM snapshots WHERE source_id=$1 ORDER BY captured_at DESC LIMIT 1`,[source.id]);
+      const previous = lastEvidence.rows[0];
+      const evidenceDue = !previous || !previous.has_screenshot || !previous.has_focus || (Date.now()-new Date(previous.captured_at).getTime() >= 24*60*60*1000);
+      if (baseline || meaningfulChanges > 0 || evidenceDue) {
+        let fullScreenshot = null;
+        let focusedScreenshot = null;
+        let screenshotError = null;
+        let focusedScreenshotError = null;
+        let screenshotMeta = null;
+        try {
+          const evidence = await captureEvidence(source.url);
+          fullScreenshot = evidence?.fullPage || null;
+          focusedScreenshot = evidence?.focused || null;
+          screenshotMeta = evidence?.meta || null;
+          screenshotOk = Boolean(fullScreenshot?.length);
+          focusOk = Boolean(focusedScreenshot?.length);
+          if (!focusOk) focusedScreenshotError = 'Tarife kart alanı otomatik olarak bulunamadı.';
+        } catch (e) {
+          screenshotError = e?.message || String(e);
+          focusedScreenshotError = screenshotError;
+          screenshotOk = false;
+          focusOk = false;
+          console.error('[screenshot]', source.slug, screenshotError);
+        }
+        const kind = baseline ? 'baseline' : meaningfulChanges > 0 ? 'change' : 'daily';
+        await db.query(`INSERT INTO snapshots(source_id,scan_id,captured_at,kind,page_hash,html_gzip,extracted_json,screenshot_png,focused_screenshot_png,screenshot_error,focused_screenshot_error,screenshot_meta)
+                          VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11,$12::jsonb)`,
+          [source.id, scanId, started, kind, pageHash, zlib.gzipSync(Buffer.from(html)), JSON.stringify(cards), fullScreenshot, focusedScreenshot, screenshotError, focusedScreenshotError, JSON.stringify({...screenshotMeta,validation})]);
       }
-      const kind = baseline ? 'baseline' : meaningfulChanges > 0 ? 'change' : 'daily';
-      await pool.query(`INSERT INTO snapshots(source_id,scan_id,captured_at,kind,page_hash,html_gzip,extracted_json,screenshot_png,focused_screenshot_png,screenshot_error,focused_screenshot_error,screenshot_meta)
-                        VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11,$12::jsonb)`,
-        [source.id, scanId, started, kind, pageHash, zlib.gzipSync(Buffer.from(html)), JSON.stringify(cards), fullScreenshot, focusedScreenshot, screenshotError, focusedScreenshotError, JSON.stringify(screenshotMeta)]);
+    } catch (error) {
+      evidenceError = error?.message || String(error);
+      console.error('[scan-evidence]', source.slug, evidenceError);
     }
 
-    return { ok:true, scan_id:scanId, source:source.slug, http_status:responseStatus, response_ms:Date.now()-t0, parsed_count:parsedCount, baseline, changes:meaningfulChanges, screenshot_ok:screenshotOk, focused_screenshot_ok:focusOk };
+    return { ok:true, scan_id:scanId, source:source.slug, http_status:responseStatus, response_ms:Date.now()-t0, parsed_count:parsedCount, baseline, changes:meaningfulChanges, screenshot_ok:screenshotOk, focused_screenshot_ok:focusOk, validation, ...(evidenceError?{evidence_error:evidenceError}:{}) };
   } catch (error) {
-    await pool.query(`UPDATE scans SET finished_at=NOW(), status='error', http_status=$1, response_ms=$2, page_hash=$3, parsed_count=$4, error=$5 WHERE id=$6`,
-      [responseStatus, Date.now()-t0, pageHash, parsedCount, error?.message || String(error), scanId]);
-    return { ok:false, scan_id:scanId, source:source.slug, http_status:responseStatus, response_ms:Date.now()-t0, parsed_count:parsedCount, error:error?.message || String(error) };
+    const detail = error?.message || String(error);
+    const message = error?.code === 'TARIFF_CONTRACT_ERROR' && !detail.startsWith('TARIFF_CONTRACT_ERROR:') ? `${error.code}: ${detail}` : detail;
+    await db.query(`UPDATE scans SET finished_at=NOW(), status='error', http_status=$1, response_ms=$2, page_hash=$3, parsed_count=$4, error=$5 WHERE id=$6`,
+      [responseStatus, Date.now()-t0, pageHash, parsedCount, message, scanId]);
+    return { ok:false, scan_id:scanId, source:source.slug, http_status:responseStatus, response_ms:Date.now()-t0, parsed_count:parsedCount, error:message, validation };
+  }
+}
+
+function assertSourceResponseUrl(requested, received) {
+  if (!received) return;
+  try {
+    const expected = new URL(requested), actual = new URL(received);
+    if (actual.protocol === 'https:' && actual.host === expected.host && !actual.username && !actual.password &&
+      actual.pathname.replace(/\/$/, '') === expected.pathname.replace(/\/$/, '')) return;
+  } catch { /* A malformed or unexpected final URL is not source evidence. */ }
+  const error = new Error('Yanıt adresi izlenen tarife sayfasıyla eşleşmiyor. Son doğrulanmış veriler korundu.');
+  error.code = 'TARIFF_CONTRACT_ERROR';
+  throw error;
+}
+
+async function assertExcludedTariffsUntracked(source, validation, db) {
+  const excluded = validation?.excluded || [];
+  if (!excluded.length) return;
+  const current = (await db.query('SELECT current_name,identity_base FROM products WHERE source_id=$1 AND active=TRUE',[source.id])).rows;
+  const normalized = value => String(value || '').trim().toLocaleLowerCase('tr-TR');
+  for (const item of excluded) {
+    const identities = new Set([item.identity_base,...(item.protected_identity_bases || [])].filter(Boolean));
+    const existing = current.find(product => identities.has(product.identity_base) ||
+      (normalized(item.name) && normalized(item.name) === normalized(product.current_name)));
+    if (!existing) continue;
+    const error = new Error(`İzlenen paket mevcut kart biçimiyle doğrulanamadı: ${existing.current_name}. Son doğrulanmış veriler korundu.`);
+    error.code = 'TARIFF_CONTRACT_ERROR';
+    throw error;
+  }
+}
+
+async function assertNoAmbiguousVariantCollapse(source, rawCards, dedupedCards, db) {
+  const groups = new Map();
+  for (const card of rawCards) {
+    const group = groups.get(card.identity_base) || {raw:0, unique:0, hashes:new Set()};
+    group.raw++;
+    group.hashes.add(card.product_hash);
+    groups.set(card.identity_base,group);
+  }
+  for (const card of dedupedCards) groups.get(card.identity_base).unique++;
+  const collapsed = [...groups].filter(([,group]) => group.hashes.size < group.raw);
+  if (!collapsed.length) return;
+  const active = (await db.query(`SELECT identity_base,COUNT(*)::int AS active_count FROM products
+    WHERE source_id=$1 AND active=TRUE GROUP BY identity_base`,[source.id])).rows;
+  const counts = new Map(active.map(row=>[row.identity_base,Number(row.active_count)]));
+  for (const [identity,group] of collapsed) {
+    const count = counts.get(identity) || 0;
+    if (count <= group.unique) continue;
+    // Identical static markup may safely repeat one known offer. Two tracked
+    // offers converging to the same terms cannot safely become one identity.
+    const error = new Error('Aynı adlı tekliflerin ayrı kimlikleri doğrulanamadı. Son doğrulanmış veriler korundu.');
+    error.code = 'TARIFF_CONTRACT_ERROR';
+    throw error;
+  }
+}
+
+async function scanTransaction(db, callback) {
+  if (typeof db.connect !== 'function') return db.transaction(callback);
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await callback(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
   }
 }
 
@@ -245,21 +338,21 @@ async function addVersion(productId,scanId,capturedAt,card,db) {
      JSON.stringify(card.extras_json),card.raw_text,card.product_hash]);
 }
 
-async function processMissing(source, scanId, cards, baseline, detectedAt) {
+async function processMissing(source, scanId, cards, baseline, detectedAt, db=pool) {
   const seen = cards._seenProductIds || new Set();
-  const { rows } = await pool.query('SELECT * FROM products WHERE source_id=$1 AND active=TRUE',[source.id]);
+  const { rows } = await db.query('SELECT * FROM products WHERE source_id=$1 AND active=TRUE',[source.id]);
   let changes = 0;
   for (const p of rows) {
     if (seen.has(String(p.id))) continue;
     const next = Number(p.missing_count || 0) + 1;
     if (next >= 2) {
-      await pool.query('UPDATE products SET missing_count=$1,active=FALSE WHERE id=$2',[next,p.id]);
+      await db.query('UPDATE products SET missing_count=$1,active=FALSE WHERE id=$2',[next,p.id]);
       if (!baseline) {
-        await addChange(source.id,p.id,scanId,detectedAt,'removed',null,p.current_name,null,'critical');
+        await addChange(source.id,p.id,scanId,detectedAt,'removed',null,p.current_name,null,'critical',db);
         changes++;
       }
     } else {
-      await pool.query('UPDATE products SET missing_count=$1 WHERE id=$2',[next,p.id]);
+      await db.query('UPDATE products SET missing_count=$1 WHERE id=$2',[next,p.id]);
     }
   }
   return changes;
