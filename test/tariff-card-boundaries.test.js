@@ -2,6 +2,54 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {parseCards,rebaseCardBoundaries,rebaseCommercialTerms,recoverEmbeddedCards} from '../src/parser.js';
 
+const simple30 = `Super Simple 30
+30 GB
+Aşım Yok
+500 DK Ada İçi & TR ve 100 SMS
+₺999
+/ ay
+Detayları Göster
+Hemen Başvur`;
+
+test('Super Simple 30 ignores following offer sections and footer benefits without changing its hash',()=>{
+  const clean = parseCards(simple30)[0];
+  for (const heading of ['Numara Taşıma Teklifleri','Yeni Müşteri Alımı Teklifleri','Faturalı Hatta Geçiş Teklifleri']) {
+    const contaminated = parseCards(`${simple30}\n${heading}\nHappy Avantajlar\nİlk 6 ay 100 TL`)[0];
+    assert.deepEqual(contaminated,clean);
+    const noCta = simple30.replace('\nHemen Başvur','');
+    assert.deepEqual(parseCards(`${noCta}\n${heading}`),parseCards(noCta));
+  }
+  const twoOffers = parseCards(`${simple30}\nNumara Taşıma Teklifleri\n${simple30.replace('₺999','₺1099')}`);
+  assert.equal(twoOffers.length,2);
+  assert.deepEqual(twoOffers.map(card=>card.price_try),[999,1099]);
+  assert.deepEqual(twoOffers.map(card=>card.extras_json),[['Aşım Yok'],['Aşım Yok']]);
+});
+
+test('overflow benefits do not match words containing aşım, and real eligibility remains intact',()=>{
+  const text = simple30.replace('Aşım Yok',
+    'Aşım Yok\nFatura aşımı yoktur.\nNumara Taşıma kampanyası\nUlaşım\nNumara taşıyanlara 12 ay taahhüt');
+  assert.deepEqual(parseCards(text)[0].extras_json,
+    ['Aşım Yok','Fatura aşımı yoktur.','Numara taşıyanlara 12 ay taahhüt']);
+});
+
+test('standalone leaked headings are rebased only with raw evidence, keeping original observations',()=>{
+  const clean = parseCards(simple30)[0];
+  const previous = {...clean,product_hash:'legacy',extras_json:['Aşım Yok','Numara Taşıma Teklifleri'],
+    raw_text:clean.raw_text+' | Numara Taşıma Teklifleri'};
+  const saved = structuredClone(previous);
+  const rebased = rebaseCardBoundaries(previous);
+  assert.deepEqual(rebased.extras_json,['Aşım Yok']);
+  assert.equal(rebased.product_hash,'legacy');
+  assert.equal(rebased.raw_text,previous.raw_text);
+  assert.deepEqual(previous,saved);
+  for (const raw_text of [null,'',clean.raw_text]) {
+    const unproven = {...previous,raw_text};
+    assert.strictEqual(rebaseCardBoundaries(unproven),unproven);
+  }
+  const partiallyProven = {...previous,extras_json:[...previous.extras_json,'Faturalı Hatta Geçiş Teklifleri']};
+  assert.strictEqual(rebaseCardBoundaries(partiallyProven),partiallyProven);
+});
+
 const mini = `Super Cool Uni - Mini
 5 GB
 50 DK Ada İçi & TR ve 50 SMS

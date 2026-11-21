@@ -33,6 +33,24 @@ async function scan(cards,baseline=false){
   return processCards(source,id,cards,baseline,at,db);
 }
 
+test('Super Simple section cleanup appends clean evidence without a false removal or losing real price changes',async()=>{
+  const text='Super Simple 30\n30 GB\nAşım Yok\n500 DK Ada İçi & TR ve 100 SMS\n₺999\n/ ay\nHemen Başvur';
+  const clean=parseCards(text)[0];
+  const legacy={...clean,extras_json:['Aşım Yok','Numara Taşıma Teklifleri'],
+    raw_text:clean.raw_text+' | Numara Taşıma Teklifleri',product_hash:sha256('legacy section spill')};
+  await reset();await scan([legacy],true);
+  const original=(await db.query('SELECT * FROM product_versions')).rows[0];
+  assert.equal(await scan(parseCards(text)),0);
+  assert.deepEqual((await db.query('SELECT * FROM product_versions WHERE id=$1',[original.id])).rows[0],original);
+  assert.equal((await db.query('SELECT COUNT(*)::int n FROM product_versions')).rows[0].n,2);
+  assert.equal(await scan(parseCards(text+'\nNumara Taşıma Teklifleri')),0);
+  assert.equal((await db.query('SELECT COUNT(*)::int n FROM product_versions')).rows[0].n,2);
+  await reset();await scan([legacy],true);
+  assert.equal(await scan(parseCards(text.replace('₺999','₺1099'))),1);
+  const changes=(await db.query('SELECT field_name,old_value,new_value FROM changes')).rows;
+  assert.deepEqual(changes,[{field_name:'Fiyat',old_value:'999',new_value:'1099'}]);
+});
+
 test('boundary upgrade separates current products, recovers dated Junior evidence and emits no artificial market change',async()=>{
   await reset();await scan([oldMini()],true);
   const original=(await db.query('SELECT * FROM product_versions')).rows[0];

@@ -164,7 +164,7 @@ test('canonical views omit only proven historical boundary noise and preserve or
   try{
     const noise=await boundaryProduct(database);
     const price=await boundaryProduct(database,{newText:megaText.replace('₺1799','₺1899'),field:'Fiyat'});
-    const benefit=await boundaryProduct(database,{newText:megaText+'\nFatura Aşımı Yok'});
+    const benefit=await boundaryProduct(database,{newText:megaText.replace('Hemen Başvur','Fatura Aşımı Yok\nHemen Başvur')});
     const noEvidence=await boundaryProduct(database,{oldRaw:null});
     const mismatch=await boundaryProduct(database,{oldValue:['Unverified historical benefit']});
     const wrongScan=await boundaryProduct(database,{eventScan:3});
@@ -215,5 +215,73 @@ test('boundary classification normalizes historical phase terms while retaining 
     const rows=await loadCompetitiveChanges(database,{end});
     assert.ok(!rows.some(row=>row.id===noise.change.id));
     assert.deepEqual(rows.map(row=>row.id).sort(),[real.change.id,missing.change.id].sort());
+  }finally{await database.close()}
+});
+
+const simpleText=`Super Simple 30
+30 GB
+Aşım Yok
+500 DK Ada İçi & TR ve 100 SMS
+₺999
+Hemen Başvur`;
+const transferHeading='Numara Taşıma Teklifleri';
+
+async function sectionHeadingProduct(database,{
+  oldExtras=['Aşım Yok',transferHeading],newExtras=['Aşım Yok'],
+  oldRaw=simpleText+'\n'+transferHeading,newRaw=simpleText,
+  field='Ek Fayda / Koşul',oldValue,newValue,eventScan=2,changeScan=2,
+  eventTime=boundaryEvent,newPrice=999
+}={}){
+  const card=parseCards(simpleText)[0];
+  const product=(await database.query(`INSERT INTO products(source_id,identity_base,current_name,first_seen_at,last_seen_at)
+    VALUES(1,$1,$2,$3,$4) RETURNING id`,[card.identity_base,card.name,boundaryBefore,eventTime])).rows[0];
+  for(const [scan,at,extras,raw,price] of [[1,boundaryBefore,oldExtras,oldRaw,999],[eventScan,eventTime,newExtras,newRaw,newPrice]]){
+    await database.query(`INSERT INTO product_versions(product_id,scan_id,captured_at,name,data_gb,local_tr_minutes,sms,price_try,extras_json,raw_text,product_hash)
+      VALUES($1,$2,$3,$4,30,500,100,$5,$6::jsonb,$7,$8)`,
+    [product.id,scan,at,card.name,price,JSON.stringify(extras),raw,'original-'+scan]);
+  }
+  const serialized=value=>typeof value==='string'?value:JSON.stringify(value);
+  const change=(await database.query(`INSERT INTO changes(source_id,product_id,scan_id,detected_at,change_type,field_name,old_value,new_value,severity)
+    VALUES(1,$1,$2,$3,'field_changed',$4,$5,$6,'medium') RETURNING *`,
+  [product.id,changeScan,boundaryEvent,field,serialized(oldValue??(field==='Fiyat'?999:oldExtras)),serialized(newValue??(field==='Fiyat'?newPrice:newExtras))])).rows[0];
+  return {productId:product.id,change};
+}
+
+test('heading-only addition and removal are omitted without changing stored history or genuine offer changes',async()=>{
+  const database=await boundaryFixture();
+  try{
+    const removed=await sectionHeadingProduct(database);
+    const added=await sectionHeadingProduct(database,{oldExtras:['Aşım Yok'],newExtras:['Aşım Yok',transferHeading],oldRaw:simpleText,newRaw:simpleText+'\n'+transferHeading});
+    const mixed=await sectionHeadingProduct(database,{newExtras:['Aşım Yok','İlk 6 ay indirim'],newRaw:simpleText.replace('Hemen Başvur','İlk 6 ay indirim\nHemen Başvur')});
+    const price=await sectionHeadingProduct(database,{field:'Fiyat',newPrice:1099});
+    const sentence=await sectionHeadingProduct(database,{oldExtras:['Aşım Yok','Numara Taşıma Teklifleri için 12 ay taahhüt'],oldRaw:simpleText.replace('Hemen Başvur','Numara Taşıma Teklifleri için 12 ay taahhüt\nHemen Başvur')});
+    const changesBefore=(await database.query('SELECT * FROM changes ORDER BY id')).rows;
+    const versionsBefore=(await database.query('SELECT * FROM product_versions ORDER BY id')).rows;
+    const rows=await loadCompetitiveChanges(database,{end});
+    assert.ok(!rows.some(row=>row.id===removed.change.id||row.id===added.change.id));
+    assert.deepEqual(rows.map(row=>row.id).sort(),[mixed,price,sentence].map(item=>item.change.id).sort());
+    const market=await buildMarketPulse(database,7,end);
+    assert.deepEqual(market.changes,rows);
+    const monthly=await collectMonthlyData(database,boundaryBefore,end);
+    assert.deepEqual(monthly.changes,rows);
+    assert.deepEqual((await database.query('SELECT * FROM changes ORDER BY id')).rows,changesBefore);
+    assert.deepEqual((await database.query('SELECT * FROM product_versions ORDER BY id')).rows,versionsBefore);
+  }finally{await database.close()}
+});
+
+test('heading event classification retains events with missing or mismatched original evidence',async()=>{
+  const database=await boundaryFixture();
+  try{
+    const missingRaw=await sectionHeadingProduct(database,{oldRaw:null});
+    const noStandaloneHeading=await sectionHeadingProduct(database,{oldRaw:simpleText+'\nNumara Taşıma Teklifleri için koşullar'});
+    const wrongOld=await sectionHeadingProduct(database,{oldValue:['Aşım Yok','Başka koşul']});
+    const wrongNew=await sectionHeadingProduct(database,{newValue:['Aşım Yok','Başka koşul']});
+    const wrongScan=await sectionHeadingProduct(database,{eventScan:3});
+    const wrongTime=await sectionHeadingProduct(database,{eventTime:new Date(+boundaryEvent-1000)});
+    const unknownField=await sectionHeadingProduct(database,{field:'Unknown field'});
+    const noPrevious=await sectionHeadingProduct(database);
+    await database.query('DELETE FROM product_versions WHERE product_id=$1 AND scan_id=1',[noPrevious.productId]);
+    const rows=await loadCompetitiveChanges(database,{end});
+    assert.deepEqual(rows.map(row=>row.id).sort(),[missingRaw,noStandaloneHeading,wrongOld,wrongNew,wrongScan,wrongTime,unknownField,noPrevious].map(item=>item.change.id).sort());
   }finally{await database.close()}
 });

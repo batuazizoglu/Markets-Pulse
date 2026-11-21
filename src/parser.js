@@ -5,6 +5,16 @@ export function sha256(input) {
   return crypto.createHash('sha256').update(input).digest('hex');
 }
 
+const tariffSectionHeadings = new Set([
+  'Numara Taşıma Teklifleri', 'Yeni Müşteri Alımı Teklifleri', 'Faturalı Hatta Geçiş Teklifleri'
+].map(value => value.toLocaleLowerCase('tr-TR')));
+function isTariffSectionHeading(value) {
+  return typeof value === 'string' && tariffSectionHeadings.has(value.trim().toLocaleLowerCase('tr-TR'));
+}
+export function stripTariffSectionHeadings(extras) {
+  return extras.filter(value => !isTariffSectionHeading(value));
+}
+
 export function extractRelevantText(html, pageName) {
   const $ = cheerio.load(html);
   $('script,style,noscript,svg').remove();
@@ -63,7 +73,12 @@ export function parseCards(text) {
   for (let x = 0; x < uniqueStarts.length; x++) {
     const start = uniqueStarts[x];
     const end = x + 1 < uniqueStarts.length ? uniqueStarts[x + 1] : Math.min(lines.length, start + 60);
-    const chunk = lines.slice(start, end);
+    let chunk = lines.slice(start, end);
+    // A section heading/footer belongs to the page, not the preceding card.
+    // Keep the CTA in raw evidence while excluding anything following it.
+    const boundary = chunk.findIndex((line, index) => index > 0 &&
+      (/^(Hemen Başvur|Satın Al)$/i.test(line) || isTariffSectionHeading(line)));
+    if (boundary >= 0) chunk = chunk.slice(0, boundary + (isTariffSectionHeading(chunk[boundary]) ? 0 : 1));
     const card = parseCard(chunk, cards.length);
     if (card && card.price_try != null && card.data_gb != null) cards.push(card);
   }
@@ -72,6 +87,7 @@ export function parseCards(text) {
 
 function isLikelyName(s) {
   if (!s || s.length < 3 || s.length > 140) return false;
+  if (isTariffSectionHeading(s)) return false;
   if (/^(Faturalı|Faturasız|Tümü|Dijitale Özel Paketler|Super Databol|Super World|Askerfone|Diğer Faturasız Paketler|Super Red|Super Simple|Super Cool|Red Junior|Super65|Asker'e Özel|PGM Çalışanlarına Özel|Kamu Çalışanlarına Özel|Sağlık Çalışanlarına Özel|Engelleri Aşan Tarifesi)$/i.test(s)) return false;
   if (/^\+/.test(s) || /^\d+(?:[.,]\d+)?\s*(GB|MB|DK|SMS)(?:\s*\([^)]*\))?$/i.test(s)) return false;
   if (/^(Detayları Göster|Hemen Başvur|Satın Al|₺|\/ ay)$/i.test(s)) return false;
@@ -101,7 +117,10 @@ function parseCard(lines, position) {
   if (local == null) local = firstInt(raw, /(\d[\d.]*)\s*DK\b/i);
 
   const intl = firstInt(raw, /(\d[\d.]*)\s*DK\s*(?:Uluslararası|23\s*VF\s*Ülke)/i);
-  const extras = withCommercialTerms(lines.filter(x => /Özgür Pass|Sınırsız|Aşım|Happy|Red Pasaport|yeni faturasız|Taahhüt|yaş|Grup İçi|FreeZone|sonlanmıştır|Havaliman|e-SİM|e-SIM/i.test(x)), lines);
+  // "Taşıma" contains "aşım": require a word start for the overflow benefit.
+  const extras = withCommercialTerms(stripTariffSectionHeadings(lines.filter(x =>
+    /Özgür Pass|Sınırsız|Happy|Red Pasaport|yeni faturasız|Taahhüt|yaş|Grup İçi|FreeZone|sonlanmıştır|Havaliman|e-SİM|e-SIM/i.test(x)
+    || /(?<!\p{L})aşım/iu.test(x))), lines);
 
   const canonical = {
     name,
@@ -195,6 +214,14 @@ function embeddedCardObservation(previous) {
 // Junior card. Correct only the comparison observation; keep row metadata and
 // the persisted hash so the scanner can append a clean current version.
 export function rebaseCardBoundaries(previous) {
+  const rawLines = typeof previous.raw_text === 'string' ? previous.raw_text.split(/\s*\|\s*|\r?\n/) : [];
+  if (Array.isArray(previous.extras_json)) {
+    const extras = stripTariffSectionHeadings(previous.extras_json);
+    const removed = previous.extras_json.filter(isTariffSectionHeading);
+    const proven = removed.every(value => rawLines.some(line =>
+      line.trim().toLocaleLowerCase('tr-TR') === value.trim().toLocaleLowerCase('tr-TR')));
+    if (removed.length && proven) previous = {...previous, extras_json:extras};
+  }
   const observation = embeddedCardObservation(previous);
   if (!observation) return previous;
   const rebased = {...previous};
