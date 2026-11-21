@@ -5,6 +5,17 @@ export function sha256(input) {
   return crypto.createHash('sha256').update(input).digest('hex');
 }
 
+const tariffSectionHeadings = new Set([
+  'Numara Taşıma Teklifleri', 'Yeni Müşteri Alımı Teklifleri', 'Faturalı Hatta Geçiş Teklifleri'
+].map(value => value.toLocaleLowerCase('tr-TR')));
+const comparisonRawText = Symbol('comparisonRawText');
+function isTariffSectionHeading(value) {
+  return typeof value === 'string' && tariffSectionHeadings.has(value.trim().toLocaleLowerCase('tr-TR'));
+}
+export function stripTariffSectionHeadings(extras) {
+  return extras.filter(value => !isTariffSectionHeading(value));
+}
+
 export function extractRelevantText(html, pageName) {
   const $ = cheerio.load(html);
   $('script,style,noscript,svg').remove();
@@ -63,7 +74,13 @@ export function parseCards(text) {
   for (let x = 0; x < uniqueStarts.length; x++) {
     const start = uniqueStarts[x];
     const end = x + 1 < uniqueStarts.length ? uniqueStarts[x + 1] : Math.min(lines.length, start + 60);
-    const chunk = lines.slice(start, end);
+    let chunk = lines.slice(start, end);
+    // A section heading/footer belongs to the page, not the preceding card.
+    // Detail and purchase controls end the observed card fields. Inactive
+    // offers still have a detail control even when no purchase CTA exists.
+    const boundary = chunk.findIndex((line, index) => index > 0 &&
+      (/^(Detayları Göster|Hemen Başvur|Satın Al)$/i.test(line) || isTariffSectionHeading(line)));
+    if (boundary >= 0) chunk = chunk.slice(0, boundary + (isTariffSectionHeading(chunk[boundary]) ? 0 : 1));
     const card = parseCard(chunk, cards.length);
     if (card && card.price_try != null && card.data_gb != null) cards.push(card);
   }
@@ -72,6 +89,7 @@ export function parseCards(text) {
 
 function isLikelyName(s) {
   if (!s || s.length < 3 || s.length > 140) return false;
+  if (isTariffSectionHeading(s)) return false;
   if (/^(Faturalı|Faturasız|Tümü|Dijitale Özel Paketler|Super Databol|Super World|Askerfone|Diğer Faturasız Paketler|Super Red|Super Simple|Super Cool|Red Junior|Super65|Asker'e Özel|PGM Çalışanlarına Özel|Kamu Çalışanlarına Özel|Sağlık Çalışanlarına Özel|Engelleri Aşan Tarifesi)$/i.test(s)) return false;
   if (/^\+/.test(s) || /^\d+(?:[.,]\d+)?\s*(GB|MB|DK|SMS)(?:\s*\([^)]*\))?$/i.test(s)) return false;
   if (/^(Detayları Göster|Hemen Başvur|Satın Al|₺|\/ ay)$/i.test(s)) return false;
@@ -101,7 +119,10 @@ function parseCard(lines, position) {
   if (local == null) local = firstInt(raw, /(\d[\d.]*)\s*DK\b/i);
 
   const intl = firstInt(raw, /(\d[\d.]*)\s*DK\s*(?:Uluslararası|23\s*VF\s*Ülke)/i);
-  const extras = withCommercialTerms(lines.filter(x => /Özgür Pass|Sınırsız|Aşım|Happy|Red Pasaport|yeni faturasız|Taahhüt|yaş|Grup İçi|FreeZone|sonlanmıştır|Havaliman|e-SİM|e-SIM/i.test(x)), lines);
+  // "Taşıma" contains "aşım": require a word start for the overflow benefit.
+  const extras = withCommercialTerms(stripTariffSectionHeadings(lines.filter(x =>
+    /Özgür Pass|Sınırsız|Happy|Red Pasaport|yeni faturasız|Taahhüt|yaş|Grup İçi|FreeZone|sonlanmıştır|Havaliman|e-SİM|e-SIM/i.test(x)
+    || /(?<!\p{L})aşım/iu.test(x))), lines);
 
   const canonical = {
     name,
@@ -191,12 +212,74 @@ function embeddedCardObservation(previous) {
   return embedded.length ? {first:cards[0],embedded} : null;
 }
 
+const observedFields = ['data_gb','bonus_data_gb','local_tr_minutes','international_minutes',
+  'sms','validity_days','red_passport_days','price_try','extras_json'];
+function sameObservationValue(a,b) {
+  if (a == null && b == null) return true;
+  if (Array.isArray(a) || Array.isArray(b)) return JSON.stringify(a) === JSON.stringify(b);
+  if (a == null || b == null || !['string','number'].includes(typeof a) || !['string','number'].includes(typeof b)
+    || String(a).trim() === '' || String(b).trim() === '') return false;
+  return Number.isFinite(Number(a)) && Number.isFinite(Number(b)) && Number(a) === Number(b);
+}
+
+function detailBoundaryObservation(previous) {
+  const raw = typeof previous.raw_text === 'string' ? previous.raw_text.trim() : '';
+  if (!raw) return null;
+  const lines = raw.split(/\s*\|\s*|\r?\n/).map(line=>line.trim()).filter(Boolean);
+  const boundary = lines.findIndex(line=>/^(Detayları Göster|Hemen Başvur|Satın Al)$/i.test(line));
+  if (boundary < 1) return null;
+  const prefix = parseCards(lines.slice(0,boundary+1).join('\n'));
+  const name = previous.current_name || previous.name;
+  const identity = previous.identity_base || normalizeIdentity(name || '');
+  if (prefix.length !== 1 || !name || prefix[0].name !== name || prefix[0].identity_base !== identity
+    || prefix[0].price_try == null || prefix[0].data_gb == null) return null;
+
+  // A control label alone does not prove a spill. An exact following section
+  // heading proves the remaining page footer is outside this card; otherwise
+  // require complete following cards, including unsupported legacy shapes.
+  let tail = lines.slice(boundary+1);
+  while (/^(Hemen Başvur|Satın Al)$/i.test(tail[0] || '')) tail = tail.slice(1);
+  if (!tail.length) return null;
+  const sectionTail = isTariffSectionHeading(tail[0]);
+  let following = 0;
+  while (tail.length && !sectionTail) {
+    const end = tail.findIndex(line=>/^Detayları Göster$/i.test(line));
+    if (end < 2 || !isLikelyName(tail[0]) && !isRedJuniorName(tail[0])) return null;
+    const body = tail.slice(1,end);
+    if (!body.some(line=>/^(?:\d+(?:[.,]\d+)?\s*(?:GB|MB)\b|4\.5G$|İnternetsiz Paket$)/i.test(line))
+      || findPrice(body) == null) return null;
+    following++;
+    tail = tail.slice(end+1);
+    while (/^(Hemen Başvur|Satın Al)$/i.test(tail[0] || '')) tail = tail.slice(1);
+  }
+  if (!following && !sectionTail) return null;
+  const legacy = parseCard(lines,previous.position || 0);
+  if (!observedFields.every(field=>sameObservationValue(previous[field],legacy[field]))) return null;
+  if (observedFields.every(field=>sameObservationValue(previous[field],prefix[0][field]))) return null;
+  return prefix[0];
+}
+
 // Historical raw text proves which benefits belonged to the following Red
 // Junior card. Correct only the comparison observation; keep row metadata and
 // the persisted hash so the scanner can append a clean current version.
 export function rebaseCardBoundaries(previous) {
+  if (previous[comparisonRawText]) return previous;
+  const rawLines = typeof previous.raw_text === 'string' ? previous.raw_text.split(/\s*\|\s*|\r?\n/) : [];
+  if (Array.isArray(previous.extras_json)) {
+    const extras = stripTariffSectionHeadings(previous.extras_json);
+    const removed = previous.extras_json.filter(isTariffSectionHeading);
+    const proven = removed.every(value => rawLines.some(line =>
+      line.trim().toLocaleLowerCase('tr-TR') === value.trim().toLocaleLowerCase('tr-TR')));
+    if (removed.length && proven) previous = {...previous, extras_json:extras};
+  }
   const observation = embeddedCardObservation(previous);
-  if (!observation) return previous;
+  if (!observation) {
+    const detail = detailBoundaryObservation(previous);
+    if (!detail) return previous;
+    const rebased = {...previous,[comparisonRawText]:detail.raw_text};
+    for (const field of observedFields) rebased[field] = detail[field];
+    return rebased;
+  }
   const rebased = {...previous};
   for (const field of ['data_gb','bonus_data_gb','local_tr_minutes','international_minutes',
     'sms','validity_days','red_passport_days','price_try','extras_json','raw_text']) {
@@ -218,7 +301,8 @@ export function recoverEmbeddedCards(previous) {
 // enrichment a market change. Null legacy raw text cannot prove a new term.
 export function rebaseCommercialTerms(previous, current) {
   const extras = Array.isArray(previous.extras_json) ? previous.extras_json : [];
-  const raw = typeof previous.raw_text === 'string' ? previous.raw_text.trim() : '';
+  const comparisonRaw = previous[comparisonRawText] ?? previous.raw_text;
+  const raw = typeof comparisonRaw === 'string' ? comparisonRaw.trim() : '';
   if (raw) {
     const lines = raw.split(/\s*\|\s*|\r?\n/).filter(Boolean), text = lines.join(' ');
     const rebased = {...previous, extras_json: withCommercialTerms(extras, lines)};

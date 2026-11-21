@@ -18,7 +18,7 @@ function recordedValueMatches(value,stored){
 }
 
 // Retain every uncertain event. Only adjacent, original observations can prove
-// that a legacy Red Junior card boundary created an otherwise unchanged field.
+// that a legacy card boundary or section heading created an unchanged field.
 // Historical rows and evidence remain intact; this is a read-time classification.
 function isBoundaryOnlyChange(row,event,previous){
   const field=FIELD_KEYS.get(row.field_name);
