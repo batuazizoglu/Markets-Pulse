@@ -151,3 +151,47 @@ test('a partial KKTCELL scan moves yesterday-only ads to archive without asserti
     assert.equal((await getAdVisuals(db,{now,brand:'KKTCELL'})).pagination.total,5);
   }finally{await db.close();}
 });
+
+test('KKTCELL freshness expires after exactly 30 hours of active verification, independently of creative age',async()=>{
+  const db=await setup(),kktcell='127496543986832';
+  try{
+    const cards=Array.from({length:4},(_,i)=>{
+      const a=ad(String(800001+i),'active',72);
+      return {...a,brand:'KKTCELL',page_id:kktcell,key:[kktcell,a.ad_id,'1'].join(':')};
+    });
+    for(const card of cards)await seed(db,card);
+    await recordAdStatus(db,{...cards[0],observed_at:at(30)});
+    await recordAdStatus(db,{...cards[1],observed_at:new Date(+now-30*3600000-1).toISOString()});
+    await recordAdStatus(db,{...cards[2],ad_status:'inactive',observed_at:at(0)});
+    await recordAdStatus(db,{...cards[3],ad_status:'unknown',observed_at:at(0)});
+    // A delayed active result with the same timestamp cannot revive a confirmed inactive ad.
+    await recordAdStatus(db,{...cards[2],observed_at:at(0)});
+    const current=await getAdVisuals(db,{now,brand:'KKTCELL'});
+    assert.deepEqual(current.rows.map(a=>a.ad_id),['800001']);
+    assert.equal(current.visibility.max_observation_age_hours,30);
+    const archive=await getAdVisuals(db,{now,brand:'KKTCELL',view:'archive'});
+    assert.deepEqual(Object.fromEntries(archive.rows.map(a=>[a.ad_id,a.archive_reason])),{
+      '800002':'outdated','800003':'inactive','800004':'unverified'
+    });
+    assert.equal((await getAdVisuals(db,{now:new Date(+now+1),brand:'KKTCELL'})).pagination.total,0);
+    assert.equal((await db.query('SELECT count(*)::int n FROM ad_visual_items')).rows[0].n,4);
+  }finally{await db.close();}
+});
+
+test('a failed or ambiguous latest KKTCELL check archives prior observations as unconfirmed, not inactive',async()=>{
+  for(const state of ['error','start_unknown']){
+    const db=await setup(),kktcell='127496543986832';
+    try{
+      const card={...ad('810001','active',2),brand:'KKTCELL',page_id:kktcell,key:kktcell+':810001:1'};
+      await seed(db,card);await recordAdStatus(db,card);
+      const job=(await db.query(`INSERT INTO ad_cloud_jobs(batch_key,brand,source_json,status)
+        VALUES($1,'KKTCELL',$2,'blocked') RETURNING id`,['failed-'+state,{page_id:kktcell}])).rows[0];
+      await db.query(`INSERT INTO ad_provider_runs(job_id,state,max_run_usd,created_at,finished_at)
+        VALUES($1,$2,0.1,$3,$4)`,[job.id,state,at(1),at(0)]);
+      assert.equal((await getAdVisuals(db,{now,brand:'KKTCELL'})).pagination.total,0);
+      const archive=await getAdVisuals(db,{now,brand:'KKTCELL',view:'archive'});
+      assert.deepEqual(archive.rows.map(a=>[a.ad_id,a.archive_reason,a.ad_status]),[['810001','not_seen','active']]);
+      assert.equal((await db.query("SELECT count(*)::int n FROM ad_live_status_history WHERE source='complete_scan'")).rows[0].n,0);
+    }finally{await db.close();}
+  }
+});

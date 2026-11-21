@@ -93,7 +93,8 @@ test('standard published ad results retain business data and evidence without pr
   const response=await request('/api/ad-visuals'),data=await response.json();assert.equal(response.status,200);
   assert.equal(data.rows[0].title,'Published package');assert.equal(data.rows[0].offer.price_try,499);
   assert.equal(data.pagination.total,1);assert.equal(data.groups.gsm,1);assert.equal(data.brand_groups.Telsim.gsm,1);
-  assert.deepEqual(data.display_status,{incomplete:true,updated_at:seen});
+  // A published analysis is not a completed source check; this cloud fixture has no scan jobs.
+  assert.deepEqual(data.display_status,{incomplete:true,updated_at:null});
   for(const key of ['cloud','monitoring','pending_media'])assert.ok(!Object.hasOwn(data,key));
   for(const key of ['ai_queue_status','ai_analysis','taxonomy_version'])assert.ok(!Object.hasOwn(data.rows[0],key));
   const source=data.source_directory.find(row=>row.brand==='KKTCELL');assert.equal(source.page_id,'127496543986832');

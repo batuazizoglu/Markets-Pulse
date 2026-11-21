@@ -1,13 +1,13 @@
 import {createHash} from 'node:crypto';
 import {socialDirectory} from './isp-registry.js';
 import {adLibrarySource} from './ad-cloud-capture.js';
-import {providerConfig,providerHttpDiagnostics,startProviderRun,getProviderRun,findProviderRun,getProviderItems,getProviderSourceCount,fetchProviderImage} from './ad-provider-client.js';
+import {providerConfig,providerHttpDiagnostics,startProviderRun,startProviderCountRun,getProviderRun,findProviderRun,getProviderItems,readProviderSourceCount,fetchProviderImage} from './ad-provider-client.js';
 import {normalizeProviderItem} from './ad-provider-normalize.js';
 import {activeVisualSql,getAdLifecyclePolicy,liveAdWindow,recordAdStatus,retireMissingAds} from './ad-live.js';
 
 const ACTIVE = ['creating','running','importing','downloading'];
 const ID = /^\d{5,30}$/;
-const CLIENT = {startProviderRun,getProviderRun,findProviderRun,getProviderItems,getProviderSourceCount,fetchProviderImage,normalizeProviderItem};
+const CLIENT = {startProviderRun,startProviderCountRun,getProviderRun,findProviderRun,getProviderItems,readProviderSourceCount,fetchProviderImage,normalizeProviderItem};
 const sha = value => createHash('sha256').update(value).digest('hex');
 const safeCode = error => /^(?:PROVIDER|MEDIA|CLOUD)_[A-Z0-9_]+$/.test(error?.code || error?.message || '') ? (error.code || error.message) : 'PROVIDER_OPERATION_FAILED';
 const dayAt = (date,timeZone='Asia/Famagusta') => new Intl.DateTimeFormat('en-CA',{timeZone,year:'numeric',month:'2-digit',day:'2-digit'}).format(date);
@@ -39,6 +39,9 @@ export function providerCoverageReasons(run,tally){
   if(run.rows_rejected)reasons.push('rejected_rows');
   if(tally.pending)reasons.push('media_pending');
   if(tally.missing||tally.errors)reasons.push('media_missing');
+  if(['creating','running','importing'].includes(run.count_state))reasons.push('source_count_pending');
+  if(run.count_state==='start_unknown')reasons.push('source_count_start_unknown');
+  if(run.count_state==='error')reasons.push('source_count_failed');
   if(run.expected_ads==null)reasons.push('expected_count_missing');
   else if(Number(run.expected_ads)!==Number(tally.ads))reasons.push('count_mismatch');
   if(!run.coverage_complete&&!reasons.length)reasons.push('supplier_confirmation_missing');
@@ -62,38 +65,84 @@ async function finish(db,run,now) {
   return {...tally,status:state,job_id:run.job_id,brand:run.brand,coverage_complete:complete,expected_ads:run.expected_ads,coverage_reasons:complete?[]:providerCoverageReasons(run,tally)};
 }
 
-async function verifyMissingTotal(run,{atomic,api,env,now}){
+async function verifyMissingTotal(run,{atomic,api,env,now,timezone}){
   const allowance=Number(run.count_max_usd);
-  if(!allowance || run.count_attempted || run.coverage_denied || run.limit_reached || !run.source_exhausted || run.rows_rejected ||
-     !run.item_count || (run.coverage_complete && run.expected_ads!=null) ||
-     dayAt(now)!==dayAt(new Date(run.created_at)) || now-new Date(run.created_at)>2*3600000)return;
-
+  const waiting=()=>({status:'verifying_count',job_id:run.job_id,brand:run.brand,count_state:run.count_state,
+    retry_at:run.count_next_poll_at?new Date(run.count_next_poll_at).toISOString():null});
+  const fail=async(code,state='error')=>{
+    await atomic(db=>db.query(`UPDATE ad_provider_runs SET count_state=$2,count_last_error=$3,last_error=$3,
+      coverage_complete=FALSE,updated_at=$4,next_poll_at=$4 WHERE job_id=$1`,[run.job_id,state,code,now]));
+    Object.assign(run,{count_state:state,count_last_error:code,last_error:code,coverage_complete:false});
+    return null;
+  };
+  const retry=async error=>{
+    if(isAuth(error)||(!isRate(error)&&run.count_poll_attempts>=2))return fail(safeCode(error));
+    const next=after(now,isRate(error)?delayFor(error):60000*Math.pow(2,run.count_poll_attempts));
+    const wake=new Date(Math.min(+next,+new Date(run.created_at)+2*3600000+1));
+    await atomic(db=>db.query(`UPDATE ad_provider_runs SET count_poll_attempts=count_poll_attempts+1,
+      count_last_error=$2,count_next_poll_at=$3,next_poll_at=$5,updated_at=$4 WHERE job_id=$1`,[run.job_id,safeCode(error),next,now,wake]));
+    run.count_next_poll_at=next;
+    return waiting();
+  };
+  if(run.count_attempted){
+    // A persisted POST fence with no accepted ID must never issue another POST.
+    if(!run.count_state||run.count_state==='creating')return fail('PROVIDER_COUNT_START_UNKNOWN','start_unknown');
+    if(['complete','error','start_unknown'].includes(run.count_state))return null;
+    if(now-new Date(run.created_at)>2*3600000)return fail('PROVIDER_COUNT_TIMEOUT');
+    if(+new Date(run.count_next_poll_at)>+now)return waiting();
+    if(run.count_state==='running'){
+      let result;
+      try{result=await api.getProviderRun(run.count_run_id,{env});}catch(error){return retry(error);}
+      if(['FAILED','TIMED-OUT','ABORTED'].includes(result.status))return fail('PROVIDER_COUNT_'+result.status.replace(/-/g,'_'));
+      if(result.status==='SUCCEEDED'&&(!result.defaultDatasetId||!Number.isFinite(result.usageTotalUsd)||result.usageTotalUsd>=allowance))
+        return fail(!result.defaultDatasetId?'PROVIDER_COUNT_DATASET_MISSING':'PROVIDER_COUNT_BUDGET_UNCONFIRMED');
+      const state=result.status==='SUCCEEDED'?'importing':'running',next=state==='running'?after(now,30000):now;
+      await atomic(db=>db.query(`UPDATE ad_provider_runs SET count_state=$2,count_dataset_id=$3,count_usage_usd=$4,
+        count_poll_attempts=0,count_last_error=NULL,count_next_poll_at=$5,next_poll_at=$5,updated_at=$6 WHERE job_id=$1`,
+      [run.job_id,state,result.defaultDatasetId,result.usageTotalUsd,next,now]));
+      Object.assign(run,{count_state:state,count_next_poll_at:next});
+      return waiting();
+    }
+    let total;
+    try{total=await api.readProviderSourceCount(run.source_json,{id:run.count_run_id,status:'SUCCEEDED',
+      defaultDatasetId:run.count_dataset_id,usageTotalUsd:run.count_usage_usd==null?null:Number(run.count_usage_usd)}, {env,maxUsd:allowance});}
+    catch(error){return retry(error);}
+    if(!Number.isSafeInteger(total)||total<0||total>2147483647)return fail('PROVIDER_COUNT_UNCONFIRMED');
+    const tally=await atomic(db=>counts(db,run.job_id));
+    const consistent=(run.expected_ads==null||run.expected_ads===total)&&total===tally.ads;
+    await atomic(db=>db.query(`UPDATE ad_provider_runs SET expected_ads=COALESCE(expected_ads,$2),
+      coverage_complete=$3,coverage_denied=coverage_denied OR NOT $3,count_state=$4,count_last_error=$5,
+      last_error=$5,updated_at=$6,next_poll_at=$6 WHERE job_id=$1`,
+    [run.job_id,total,consistent,consistent?'complete':'error',consistent?null:'PROVIDER_COUNT_MISMATCH',now]));
+    Object.assign(run,{expected_ads:run.expected_ads??total,coverage_complete:consistent,coverage_denied:run.coverage_denied||!consistent,
+      count_state:consistent?'complete':'error',count_last_error:consistent?null:'PROVIDER_COUNT_MISMATCH'});
+    return waiting();
+  }
+  const budgetDay=run.budget_day||dayAt(new Date(run.created_at),timezone);
+  if(!allowance||run.coverage_denied||run.limit_reached||!run.source_exhausted||run.rows_rejected||
+    !run.item_count||(run.coverage_complete&&run.expected_ads!=null)||dayAt(now,timezone)!==budgetDay||now-new Date(run.created_at)>2*3600000)return null;
   const reserved=await atomic(async db=>{
-    // Only a positive, exclusively active dataset can use a separate count as confirmation.
-    // Fence the second POST before networking. A crash cannot spend the allowance twice.
-    const claim=await db.query(`UPDATE ad_provider_runs SET count_attempted=TRUE
-      WHERE job_id=$1 AND NOT count_attempted AND state='downloading'
+    // The detail and count calls share one reservation. Persist the count POST fence
+    // before networking, and retain the accepted run ID for every later read.
+    const claim=await db.query(`UPDATE ad_provider_runs SET count_attempted=TRUE,count_state='creating',count_started_at=$2,
+      count_next_poll_at=$2,updated_at=$2 WHERE job_id=$1 AND NOT count_attempted AND state='downloading'
         AND EXISTS (SELECT 1 FROM ad_provider_assets WHERE job_id=$1)
         AND NOT EXISTS (SELECT 1 FROM ad_provider_assets WHERE job_id=$1 AND payload->>'ad_status' IS DISTINCT FROM 'active')
-      RETURNING job_id`,[run.job_id]);
+      RETURNING job_id`,[run.job_id,now]);
     if(!claim.rows.length)return false;
-    await db.query('UPDATE ad_provider_budget SET starts=starts+1 WHERE day=$1',[dayAt(now)]);
+    await db.query('UPDATE ad_provider_budget SET starts=starts+1 WHERE day=$1',[budgetDay]);
     return true;
   });
-  if(!reserved)return;
-  let total;
-  try{total=await api.getProviderSourceCount(run.source_json,{env,maxUsd:allowance});}
-  catch(error){
-    await atomic(db=>db.query('UPDATE ad_provider_runs SET last_error=$2 WHERE job_id=$1',[run.job_id,safeCode(error)]));
-    return;
-  }
-  if(!Number.isSafeInteger(total)||total<0||total>2147483647)return;
-  const consistent=run.expected_ads==null||run.expected_ads===total;
-  await atomic(db=>db.query(`UPDATE ad_provider_runs SET expected_ads=COALESCE(expected_ads,$2),
-    coverage_complete=$3,coverage_denied=NOT $3 WHERE job_id=$1`,[run.job_id,total,consistent]));
-  run.expected_ads??=total;
-  run.coverage_complete=consistent;
-  run.coverage_denied=!consistent;
+  if(!reserved)return null;
+  let result;
+  try{result=await api.startProviderCountRun(run.source_json,{env,maxUsd:allowance});}
+  catch(error){return fail(safeCode(error),error?.ambiguous?'start_unknown':'error');}
+  const next=after(now,15000);
+  await atomic(db=>db.query(`UPDATE ad_provider_runs SET count_state='running',count_run_id=$2,count_dataset_id=$3,
+    count_usage_usd=$4,count_next_poll_at=$5,next_poll_at=$5,updated_at=$6 WHERE job_id=$1`,
+  [run.job_id,result.id,result.defaultDatasetId,result.usageTotalUsd,next,now]));
+  Object.assign(run,{count_state:'running',count_next_poll_at:next});
+  return waiting();
 }
 
 /** One bounded provider operation per tick; external runs are never restarted by polling. */
@@ -105,6 +154,7 @@ export async function runProviderTick(pool,sources,{env=process.env,owner,assert
   const clock=typeof now==='function' ? now : ()=>new Date(now);
   const atomic=fn=>transaction(pool,owner,assertLease,fn);
   const stamp=()=>new Date(clock());
+  const {timezone}=await getAdLifecyclePolicy(pool);
   const readExpired=r=>r.state==='running' ? +stamp()-+new Date(r.created_at)>2*3600000 : r.state==='importing' && r.read_failed_at && +stamp()-+new Date(r.read_failed_at)>2*3600000;
   const operationFor=run=>run.state==='running'?'poll':run.state==='importing'?'dataset':'start';
   const markError=async(run,error,state='error')=>atomic(async db=>{
@@ -176,7 +226,6 @@ export async function runProviderTick(pool,sources,{env=process.env,owner,assert
       }
     }
     const directory=socialDirectory(sources);
-    const {timezone}=await getAdLifecyclePolicy(pool);
     const today=dayAt(stamp(),timezone);
     const eligible=(await pool.query(`SELECT j.* FROM ad_cloud_jobs j LEFT JOIN ad_provider_runs r ON r.job_id=j.id
       WHERE r.job_id IS NULL AND j.status IN ('queued','retry') AND j.available_at<=$1 AND j.attempts<3
@@ -194,12 +243,12 @@ export async function runProviderTick(pool,sources,{env=process.env,owner,assert
     const countCents=Math.min(2,Math.floor(budgetCents/4));
     const detailMaxUsd=(budgetCents-countCents)/100;
     const reserved=await atomic(async db=>{
-      const at=stamp(),day=dayAt(at);
+      const at=stamp(),day=dayAt(at,timezone);
       await db.query('INSERT INTO ad_provider_budget(day) VALUES($1) ON CONFLICT DO NOTHING',[day]);
       const budget=(await db.query('SELECT reserved_usd FROM ad_provider_budget WHERE day=$1 FOR UPDATE',[day])).rows[0];
       if(Number(budget.reserved_usd)+config.maxRunUsd>config.dailyBudgetUsd+0.0000001)return false;
-      const inserted=await db.query(`INSERT INTO ad_provider_runs(job_id,state,max_run_usd,created_at,updated_at,next_poll_at,count_max_usd)
-        VALUES($1,'creating',$2,$3,$3,$3,$4) ON CONFLICT DO NOTHING RETURNING job_id`,[job.id,detailMaxUsd,at,countCents/100]);
+      const inserted=await db.query(`INSERT INTO ad_provider_runs(job_id,state,max_run_usd,created_at,updated_at,next_poll_at,count_max_usd,budget_day)
+        VALUES($1,'creating',$2,$3,$3,$3,$4,$5) ON CONFLICT DO NOTHING RETURNING job_id`,[job.id,detailMaxUsd,at,countCents/100,day]);
       if(!inserted.rows.length)return false;
       await db.query('UPDATE ad_provider_budget SET reserved_usd=reserved_usd+$2,starts=starts+1 WHERE day=$1',[day,config.maxRunUsd]);
       await db.query("UPDATE ad_cloud_jobs SET status='running',attempts=attempts+1,started_at=$2,note='Reklam sağlayıcısında çalışma başlatılıyor.' WHERE id=$1",[job.id,at]);
@@ -291,7 +340,8 @@ export async function runProviderTick(pool,sources,{env=process.env,owner,assert
   }
   if(run.state==='downloading') {
     if(typeof persistCapture!=='function' || typeof normalizeImage!=='function')throw new Error('PROVIDER_CAPTURE_HELPER_REQUIRED');
-    await verifyMissingTotal(run,{atomic,api,env,now:stamp()});
+    const countCheck=await verifyMissingTotal(run,{atomic,api,env,now:stamp(),timezone});
+    if(countCheck)return countCheck;
     const deadline=Date.now()+90000;
     let processed=0,diagnostics={};
     for(;processed<3 && Date.now()<deadline-25000;processed++) {
@@ -340,9 +390,9 @@ export async function runProviderTick(pool,sources,{env=process.env,owner,assert
 
 export async function getProviderStatus(pool,{env=process.env,now=new Date()}={}) {
   const config=providerConfig(env),enabled=config.mode==='apify';
-  const window=liveAdWindow(now,await getAdLifecyclePolicy(pool));
+  const policy=await getAdLifecyclePolicy(pool),window=liveAdWindow(now,policy);
   const [budget,runs]=await Promise.all([
-    pool.query('SELECT reserved_usd,starts FROM ad_provider_budget WHERE day=$1',[dayAt(now)]),
+    pool.query('SELECT reserved_usd,starts FROM ad_provider_budget WHERE day=$1',[dayAt(now,policy.timezone)]),
     pool.query(`WITH latest AS (
       SELECT DISTINCT ON(j.brand) r.*,j.brand,j.source_json->>'page_id' page_id,j.created_at queued_at
       FROM ad_provider_runs r JOIN ad_cloud_jobs j ON j.id=r.job_id ORDER BY j.brand,r.created_at DESC,r.job_id DESC
@@ -372,5 +422,6 @@ export async function getProviderStatus(pool,{env=process.env,now=new Date()}={}
     runs:runs.rows.map(r=>({job_id:r.job_id,brand:r.brand,page_id:r.page_id,state:r.state,ads:r.ads,assets:r.assets,captured:r.captured,pending:r.pending,missing:r.missing,errors:r.errors,
       rows_imported:r.rows_imported,rows_rejected:r.rows_rejected,source_exhausted:r.source_exhausted,coverage_complete:r.state==='complete'&&r.coverage_complete,limit_reached:r.limit_reached,
       expected_ads:r.expected_ads,list_matches_latest_scan:r.list_matches_latest_scan,
+      count_state:r.count_state,count_last_error:r.count_last_error,created_at:r.created_at,finished_at:r.finished_at,
       coverage_reasons:providerCoverageReasons(r,r),last_error:r.last_error,updated_at:r.updated_at}))};
 }

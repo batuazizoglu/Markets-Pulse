@@ -93,3 +93,17 @@ test('a complete source reports a published-list match only on confirmed identit
     }finally{dom.window.close()}
   }
 });
+
+test('an incomplete source never claims a verified match even if a match flag is present',async()=>{
+  const dom=await dashboard({cloud:{capture_provider:{enabled:true,configured:true,runs:[{
+    brand:'Nethouse',state:'partial',ads:5,assets:5,captured:5,pending:0,missing:0,errors:0,
+    coverage_complete:false,list_matches_latest_scan:true,coverage_reasons:['expected_count_missing'],updated_at:at
+  }]}}});
+  try{
+    const d=dom.window.document,filter=d.querySelector('[data-av-brand]');
+    filter.value='Nethouse';filter.dispatchEvent(new dom.window.Event('change',{bubbles:true}));
+    const text=d.querySelector('.av-source-focus').textContent;
+    assert.match(text,/birebir eşleşmesi henüz doğrulanmadı/);
+    assert.doesNotMatch(text,/son tam taramayla birebir eşleşiyor|Sağlayıcı kapsamı tam olarak doğruladı/);
+  }finally{dom.window.close()}
+});

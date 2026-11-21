@@ -37,7 +37,8 @@ export function validateAdFeed(input,sources,now=new Date()){
   const at=observed(run.checked_at,now);
   const coverage=run.coverage.map(c=>{
     if(!brands.has(c.brand)||!['ok','partial','blocked','error','unverified','no_ads'].includes(c.status)||!['ALL','CY','TR'].includes(c.country))throw new Error('Geçersiz kaynak kapsamı');
-    const seen=observed(c.checked_at,now);if(seen>at)throw new Error('Kapsam tarihi tutarsız');
+    const seen=c.checked_at==null&&['partial','unverified'].includes(c.status)&&c.reviewed_ads==null?null:observed(c.checked_at,now);
+    if(seen&&seen>at)throw new Error('Kapsam tarihi tutarsız');
     return {brand:c.brand,source_url:socialUrl(c.source_url),country:c.country,status:c.status,checked_at:seen,reviewed_ads:number(c.reviewed_ads),note:clean(c.note)};
   });
   const keys=new Set();
@@ -236,7 +237,7 @@ export async function getPendingAdVisuals(pool,{limit=50,now=new Date(),...optio
     return {key:row.ad_key,brand:clean(p.brand,120),ad_id:clean(p.ad_id,30),page_id:clean(p.page_id,30),variant_id:clean(p.variant_id,40),ad_status:'active',activity_checked_at:row.activity_checked_at,observed_at:row.observed_at,status:row.status,media_kind:p.media_kind==='video_preview'?'video_preview':'image',ad_text:clean(p.ad_text,5000),source_url:source,images:(p.images||[]).filter(image=>stored.has(image.sha256)).slice(0,3).map(image=>({sha256:image.sha256,captured_at:image.captured_at}))};
   }),pagination:{limit:pageLimit,total:brand?(counts.brand_totals[brand]||0):counts.total,has_more:hasMore,next_cursor:hasMore?Buffer.from(JSON.stringify({v:1,t:last.cursor_time,k:last.ad_key,brand,category:'review'})).toString('base64url'):null,brand:brand||null},...counts};
 }
-export async function getAdVisuals(pool,{now=new Date(),...options}={}){
+export async function getAdVisuals(pool,{now=new Date(),sources,...options}={}){
   const [categories,policy]=await Promise.all([getAdCategories(pool),getAdLifecyclePolicy(pool)]);
   const {limit,brand,category,view,after}=pageInput(options,categories),params=liveAdWindow(now,policy);
   // IS NOT TRUE includes unknown/null source status in the archive as well.
@@ -254,7 +255,7 @@ export async function getAdVisuals(pool,{now=new Date(),...options}={}){
       FROM ad_visual_lifecycle a LEFT JOIN ad_cloud_candidates c ON c.ad_key=a.ad_key
       WHERE `+where.join(' AND ')+' ORDER BY a.observed_at DESC,a.ad_key ASC LIMIT $'+params.length,params),
     pool.query('SELECT * FROM ad_visual_sync WHERE id=1'),
-    pool.query('SELECT a.brand,a.category,count(*)::int count FROM ad_visual_lifecycle a WHERE '+visibility+' GROUP BY a.brand,a.category',liveAdWindow(now,policy)),pendingMediaCounts(pool,now,policy),getCloudSourceCoverage(pool,{end:now})
+    pool.query('SELECT a.brand,a.category,count(*)::int count FROM ad_visual_lifecycle a WHERE '+visibility+' GROUP BY a.brand,a.category',liveAdWindow(now,policy)),pendingMediaCounts(pool,now,policy),getCloudSourceCoverage(pool,{end:now,sources,maxAgeHours:policy.active_max_age_hours})
   ]);
   const status={...sync.rows[0],...(sourceCoverage?{checked_at:sourceCoverage.checked_at,status:sourceCoverage.status,last_error:sourceCoverage.last_error,coverage_json:sourceCoverage.coverage}:{})};
   const stale=t=>!t||+now-+new Date(t)>policy.active_max_age_hours*3600000;
@@ -274,11 +275,12 @@ export async function getAdVisuals(pool,{now=new Date(),...options}={}){
     monitoring:{...status,stale:stale(status.checked_at),status:status.last_error?'sync_error':!status.checked_at?'pending':stale(status.checked_at)?'stale':status.status,
       coverage:(status.coverage_json||[]).map(x=>({...x,stale:stale(x.checked_at)})),schedule:status.schedule_json||null}};
 }
-export async function getAdReport(pool,start,end,{category}={}){
+export async function getAdReport(pool,start,end,{category,sources}={}){
   const params=[date(start),date(end)];if(category)params.push(category);
   const r=await pool.query("SELECT event_type,analysis_json,observed_at FROM ad_visual_versions WHERE observed_at >= $1 AND observed_at < $2 AND event_type IN ('first_seen','changed') "+(category?"AND analysis_json->>'category'=$3 ":'')+"ORDER BY observed_at DESC,id DESC",params);
   const current=await pool.query('SELECT checked_at,status,last_error,coverage_json FROM ad_visual_sync WHERE id=1');
-  const [live,policy,categories]=await Promise.all([getCloudSourceCoverage(pool,{end}),getAdLifecyclePolicy(pool),getAdCategories(pool)]);
+  const [policy,categories]=await Promise.all([getAdLifecyclePolicy(pool),getAdCategories(pool)]);
+  const live=await getCloudSourceCoverage(pool,{end,sources,maxAgeHours:policy.active_max_age_hours});
   return {rows:r.rows,categories,checked_at:current.rows[0]?.checked_at||null,status:current.rows[0]?.status||'pending',last_error:current.rows[0]?.last_error||null,coverage:current.rows[0]?.coverage_json||[],visibility:{max_observation_age_hours:policy.active_max_age_hours,policy_updated_at:policy.updated_at},...live};
 }
 export function registerAdVisualRoutes(app,pool,sources,{sync=syncAdVisuals,now=Date.now,cloudStatus=null}={}){
@@ -296,7 +298,7 @@ export function registerAdVisualRoutes(app,pool,sources,{sync=syncAdVisuals,now=
     try{const result=await sync(pool,sources);res.json({...await getAdVisuals(pool),sync:result})}catch(e){next(e)}
   });
   app.get('/api/ad-visuals',async(req,res,next)=>{try{
-    const data=await getAdVisuals(pool,{limit:req.query.limit,brand:req.query.brand,category:req.query.category,view:req.query.view,cursor:req.query.cursor});
+    const data=await getAdVisuals(pool,{sources:cloudStatus?sources:undefined,limit:req.query.limit,brand:req.query.brand,category:req.query.category,view:req.query.view,cursor:req.query.cursor});
     // Source identity is independent of successful capture or AI publication.
     data.source_directory=socialDirectory(sources).map(({brand,page_id,capture_brand,ad_library_url,ad_library_type,facebook,instagram,additional_social_links,research_note,research_checked_at})=>({brand,page_id:page_id||null,capture_brand,ad_library_url,ad_library_type,country:'CY',facebook,instagram,additional_social_links,research_note,research_checked_at}));
     if(cloudStatus){data.cloud=await cloudStatus();data.monitoring.schedule=data.cloud.schedule}

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {normalizeProviderItem} from '../src/ad-provider-normalize.js';
+import {adLibraryUrl} from '../src/ad-library-url.js';
 
 const source={brand:'Nethouse',page_id:'159064954156749'};
 const url=(name,signature='one')=>'https://scontent.xx.fbcdn.net/'+name+'.jpg?oh='+signature;
@@ -53,6 +54,28 @@ test('error and completeness records never masquerade as a successful empty resu
   const partial=normalizeProviderItem({...item({images:[url('one')]}),totalCount:42,isResultComplete:false},source);
   assert.equal(partial.expected_count,42);assert.equal(partial.complete,false);
   assert.equal(normalizeProviderItem({},source).kind,'invalid');
+});
+
+test('source coverage rejects contradictory, malformed, estimated and differently filtered totals while preserving usable ads',()=>{
+  const valid={pageID:source.page_id,totalCount:2,expected_ads:2,coverage_complete:true,isResultComplete:true};
+  assert.equal(normalizeProviderItem(valid,source).expected_count,2);
+  const reordered=new URL(adLibraryUrl(source));reordered.searchParams.sort();
+  assert.equal(normalizeProviderItem({...valid,inputUrl:reordered.href},source).complete,true);
+  const invalid=[
+    {expected_ads:3},{totalCount:'2'},{totalCount:2147483648,expected_ads:2147483648},
+    {totalCountIsMinimum:true},{totalCountIsMinimum:'false'},
+    {coverage_complete:'true'},{isResultComplete:false},
+    {inputUrl:adLibraryUrl(source).replace('country=CY','country=ALL')},
+    {inputUrl:adLibraryUrl(source).replace('active_status=active','active_status=all')}
+  ];
+  for(const patch of invalid){
+    const summary=normalizeProviderItem({...valid,...patch},source);
+    assert.notEqual(summary.complete,true);
+    const ad=normalizeProviderItem({...item({images:[url('usable')]}),...valid,...patch},source);
+    assert.equal(ad.kind,'ad');assert.notEqual(ad.complete,true);assert.equal(ad.assets.length,1);
+  }
+  assert.equal(normalizeProviderItem({coverage_complete:true},source).kind,'invalid');
+  assert.equal(normalizeProviderItem({pageID:source.page_id,coverage_complete:true},source).complete,true);
 });
 
 test('the normalizer has no twelve-ad or first-creative truncation',()=>{

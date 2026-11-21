@@ -41,7 +41,7 @@ export function normalizeProviderItem(item,source) {
     expected.searchParams.sort();actual?.searchParams.sort();
     sameScope=actual?.href===expected.href;
   }
-  if(!exact || item.totalCountIsMinimum===true || !sameScope || flags.some(f=>typeof f!=='boolean'))result.complete=false;
+  if(!exact || (present(item.totalCountIsMinimum)&&item.totalCountIsMinimum!==false) || !sameScope || flags.some(f=>typeof f!=='boolean'))result.complete=false;
   else {
     result.expected_count=totals[0]??null;
     if(flags.length)result.complete=flags.every(f=>f===true);

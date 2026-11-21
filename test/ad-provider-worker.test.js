@@ -24,7 +24,8 @@ async function fixture(overrides={}) {
     startProviderRun:async()=>{starts++;return {id:'run12345',status:'RUNNING',defaultDatasetId:'dataset12345',usageTotalUsd:0};},
     getProviderRun:async()=>{polls++;return {id:'run12345',status:'SUCCEEDED',defaultDatasetId:'dataset12345',usageTotalUsd:0.01};},
     findProviderRun:async()=>null,
-    getProviderSourceCount:async()=>null,
+    startProviderCountRun:async()=>{throw err('PROVIDER_COUNT_UNAVAILABLE');},
+    readProviderSourceCount:async()=>null,
     getProviderItems:async(id,{offset})=>({items:offset?[]:[rawAd()],total:1,offset,count:offset?0:1}),
     fetchProviderImage:async()=>{fetches++;return {bytes:jpeg,mime:'image/jpeg'};},
     ...overrides
@@ -326,7 +327,7 @@ test('scoped final summary accepts an exact total or explicit coverage across pa
 });
 
 test('latest scan equality compares all distinct published active IDs and stays unknown for partial, stale or newer queued checks',async()=>{
-  const f=await fixture({getProviderSourceCount:async()=>1});
+  const f=await fixture({getProviderItems:async()=>({items:[{...rawAd(),totalCount:1,isResultComplete:true}],total:1,offset:0,count:1})});
   try{
     await toDownload(f);await f.tick();
     const page='164143610515',now=f.options.now(),run=await f.run();
@@ -351,12 +352,19 @@ test('a capped independent count can confirm a positive scan only when distinct 
     const caps=[];
     const f=await fixture({
       startProviderRun:async(_,options)=>{caps.push(options.maxUsd);return {id:'run12345',status:'RUNNING',defaultDatasetId:'dataset12345'};},
-      getProviderSourceCount:async(source,options)=>{assert.equal(source.page_id,'164143610515');caps.push(options.maxUsd);return expected;},
+      startProviderCountRun:async(source,options)=>{assert.equal(source.page_id,'164143610515');caps.push(options.maxUsd);return {id:'count12345',status:'RUNNING',defaultDatasetId:'countData123',usageTotalUsd:0};},
+      getProviderRun:async id=>({id,status:'SUCCEEDED',defaultDatasetId:id==='count12345'?'countData123':'dataset12345',usageTotalUsd:0.001}),
+      readProviderSourceCount:async()=>expected,
       getProviderItems:async()=>({items:[rawAd('999999',4),rawAd('999999',4)],count:2,offset:0,total:2})
     });
     try{
       await toDownload(f);
-      assert.equal((await f.tick()).status,'downloading');
+      assert.equal((await f.tick()).status,'verifying_count');f.advance(15000);
+      assert.equal((await f.tick()).count_state,'importing');
+      const checked=await f.tick();
+      assert.equal((await f.run()).state,'downloading');
+      if(checked.status==='verifying_count')assert.equal((await f.tick()).status,'downloading');
+      else assert.equal(checked.status,'downloading');
       const last=await f.tick();
       assert.equal(last.status,expected===1?'complete':'partial');
       assert.equal(last.ads,1);assert.equal(last.assets,4);
@@ -369,15 +377,106 @@ test('a capped independent count can confirm a positive scan only when distinct 
 
 test('a crash after reserving a count, or an explicitly incomplete source, cannot issue a count POST',async()=>{
   let calls=0;
-  const f=await fixture({getProviderSourceCount:async()=>{calls++;return 1;}});
+  const f=await fixture({startProviderCountRun:async()=>{calls++;return {id:'count12345',status:'RUNNING'};}});
   try{
     await toDownload(f);
     await f.db.query('UPDATE ad_provider_runs SET count_attempted=TRUE');
     assert.equal((await f.tick()).status,'partial');
-    await f.db.query("UPDATE ad_provider_runs SET state='downloading',count_attempted=FALSE,coverage_denied=TRUE");
+    assert.equal((await f.run()).count_state,'start_unknown');
+    await f.db.query("UPDATE ad_provider_runs SET state='downloading',count_attempted=FALSE,count_state=NULL,coverage_denied=TRUE");
     assert.equal((await f.tick()).status,'partial');
     assert.equal((await f.run()).count_attempted,false);
     assert.equal(calls,0);
+  }finally{await f.db.close();}
+});
+
+test('an accepted count run resumes across restarts and transient dataset errors without another POST',async()=>{
+  let starts=0,reads=0;
+  const f=await fixture({
+    startProviderCountRun:async()=>{starts++;return {id:'count12345',status:'RUNNING',defaultDatasetId:'countData123',usageTotalUsd:0};},
+    getProviderRun:async id=>({id,status:'SUCCEEDED',defaultDatasetId:id==='count12345'?'countData123':'dataset12345',usageTotalUsd:0.001}),
+    readProviderSourceCount:async(source,run)=>{
+      assert.equal(run.id,'count12345');assert.equal(run.defaultDatasetId,'countData123');
+      if(++reads===1)throw err('PROVIDER_CONNECTION_FAILED');
+      return 1;
+    }
+  });
+  try{
+    await recordAdStatus(f.db,{page_id:'164143610515',ad_id:'888888',ad_status:'active',observed_at:new Date(Date.now()-3600000)});
+    await toDownload(f);
+    assert.equal((await f.tick()).status,'verifying_count');
+    assert.equal((await f.run()).count_run_id,'count12345');
+    assert.equal((await f.run()).state,'downloading');
+    f.advance(15000);
+    assert.equal((await runProviderTick(f.db,HOME_INTERNET_SOURCES,{...f.options,client:{...f.client,
+      startProviderCountRun:async()=>{throw Error('must not repeat accepted count POST');}}})).count_state,'importing');
+    assert.equal((await f.tick()).status,'verifying_count');
+    assert.equal((await f.run()).count_poll_attempts,1);
+    assert.equal((await f.tick()).status,'waiting_provider');assert.equal(reads,1);
+    assert.equal((await f.db.query("SELECT ad_status FROM ad_live_status WHERE ad_id='888888'")).rows[0].ad_status,'active');
+    f.advance(60000);assert.equal((await f.tick()).count_state,'complete');
+    assert.equal((await f.run()).state,'downloading');
+    assert.equal((await f.tick()).status,'complete');assert.equal(starts,1);assert.equal(reads,2);
+    assert.equal((await f.db.query("SELECT ad_status FROM ad_live_status WHERE ad_id='888888'")).rows[0].ad_status,'inactive');
+    const budget=(await f.db.query('SELECT * FROM ad_provider_budget')).rows[0];
+    assert.equal(Number(budget.reserved_usd),0.10);assert.equal(budget.starts,2);
+  }finally{await f.db.close();}
+});
+
+test('count caps, missing usage, failed runs and ambiguous starts fail closed without retiring absent ads',async()=>{
+  for(const scenario of ['cap','usage_missing','failed','ambiguous']){
+    let starts=0,reads=0;
+    const f=await fixture({
+      startProviderCountRun:async()=>{starts++;if(scenario==='ambiguous')throw err('PROVIDER_TIMEOUT',{ambiguous:true});return {id:'count12345',status:'RUNNING',defaultDatasetId:'countData123',usageTotalUsd:0};},
+      getProviderRun:async id=>({id,status:id==='count12345'&&scenario==='failed'?'TIMED-OUT':'SUCCEEDED',
+        defaultDatasetId:id==='count12345'?'countData123':'dataset12345',usageTotalUsd:id!=='count12345'?0.001:scenario==='cap'?0.02:scenario==='usage_missing'?null:0.001}),
+      readProviderSourceCount:async()=>{reads++;return 1;}
+    });
+    try{
+      await recordAdStatus(f.db,{page_id:'164143610515',ad_id:'888888',ad_status:'active',observed_at:new Date(Date.now()-3600000)});
+      await toDownload(f);let result=await f.tick();
+      if(scenario!=='ambiguous'){assert.equal(result.status,'verifying_count');f.advance(15000);result=await f.tick();}
+      assert.equal(result.status,'partial');assert.equal((await f.run()).coverage_complete,false);
+      assert.equal((await f.run()).count_state,scenario==='ambiguous'?'start_unknown':'error');
+      assert.equal((await f.db.query("SELECT ad_status FROM ad_live_status WHERE ad_id='888888'")).rows[0].ad_status,'active');
+      await f.tick();assert.equal(starts,1);assert.equal(reads,0);
+    }finally{await f.db.close();}
+  }
+});
+
+test('count reads stop after bounded failures and a long Retry-After expires locally without an early retry',async()=>{
+  for(const rateLimited of [false,true]){
+    let reads=0;
+    const f=await fixture({
+      startProviderCountRun:async()=>({id:'count12345',status:'RUNNING',defaultDatasetId:'countData123',usageTotalUsd:0}),
+      getProviderRun:async id=>{
+        if(id!=='count12345')return {id,status:'SUCCEEDED',defaultDatasetId:'dataset12345',usageTotalUsd:0.001};
+        reads++;throw rateLimited?err('PROVIDER_RATE_LIMITED',{http_status:429,retry_after_ms:172800000}):err('PROVIDER_CONNECTION_FAILED');
+      }
+    });
+    try{
+      await toDownload(f);await f.tick();f.advance(15000);await f.tick();
+      assert.equal(reads,1);assert.equal((await f.run()).state,'downloading');
+      if(rateLimited){f.advance(2*3600000+1);assert.equal((await f.tick()).status,'partial');assert.equal(reads,1);assert.equal((await f.run()).count_last_error,'PROVIDER_COUNT_TIMEOUT');}
+      else {f.advance(60000);await f.tick();f.advance(120000);assert.equal((await f.tick()).status,'partial');assert.equal(reads,3);}
+    }finally{await f.db.close();}
+  }
+});
+
+test('detail and count starts share the configured timezone budget day and remain in one reservation',async()=>{
+  const f=await fixture({startProviderCountRun:async()=>({id:'count12345',status:'RUNNING',defaultDatasetId:'countData123',usageTotalUsd:0})});
+  try{
+    await f.db.query("UPDATE ad_lifecycle_policy SET timezone='UTC' WHERE id=1");
+    const today=new Date();let clock=Date.UTC(today.getUTCFullYear(),today.getUTCMonth(),today.getUTCDate()+1,23,30);
+    f.options.now=()=>new Date(clock);
+    assert.equal((await f.tick()).status,'running');clock+=15000;
+    assert.equal((await f.tick()).status,'importing');assert.equal((await f.tick()).status,'downloading');
+    assert.equal((await f.tick()).status,'verifying_count');
+    const expected=new Date(clock).toISOString().slice(0,10),run=await f.run();
+    assert.equal(run.budget_day,expected);
+    const budget=(await f.db.query('SELECT * FROM ad_provider_budget')).rows[0];
+    assert.equal(budget.day,expected);assert.equal(budget.starts,2);assert.equal(Number(budget.reserved_usd),0.1);
+    assert.equal((await getProviderStatus(f.db,{env,now:new Date(clock)})).starts_today,2);
   }finally{await f.db.close();}
 });
 

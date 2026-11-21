@@ -87,7 +87,7 @@ async function deadline(operation, ms = 20000) {
   try {return await Promise.race([operation(controller.signal),timeout]);}
   finally {clearTimeout(timer);controller.abort();}
 }
-async function apiRequest(path, {env,fetcher=fetch,method='GET',body,maxBytes=8*1024*1024,timeoutMs=20000} = {}) {
+async function apiRequest(path, {env,fetcher=fetch,method='GET',body,maxBytes=8*1024*1024} = {}) {
   const config = configured(env);
   try {
     return await deadline(async signal => {
@@ -100,7 +100,7 @@ async function apiRequest(path, {env,fetcher=fetch,method='GET',body,maxBytes=8*
       let value;
       try {value=JSON.parse(bytes.toString('utf8'));} catch {throw failure('PROVIDER_RESPONSE_INVALID');}
       return {value,headers:response.headers};
-    },timeoutMs);
+    });
   } catch (error) {
     const known = Object.values(HTTP_CODES).some(code=>error?.code==='PROVIDER_'+code);
     if (known) throw failure(error.code,{...providerHttpDiagnostics(error),...(error?.ambiguous===true?{ambiguous:true}:{}),
@@ -120,24 +120,33 @@ async function startAdActor(source,{env,fetcher,maxUsd,onlyTotal}){
   const ceiling=maxUsd??config.maxRunUsd;
   if(!Number.isFinite(ceiling)||ceiling<0.01||ceiling>config.maxRunUsd)throw failure('PROVIDER_BUDGET_REQUIRED');
   const body = {startUrls:[{url:adLibraryUrl(source,{allowKeyword:false})}],onlyTotal,includeAboutPage:false,isDetailsPerAd:false,enrichWithEcommerceData:false};
-  const params = new URLSearchParams({waitForFinish:onlyTotal?'60':'0',timeout:onlyTotal?'60':'900',maxTotalChargeUsd:String(ceiling),restartOnError:'false'});
+  const params = new URLSearchParams({waitForFinish:'0',timeout:onlyTotal?'60':'900',maxTotalChargeUsd:String(ceiling),restartOnError:'false'});
   // A create request is deliberately issued once. The caller persists a creation fence before invoking it.
-  const {value} = await apiRequest('/actors/apify~facebook-ads-scraper/runs?'+params,{env,fetcher,method:'POST',body,maxBytes:1024*1024,timeoutMs:onlyTotal?70000:20000});
+  const {value} = await apiRequest('/actors/apify~facebook-ads-scraper/runs?'+params,{env,fetcher,method:'POST',body,maxBytes:1024*1024});
   return safeRun(value,true);
 }
 export function startProviderRun(source,{env=process.env,fetcher=fetch,maxUsd}={}){
   return startAdActor(source,{env,fetcher,maxUsd,onlyTotal:false});
 }
+export function startProviderCountRun(source,{env=process.env,fetcher=fetch,maxUsd}={}){
+  return startAdActor(source,{env,fetcher,maxUsd,onlyTotal:true});
+}
 
 // The actor's count-only mode returns one source summary per input URL.
 // Pagination totals from the creative dataset measure transport, not source coverage.
-export async function getProviderSourceCount(source,{env=process.env,fetcher=fetch,maxUsd}={}){
-  const run=await startAdActor(source,{env,fetcher,maxUsd,onlyTotal:true});
-  if(run.status!=='SUCCEEDED'||!run.defaultDatasetId)return null;
+// The worker persists the accepted count run before polling. This reader never starts a run.
+export async function readProviderSourceCount(source,run,{env=process.env,fetcher=fetch,maxUsd}={}){
+  const config=configured(env),ceiling=maxUsd??config.maxRunUsd;
+  if(!PAGE_ID.test(String(source?.page_id||'')))throw failure('PROVIDER_SOURCE_INVALID');
+  if(!Number.isFinite(ceiling)||ceiling<0.01||ceiling>config.maxRunUsd)throw failure('PROVIDER_BUDGET_REQUIRED');
+  if(run?.status!=='SUCCEEDED'||!RUN_ID.test(run.id||'')||!RUN_ID.test(run.defaultDatasetId||'')||
+    !Number.isFinite(run.usageTotalUsd)||run.usageTotalUsd<0||run.usageTotalUsd>=ceiling)return null;
   const page=await getProviderItems(run.defaultDatasetId,{env,fetcher,limit:2});
   if(page.total!==1)return null;
   const row=page.items[0];
-  if(!row||row.error||row.errorDescription||[row.isResultComplete,row.coverage_complete].some(v=>v!=null&&v!==true)||row.totalCountIsMinimum===true||
+  if(!row||typeof row!=='object'||Array.isArray(row)||row.error||row.errorDescription||
+    [row.isResultComplete,row.coverage_complete].some(v=>v!=null&&v!==true)||
+    (row.totalCountIsMinimum!=null&&row.totalCountIsMinimum!==false)||
     row.adArchiveID||row.adArchiveId||row.ad_id||row.ad_archive_id)return null;
   if([row.pageId,row.pageID,row.page_id].some(id=>id!=null&&String(id)!==String(source.page_id)))return null;
   if(row.inputUrl!=null){
@@ -159,7 +168,7 @@ export async function getProviderRun(id, {env=process.env,fetcher=fetch} = {}) {
 }
 // Reconcile a lost create response with read-only API calls. Never infer that
 // no match means no charge, and never start/resurrect a replacement run here.
-export async function findProviderRun(source,{createdAt,env=process.env,fetcher=fetch}={}){
+async function findAdActorRun(source,{createdAt,env,fetcher,onlyTotal}){
   const at=+new Date(createdAt);
   if(!Number.isFinite(at)||!PAGE_ID.test(String(source?.page_id||'')))throw failure('PROVIDER_SOURCE_INVALID');
   const start=at-5000,end=at+120000;
@@ -175,13 +184,19 @@ export async function findProviderRun(source,{createdAt,env=process.env,fetcher=
     if(seen.has(run.id)||!Number.isFinite(started)||started<start||started>end||!RUN_ID.test(item.defaultKeyValueStoreId||''))throw failure('PROVIDER_RESPONSE_INVALID');
     seen.add(run.id);
     const {value:input}=await apiRequest('/key-value-stores/'+item.defaultKeyValueStoreId+'/records/INPUT',{env,fetcher,maxBytes:1024*1024});
-    if(!Array.isArray(input?.startUrls)||input.startUrls.length!==1||input.onlyTotal!==false||input.includeAboutPage!==false||input.isDetailsPerAd!==false||input.enrichWithEcommerceData!==false)continue;
-    if(['resultsLimit','onlyAdsNewerThan','onlyAdsOlderThan'].some(key=>input[key]!=null))continue;
+    if(!Array.isArray(input?.startUrls)||input.startUrls.length!==1||input.onlyTotal!==onlyTotal||input.includeAboutPage!==false||input.isDetailsPerAd!==false||input.enrichWithEcommerceData!==false)continue;
+    if(['resultsLimit','maxItems','onlyAdsNewerThan','onlyAdsOlderThan'].some(key=>input[key]!=null))continue;
     let url;try{url=new URL(input.startUrls[0].url);url.searchParams.sort();}catch{continue;}
     if(url.href===expectedUrl.href)matches.push(run);
   }
   if(matches.length>1)throw failure('PROVIDER_MATCH_CONFLICT');
   return matches[0]??null;
+}
+export function findProviderRun(source,{createdAt,env=process.env,fetcher=fetch}={}){
+  return findAdActorRun(source,{createdAt,env,fetcher,onlyTotal:false});
+}
+export function findProviderCountRun(source,{createdAt,env=process.env,fetcher=fetch}={}){
+  return findAdActorRun(source,{createdAt,env,fetcher,onlyTotal:true});
 }
 export async function getProviderItems(datasetId, {offset=0,limit=100,env=process.env,fetcher=fetch} = {}) {
   if (!RUN_ID.test(String(datasetId || '')) || !Number.isSafeInteger(offset) || offset<0 || !Number.isSafeInteger(limit) || limit<1 || limit>1000) throw failure('PROVIDER_ID_INVALID');

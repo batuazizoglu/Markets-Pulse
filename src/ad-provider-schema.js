@@ -32,6 +32,15 @@ ALTER TABLE ad_provider_runs ADD COLUMN IF NOT EXISTS coverage_denied BOOLEAN NO
 ALTER TABLE ad_provider_runs ADD COLUMN IF NOT EXISTS read_failed_at TIMESTAMPTZ;
 ALTER TABLE ad_provider_runs ADD COLUMN IF NOT EXISTS count_max_usd NUMERIC(12,4) NOT NULL DEFAULT 0;
 ALTER TABLE ad_provider_runs ADD COLUMN IF NOT EXISTS count_attempted BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE ad_provider_runs ADD COLUMN IF NOT EXISTS budget_day TEXT;
+ALTER TABLE ad_provider_runs ADD COLUMN IF NOT EXISTS count_state TEXT CHECK(count_state IN ('creating','running','importing','complete','error','start_unknown'));
+ALTER TABLE ad_provider_runs ADD COLUMN IF NOT EXISTS count_run_id TEXT;
+ALTER TABLE ad_provider_runs ADD COLUMN IF NOT EXISTS count_dataset_id TEXT;
+ALTER TABLE ad_provider_runs ADD COLUMN IF NOT EXISTS count_usage_usd NUMERIC(12,4);
+ALTER TABLE ad_provider_runs ADD COLUMN IF NOT EXISTS count_started_at TIMESTAMPTZ;
+ALTER TABLE ad_provider_runs ADD COLUMN IF NOT EXISTS count_next_poll_at TIMESTAMPTZ;
+ALTER TABLE ad_provider_runs ADD COLUMN IF NOT EXISTS count_poll_attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE ad_provider_runs ADD COLUMN IF NOT EXISTS count_last_error TEXT;
 ALTER TABLE ad_provider_runs ADD COLUMN IF NOT EXISTS source_summary_complete BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE ad_provider_runs ADD COLUMN IF NOT EXISTS reconciled_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_ad_provider_runs_pending ON ad_provider_runs(state,next_poll_at);

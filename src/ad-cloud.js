@@ -1,5 +1,6 @@
 import {randomUUID,createHash} from 'node:crypto';
 import {getCloudSourceCoverage} from './ad-source-coverage.js';
+import {adScanAudit} from './ad-scan-audit.js';
 import {AD_LIFECYCLE_DEFAULTS,getAdLifecyclePolicy,liveAdWindow,recordAdStatus,retireMissingAds} from './ad-live.js';
 import {socialDirectory,verifiedFixedIspPageId} from './isp-registry.js';
 import {captureCloudAds,adLibrarySource} from './ad-cloud-capture.js';
@@ -313,13 +314,13 @@ export async function persistCloudCapture(db,candidate,job){
 export async function saveCloudCapture(pool,candidate,job,owner){
   return transaction(pool,async db=>{await assertLease(db,owner);return persistCloudCapture(db,candidate,job)});
 }
-async function cloudCoverage(pool){
-  return (await getCloudSourceCoverage(pool))?.coverage||[];
+async function cloudCoverage(pool,sources){
+  return (await getCloudSourceCoverage(pool,{sources}))?.coverage||[];
 }
 async function publishCloudAnalysis(pool,sources,candidate,analysis,owner){
   // The worker lease serializes publication and capture; fence expired workers before importing.
   await transaction(pool,db=>assertLease(db,owner));
-  const at=new Date().toISOString(),coverage=await cloudCoverage(pool),schedule=cloudSchedule(await getAdLifecyclePolicy(pool));
+  const at=new Date().toISOString(),coverage=await cloudCoverage(pool,sources),schedule=cloudSchedule(await getAdLifecyclePolicy(pool));
   const {category_assignment:previousAssignment,...payload}=candidate.payload;
   const feed=validateAdFeed({schema_version:1,producer:'cloud-vision',schedule,
     run:{id:'cloud-'+randomUUID(),checked_at:at,status:coverage.length&&coverage.every(x=>['ok','no_ads'].includes(x.status))?'ok':'partial',coverage},ads:[{...payload,...analysis}]},sources);
@@ -363,7 +364,7 @@ export async function getCloudStatus(pool,{env=process.env,sources=[]}={}){
   const config=visionConfig(env);
   const [control,jobs,counts,errors,transport,provider,policy]=await Promise.all([
     pool.query('SELECT heartbeat_at,vision_day,vision_calls,capture_after,scheduled_day FROM ad_cloud_control WHERE id=1'),
-    pool.query(`SELECT DISTINCT ON (j.brand) j.brand,j.source_json->>'page_id' page_id,j.status,j.captured,j.note,j.created_at,j.finished_at,j.available_at,
+    pool.query(`SELECT DISTINCT ON (j.brand) j.id job_id,j.brand,j.source_json->>'page_id' page_id,j.status,j.captured,j.note,j.created_at,j.finished_at,j.available_at,
       COALESCE(live.active_count,0) active_count,live.last_checked_at
       FROM ad_cloud_jobs j LEFT JOIN ad_source_live_counts live ON live.page_id=j.source_json->>'page_id'
       WHERE j.status<>'imported' ORDER BY j.brand,j.created_at DESC,j.id DESC`),
@@ -371,7 +372,7 @@ export async function getCloudStatus(pool,{env=process.env,sources=[]}={}){
     pool.query("SELECT last_error,count(*)::int count FROM ad_cloud_candidates WHERE last_error IS NOT NULL AND status IN ('error','retry') GROUP BY last_error ORDER BY count DESC,last_error"),
     getProxyPoolStatus(pool,{env}),getProviderStatus(pool,{env}),getAdLifecyclePolicy(pool)]);
   const row=control.rows[0]||{},heartbeat=row.heartbeat_at;
-  return {mode:'cloud',schedule:{...cloudSchedule(policy),last_scheduled_day:row.scheduled_day||null,verified_pages_count:verifiedCloudSources(sources).length},capture_transport:transport,capture_provider:provider,vision_configured:config.configured,
+  return {mode:'cloud',visibility:{max_observation_age_hours:policy.active_max_age_hours},schedule:{...cloudSchedule(policy),last_scheduled_day:row.scheduled_day||null,verified_pages_count:verifiedCloudSources(sources).length},capture_transport:transport,capture_provider:provider,vision_configured:config.configured,
     analysis_status:config.configured?'configured':'waiting_config',
     message:!config.configured?'Bulut taraması etkin. Görsel analiz için sunucu API bağlantısı eksik; kaydedilen görseller kuyrukta bekler.':errors.rows.length?'Son görsel analizi tamamlanamadı. Kayıtlar kuyrukta korunuyor; servis bağlantısı ve kota kontrol edilmeli.':'Görseller sunucuda analiz edilir.',
     worker_heartbeat:heartbeat||null,worker_online:Boolean(heartbeat&&Date.now()-+new Date(heartbeat)<180000),
@@ -379,7 +380,7 @@ export async function getCloudStatus(pool,{env=process.env,sources=[]}={}){
     candidates:Object.fromEntries(counts.rows.map(x=>[x.status,x.count])),errors:errors.rows.map(x=>({code:/^(VISION_|CLOUD_)[A-Z0-9_]+$/.test(x.last_error)?x.last_error:'VISION_VALIDATION_ERROR',count:x.count})),sources:jobs.rows};
 }
 export function createCloudWorker(pool,sources,{capture=captureCloudAds,analyze=analyzeCloudImage,env=process.env,log=console.log,providerTick=runProviderTick}={}){
-  let running=false,reportedSources=false;
+  let running=false,reportedSources=false,lastAudit=null;
   return async function tick(){
     if(running)return {status:'busy'};running=true;
     const owner=randomUUID();let lease=false;
@@ -484,6 +485,10 @@ export function createCloudWorker(pool,sources,{capture=captureCloudAds,analyze=
       }
       const analysis=await analyzeNextCloudCandidate(pool,sources,owner,{env,analyze});
       const status=await getCloudStatus(pool,{env,sources});
+      if(provider.mode==='apify'){
+        const audit=JSON.stringify(adScanAudit(status,verifiedCloudSources(sources)));
+        if(audit!==lastAudit){log('[ad-scan-audit]',audit);lastAudit=audit;}
+      }
       if(!reportedSources){log('[ad-cloud-source-status]',JSON.stringify(status.sources.map(s=>({brand:s.brand,status:s.status,active_count:s.active_count||0,http_status:Number(s.note?.match(/HTTP (\d{3})/)?.[1])||null}))));reportedSources=true}
       log('[ad-cloud-worker]',JSON.stringify({mode:'cloud',capture_transport:transport.mode,capture_configured:transport.configured,capture_code:transport.code,proxy_count:status.capture_transport.proxy_count||0,proxy_available:status.capture_transport.available_count||0,scan_waiting:scan?.status?.startsWith('waiting')?scan.reason:null,analysis:analysis.status,code:analysis.code||null,brand:analysis.brand||null,category:analysis.category||null,category_evidence_missing:analysis.category_evidence_missing??null,pass:analysis.pass||null,vision_configured:status.vision_configured,candidates:status.candidates,errors:status.errors,calls_today:status.calls_today,scheduled_day:status.schedule.last_scheduled_day}));
       return {scan,analysis};

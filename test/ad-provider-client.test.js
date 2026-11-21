@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {providerConfig,providerStatus,providerHttpDiagnostics,startProviderRun,getProviderRun,findProviderRun,getProviderItems,getProviderSourceCount,fetchProviderImage,safeProviderImageUrl} from '../src/ad-provider-client.js';
+import {providerConfig,providerStatus,providerHttpDiagnostics,startProviderRun,startProviderCountRun,getProviderRun,findProviderRun,findProviderCountRun,getProviderItems,readProviderSourceCount,fetchProviderImage,safeProviderImageUrl} from '../src/ad-provider-client.js';
 import {adLibraryUrl} from '../src/ad-library-url.js';
 
 const env={AD_CAPTURE_PROVIDER:'apify',APIFY_TOKEN:'secret-test-token',APIFY_MAX_RUN_USD:'0.50',APIFY_DAILY_BUDGET_USD:'2'};
@@ -78,30 +78,75 @@ test('one async run requests every active CY creative with a hard budget and bea
   assert.deepEqual(result,run);assert.equal(calls,1);
 });
 
+test('count-only starts return a durable run immediately, within the reserved cap and without waiting for completion',async()=>{
+  let starts=0;
+  const result=await startProviderCountRun(source,{env,maxUsd:0.02,fetcher:async(target,options)=>{
+    starts++;
+    const url=new URL(target),input=JSON.parse(options.body);
+    assert.equal(options.method,'POST');
+    assert.equal(url.searchParams.get('waitForFinish'),'0');
+    assert.equal(url.searchParams.get('timeout'),'60');
+    assert.equal(url.searchParams.get('maxTotalChargeUsd'),'0.02');
+    assert.equal(url.searchParams.get('restartOnError'),'false');
+    assert.deepEqual(input,{startUrls:[{url:adLibraryUrl(source)}],onlyTotal:true,includeAboutPage:false,isDetailsPerAd:false,enrichWithEcommerceData:false});
+    return json({data:run});
+  }});
+  assert.deepEqual(result,run);assert.equal(starts,1);
+  await assert.rejects(startProviderCountRun(source,{env,maxUsd:0.6,fetcher:async()=>assert.fail('invalid cap must not start a run')}),{code:'PROVIDER_BUDGET_REQUIRED'});
+});
+
 test('independent count reads exactly one summary from a successful count-only run for the same page and filters',async()=>{
   const url=adLibraryUrl(source),header={'x-apify-pagination-total':'1','x-apify-pagination-count':'1','x-apify-pagination-offset':'0'};
-  async function count(row,status='SUCCEEDED'){
+  async function count(row,status='SUCCEEDED',usageTotalUsd=0){
     let requests=0;
-    const result=await getProviderSourceCount(source,{env,maxUsd:0.02,fetcher:async(target,options)=>{
+    const result=await readProviderSourceCount(source,{...run,status,usageTotalUsd},{env,maxUsd:0.02,fetcher:async(target,options)=>{
       requests++;
-      if(options.method==='POST'){
-        assert.equal(JSON.parse(options.body).onlyTotal,true);
-        assert.deepEqual(JSON.parse(options.body).startUrls,[{url}]);
-        assert.equal(new URL(target).searchParams.get('maxTotalChargeUsd'),'0.02');
-        return json({data:{...run,status}});
-      }
+      assert.equal(options.method,'GET','reading a saved count must never start another paid run');
       assert.match(target,/\/datasets\/[^/]+\/items\?/);
       return json([row],200,header);
     }});
-    assert.equal(requests,status==='SUCCEEDED'?2:1);
+    assert.equal(requests,status==='SUCCEEDED'&&Number.isFinite(usageTotalUsd)&&usageTotalUsd>=0&&usageTotalUsd<0.02?1:0);
     return result;
   }
   assert.equal(await count({inputUrl:url,totalCount:4}),4);
   assert.equal(await count({pageId:source.page_id,totalAds:4}),4);
   assert.equal(await count({pageId:source.page_id,expected_ads:4,coverage_complete:true}),4);
   assert.equal(await count({pageId:source.page_id,expected_ads:4,coverage_complete:false}),null);
-  for(const row of [{inputUrl:url.replace('country=CY','country=ALL'),totalCount:4},{inputUrl:'bad',totalCount:4},{totalCount:'4'},{totalCount:4,adCount:3},{totalCount:4,totalCountIsMinimum:true},{pageId:'999999',totalCount:4},{adArchiveID:'123456',totalCount:4},{totalCount:4,isResultComplete:false},{error:'blocked',totalCount:0}])assert.equal(await count(row),null);
-  assert.equal(await count({totalCount:4},'TIMED-OUT'),null);
+  for(const row of [{inputUrl:url.replace('country=CY','country=ALL'),totalCount:4},{inputUrl:'bad',totalCount:4},{totalCount:'4'},{totalCount:4,adCount:3},{totalCount:4,totalCountIsMinimum:true},{totalCount:4,totalCountIsMinimum:'false'},{pageId:'999999',totalCount:4},{adArchiveID:'123456',totalCount:4},{totalCount:4,isResultComplete:false},{error:'blocked',totalCount:0}])assert.equal(await count(row),null);
+  for(const state of ['RUNNING','TIMED-OUT','FAILED','ABORTED'])assert.equal(await count({totalCount:4},state),null);
+  for(const usage of [0.02,0.03,null,NaN,-0.01])assert.equal(await count({totalCount:4},'SUCCEEDED',usage),null);
+  assert.equal(await count({totalCount:4},'SUCCEEDED',0.01),4);
+});
+
+test('saved count datasets reject extra summaries and can be retried read-only after a failed read',async()=>{
+  const finished={...run,status:'SUCCEEDED'},options={env,maxUsd:0.02};
+  assert.equal(await readProviderSourceCount(source,finished,{...options,fetcher:async()=>json([{totalCount:1},{totalCount:1}],200,{
+    'x-apify-pagination-total':'2','x-apify-pagination-count':'2','x-apify-pagination-offset':'0'
+  })}),null);
+  const counts={starts:0,reads:0};
+  const fetcher=async(_,request)=>{
+    if(request.method==='POST')counts.starts++;
+    counts.reads++;
+    if(counts.reads===1)return json({},503);
+    return json([{totalCount:3}],200,{'x-apify-pagination-total':'1','x-apify-pagination-count':'1','x-apify-pagination-offset':'0'});
+  };
+  await assert.rejects(readProviderSourceCount(source,finished,{...options,fetcher}),{code:'PROVIDER_UNAVAILABLE'});
+  assert.equal(await readProviderSourceCount(source,finished,{...options,fetcher}),3);
+  assert.deepEqual(counts,{starts:0,reads:2});
+});
+
+test('count-start reconciliation cannot adopt a creative run or a limited input',async()=>{
+  const createdAt='2026-11-21T07:00:00Z';
+  const candidate={...run,status:'SUCCEEDED',startedAt:'2026-11-21T07:00:01Z',defaultKeyValueStoreId:'storeABC12345'};
+  const input={startUrls:[{url:adLibraryUrl(source)}],onlyTotal:true,includeAboutPage:false,isDetailsPerAd:false,enrichWithEcommerceData:false};
+  const fetcher=async(url,options)=>{
+    assert.equal(options.method,'GET');
+    return url.includes('/actors/')?json({data:{items:[candidate],offset:0,count:1,total:1}}):json(input);
+  };
+  assert.deepEqual(await findProviderCountRun(source,{createdAt,env,fetcher}),{...run,status:'SUCCEEDED'});
+  assert.equal(await findProviderRun(source,{createdAt,env,fetcher}),null);
+  input.onlyTotal=false;assert.equal(await findProviderCountRun(source,{createdAt,env,fetcher}),null);
+  input.onlyTotal=true;input.maxItems=1;assert.equal(await findProviderCountRun(source,{createdAt,env,fetcher}),null);
 });
 
 test('ambiguous create failure is marked and never retried; provider error text is redacted',async()=>{
