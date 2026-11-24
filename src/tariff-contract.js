@@ -5,7 +5,7 @@ import {extractRelevantText, normalizeIdentity, parseCards} from './parser.js';
 // This contract covers the existing GSM parser's supported card shapes. Known
 // untracked shapes are inventoried explicitly, never silently treated as a
 // disappearing tracked product. New layouts require a reviewed contract update.
-export const TARIFF_CONTRACT_VERSION = 'telsim-dom-v1';
+export const TARIFF_CONTRACT_VERSION = 'telsim-dom-v2';
 const shellSelector = 'div.shadow-full';
 const quotaSelector = 'h1.text-2xl';
 const priceSelector = 'h1.text-4xl';
@@ -42,7 +42,17 @@ function sourceContract(source) {
   return expected;
 }
 
-function supportedShape(name, quota, text) {
+function supportedShape(name, quota, text, sourceSlug, hasPurchaseControl) {
+  // The archive repeats the same display names as current offers, but the
+  // archive combines standard data and Özgür Pass in the heading. Recognize
+  // only the proven retired Super Red layout; never import it as a new offer.
+  const red = /^Super Red (8|10|15|20|25|30)$/.exec(name);
+  const combined = /^(\d+)\s*GB\s*\+\s*(\d+)\s*GB Özgür Pass$/i.exec(quota);
+  if (sourceSlug === 'diger-faturali' && red && combined &&
+      Number(red[1]) === Number(combined[1]) && Number(combined[2]) > 0 &&
+      !hasPurchaseControl && text.split('\n').includes('Bu tarife sonlanmıştır')) {
+    return {excluded: 'retired-super-red-combined-allowance'};
+  }
   const standard = quota.match(/^(\d+(?:[.,]\d+)?)\s*GB(?:\s*\([^)]*\))?$/i);
   if (standard) return {data: Number(standard[1].replace(',', '.'))};
   // Red Box is already present under this legacy body-derived identity. Keep
@@ -82,7 +92,7 @@ export function parseValidatedTariffPage(html, source) {
     reject('Kart sayısı ile fiyat, kota veya detay alanı sayısı uyuşmuyor');
   }
 
-  const cards = [], excluded = [];
+  const cards = [], excluded = [], purchasableRedCards = new Map();
   for (const [index, node] of shells.entries()) {
     const shell = $(node), sections = shell.children();
     if (shell.find(shellSelector).length || sections.length !== 2 || !sections.first().hasClass('rounded-t')) {
@@ -96,7 +106,9 @@ export function parseValidatedTariffPage(html, source) {
     const currency = normalize(prices.parent().text());
     if (price == null || !/^₺\s*\d/.test(currency)) reject('Ana fiyat alanı veya TL para birimi doğrulanamadı', index);
     const text = extractRelevantText(`<body>${$.html(node)}</body>`, '');
-    const shape = supportedShape(name, normalize(quotas.text()), text);
+    const hasPurchaseControl = body.find('button,a').toArray().some(item =>
+      /^(Hemen Başvur|Satın Al)$/i.test(normalize($(item).text())));
+    const shape = supportedShape(name, normalize(quotas.text()), text, expected.slug, hasPurchaseControl);
     if (!shape) reject('Kota alanında tanınmayan veya belirsiz kart biçimi', index);
     const parsed = parseCards(text);
     if (shape.excluded) {
@@ -114,6 +126,12 @@ export function parseValidatedTariffPage(html, source) {
     // Competing SMS values cannot be resolved by simply taking the first one.
     const sms = [...text.matchAll(/(\d[\d.]*)\s*SMS\b/gi)].map(match => Number(match[1].replace(/\./g, '')));
     if (new Set(sms).size > 1) reject('Kartta çelişen SMS değerleri var', index);
+    if (expected.slug === 'diger-faturali' && hasPurchaseControl && /^Super Red (8|10|15|20|25|30)$/.test(name) &&
+        !text.split('\n').includes('Bu tarife sonlanmıştır')) {
+      const hashes = purchasableRedCards.get(name) || new Set();
+      hashes.add(card.product_hash);
+      purchasableRedCards.set(name, hashes);
+    }
     cards.push({...card, position: cards.length});
   }
   if (!cards.length) reject('Desteklenen ve doğrulanan tarife kartı bulunamadı');
@@ -129,6 +147,11 @@ export function parseValidatedTariffPage(html, source) {
     cards,
     relevantText,
     validation: {contract_version: TARIFF_CONTRACT_VERSION, scope: 'supported-gsm-card-shapes',
-      candidate_count: shells.length, validated_count: cards.length, excluded}
+      candidate_count: shells.length, validated_count: cards.length,
+      excluded: excluded.map(item => {
+        const hashes = purchasableRedCards.get(item.name);
+        return item.reason === 'retired-super-red-combined-allowance' && hashes?.size === 1
+          ? {...item, live_counterpart_hash: [...hashes][0]} : item;
+      })}
   };
 }

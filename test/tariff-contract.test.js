@@ -20,7 +20,7 @@ test('known sources parse isolated cards, preserving distinct prices and avoidin
     const parsed=parse(page(`${first}<h2>Numara Taşıma Teklifleri</h2>${second}<footer>Happy Avantajlar İlk 6 ay 100 TL</footer>`),source);
     assert.deepEqual(parsed.cards.map(item=>item.price_try),[999,1099]);
     assert.deepEqual(parsed.cards.map(item=>item.extras_json),[['Aşım Yok'],['Aşım Yok']]);
-    assert.deepEqual(parsed.validation,{contract_version:'telsim-dom-v1',scope:'supported-gsm-card-shapes',candidate_count:2,validated_count:2,excluded:[]});
+    assert.deepEqual(parsed.validation,{contract_version:'telsim-dom-v2',scope:'supported-gsm-card-shapes',candidate_count:2,validated_count:2,excluded:[]});
   }
 });
 
@@ -93,4 +93,18 @@ test('unknown sources, wrong paths and empty pages never become a valid baseline
   ]) assert.throws(()=>parse(page(card()),source),error=>error.code==='TARIFF_CONTRACT_ERROR');
   rejects(page('<p>Geçici olarak hizmet verilemiyor</p>'));
   rejects(page(card()).replace('</body></html>',''));
+});
+
+test('retired combined Super Red cards are inventoried separately from the live split-quota offer',()=>{
+  const live=card({name:'Super Red 10',data:'10 GB',price:'669',benefits:'+ 15 GB Özgür Pass'});
+  const archive=card({name:'Super Red 10',data:'10 GB + 15 GB Özgür Pass',price:'2109',benefits:'Bu tarife sonlanmıştır',cta:false});
+  const result=parse(page(live+archive),SOURCE_DEFS[2]);
+  assert.deepEqual(result.cards.map(c=>[c.name,c.data_gb,c.bonus_data_gb,c.price_try]),[['Super Red 10',10,15,669]]);
+  assert.deepEqual(result.validation.excluded.map(item=>item.reason),['retired-super-red-combined-allowance']);
+  for(const changed of [
+    archive.replace('Bu tarife sonlanmıştır','Aşım Yok'),
+    archive.replace('Detayları Göster</button>','Detayları Göster</button><button>Hemen Başvur</button>'),
+    archive.replace('10 GB +','11 GB +')
+  ]) assert.equal(parse(page(live+changed),SOURCE_DEFS[2]).validation.excluded[0].reason,'legacy-combined-allowance');
+  assert.equal(parse(page(live+archive)).validation.excluded[0].reason,'legacy-combined-allowance');
 });

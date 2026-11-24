@@ -1,6 +1,6 @@
 # GSM tariff extraction contract
 
-`telsim-dom-v1` validates the three configured KKTC Telsim tariff pages before
+`telsim-dom-v2` validates the three configured KKTC Telsim tariff pages before
 publishing any catalogue changes. Its scope is the existing parser's supported
 GSM card shapes, not every offer on the website.
 
@@ -51,6 +51,13 @@ unlimited Red Box. They are returned in scan diagnostics and saved with snapshot
 validation metadata. These counts must not be described as complete coverage of
 all website offers. A previously tracked identity entering an excluded shape is
 rejected instead of becoming an apparent removal.
+
+In Diğer Faturalı, end-of-sale Super Red cards with a combined data + Özgür Pass
+heading and no purchase control are inventoried separately. An excluded retired
+card sharing a tracked name does not block the scan only when one previously
+tracked split-quota card and one validated live counterpart establish continuity.
+A missing or ambiguous live counterpart still fails closed. The retired card
+cannot publish a new product or overwrite the live price.
 
 Numeric Red Box cards still use the existing body-derived identity
 `12 Ay Tarifeye Ek`. The validation guard protects that legacy identity when a
