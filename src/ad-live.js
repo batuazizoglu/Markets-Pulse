@@ -2,11 +2,22 @@
 // scheduling always read ad_lifecycle_policy so deployments do not own ad state.
 export const AD_ACTIVE_MAX_AGE_HOURS=30;
 export const AD_LIFECYCLE_DEFAULTS=Object.freeze({active_max_age_hours:AD_ACTIVE_MAX_AGE_HOURS,daily_scan_hour:6,timezone:'Asia/Famagusta'});
+
+export function isValidAdTimeZone(value){
+  // Intl also accepts raw UTC offsets on newer Node versions. Schedules use named zones.
+  if(typeof value!=='string' || !/^[A-Za-z][A-Za-z0-9_+./-]{0,79}$/.test(value))return false;
+  try{
+    new Intl.DateTimeFormat('en',{timeZone:value});
+    return true;
+  }catch{
+    return false;
+  }
+}
+
 export async function getAdLifecyclePolicy(db){
   const row=(await db.query('SELECT active_max_age_hours,daily_scan_hour,timezone,updated_at FROM ad_lifecycle_policy WHERE id=1')).rows[0]||{};
   const active=Number(row.active_max_age_hours),hour=Number(row.daily_scan_hour);
-  let timezone=typeof row.timezone==='string'?row.timezone:AD_LIFECYCLE_DEFAULTS.timezone;
-  try{new Intl.DateTimeFormat('en',{timeZone:timezone}).format()}catch{timezone=AD_LIFECYCLE_DEFAULTS.timezone}
+  const timezone=isValidAdTimeZone(row.timezone)?row.timezone:AD_LIFECYCLE_DEFAULTS.timezone;
   return {active_max_age_hours:Number.isInteger(active)&&active>=1&&active<=168?active:AD_LIFECYCLE_DEFAULTS.active_max_age_hours,
     daily_scan_hour:Number.isInteger(hour)&&hour>=0&&hour<=23?hour:AD_LIFECYCLE_DEFAULTS.daily_scan_hour,timezone,updated_at:row.updated_at||null};
 }

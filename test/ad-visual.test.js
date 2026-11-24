@@ -22,6 +22,17 @@ function fixture(category='gsm',n=0){
 }
 const valid=f=>validateAdFeed(f,HOME_INTERNET_SOURCES);
 async function dbFixture(){const db=new PGlite();await db.exec(SCHEMA_SQL);return db}
+test('feed validation preserves supported named time zones and rejects invalid schedule input',()=>{
+  const feed=fixture();
+  for(const timezone of ['Asia/Famagusta','UTC','Europe/Istanbul','Etc/GMT+3']){
+    feed.schedule.timezone=timezone;
+    assert.equal(valid(feed).schedule.timezone,timezone);
+  }
+  for(const timezone of ['Invalid/Zone','+03:00','',' UTC','UTC\0extra',null,undefined,{},42]){
+    feed.schedule.timezone=timezone;
+    assert.throws(()=>valid(feed),/saat dilimi/i);
+  }
+});
 test('visual feed separates home, GSM and MNP using explicit evidence, never doubles uncertain GB',()=>{
   for(const category of ['home','gsm','mnp'])assert.equal(valid(fixture(category)).ads[0].category,category);
   const ad=valid(fixture()).ads[0];assert.equal(ad.offer.data_gb,25);assert.equal(ad.offer.bonus_data_gb,null);assert.equal(ad.offer.commitment_months,null);
