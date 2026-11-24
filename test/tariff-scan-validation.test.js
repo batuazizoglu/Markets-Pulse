@@ -202,9 +202,9 @@ test('successful complete scans still publish genuine prices and require two com
   await reset();await scan(page(card()+second()));
   const first=await scan(page(card({price:'1099'})));
   assert.equal(first.ok,true);assert.equal(first.changes,1);
-  assert.equal(first.validation.contract_version,'telsim-dom-v1');
+  assert.equal(first.validation.contract_version,'telsim-dom-v2');
   const evidence=(await db.query('SELECT screenshot_meta FROM snapshots WHERE scan_id=$1',[first.scan_id])).rows[0];
-  assert.equal(evidence.screenshot_meta.validation.contract_version,'telsim-dom-v1');
+  assert.equal(evidence.screenshot_meta.validation.contract_version,'telsim-dom-v2');
   assert.deepEqual((await db.query('SELECT field_name,old_value,new_value FROM changes')).rows,[{field_name:'Fiyat',old_value:'999',new_value:'1099'}]);
   const waiting=(await db.query("SELECT active,missing_count FROM products WHERE current_name='Super Simple 20'")).rows[0];
   assert.deepEqual(waiting,{active:true,missing_count:1});
