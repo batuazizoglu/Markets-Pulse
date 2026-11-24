@@ -69,7 +69,7 @@ export async function scanSource(source, {db=pool, fetchPage=fetch, captureEvide
     // Publish versions, changes, absence counters and the successful scan as
     // one unit. A failed write cannot leak a partly updated catalogue/email.
     const meaningfulChanges = await scanTransaction(db, async client => {
-      await assertExcludedTariffsUntracked(source, validation, client);
+      await assertExcludedTariffsUntracked(source, validation, cards, client);
       await assertNoAmbiguousVariantCollapse(source, parsed.cards, cards, client);
       const changeCount = await processCards(source, scanId, cards, baseline, started, client);
       const removedCount = await processMissing(source, scanId, cards, baseline, started, client);
@@ -140,16 +140,36 @@ function assertSourceResponseUrl(requested, received) {
   throw error;
 }
 
-async function assertExcludedTariffsUntracked(source, validation, db) {
+async function assertExcludedTariffsUntracked(source, validation, cards, db) {
   const excluded = validation?.excluded || [];
   if (!excluded.length) return;
-  const current = (await db.query('SELECT current_name,identity_base FROM products WHERE source_id=$1 AND active=TRUE',[source.id])).rows;
+  const current = (await db.query(`SELECT p.current_name,p.identity_base,v.raw_text
+    FROM products p LEFT JOIN LATERAL (
+      SELECT raw_text FROM product_versions WHERE product_id=p.id ORDER BY captured_at DESC,id DESC LIMIT 1
+    ) v ON TRUE WHERE p.source_id=$1 AND p.active=TRUE`,[source.id])).rows;
   const normalized = value => String(value || '').trim().toLocaleLowerCase('tr-TR');
   for (const item of excluded) {
     const identities = new Set([item.identity_base,...(item.protected_identity_bases || [])].filter(Boolean));
-    const existing = current.find(product => identities.has(product.identity_base) ||
+    const tracked = current.filter(product => identities.has(product.identity_base) ||
       (normalized(item.name) && normalized(item.name) === normalized(product.current_name)));
-    if (!existing) continue;
+    if (!tracked.length) continue;
+    const existing = tracked[0];
+    if (item.reason === 'retired-super-red-combined-allowance') {
+      const counterparts = cards.filter(card => card.identity_base === item.identity_base);
+      const previousRows = String(existing.raw_text || '').split(' | ');
+      // Permit the archive duplicate only when one previously tracked split
+      // card and one currently verified live card resolve the same exact name.
+      // With no live counterpart or more than one tracked variant, fail closed.
+      if (tracked.length === 1 && existing.current_name === item.name &&
+          previousRows[0] === item.name && /^\d+\s*GB$/i.test(previousRows[1] || '') &&
+          previousRows.some(row => /^\+\s*\d+\s*GB Özgür Pass$/i.test(row)) &&
+          !previousRows.includes('Bu tarife sonlanmıştır') &&
+          counterparts.length === 1 && counterparts[0].name === item.name &&
+          counterparts[0].product_hash === item.live_counterpart_hash &&
+          counterparts[0].bonus_data_gb > 0 &&
+          counterparts[0].raw_text.split(' | ').some(row => /^\+\s*\d+\s*GB Özgür Pass$/i.test(row)) &&
+          !counterparts[0].raw_text.split(' | ').includes('Bu tarife sonlanmıştır')) continue;
+    }
     const error = new Error(`İzlenen paket mevcut kart biçimiyle doğrulanamadı: ${existing.current_name}. Son doğrulanmış veriler korundu.`);
     error.code = 'TARIFF_CONTRACT_ERROR';
     throw error;

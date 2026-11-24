@@ -232,3 +232,26 @@ test('post-commit evidence storage failure cannot invalidate a validated publish
   assert.equal((await db.query('SELECT COUNT(*)::int n FROM changes WHERE scan_id=$1',[result.scan_id])).rows[0].n,1);
   assert.equal((await queueGsmChangeNotification(db,[result.scan_id])).change_count,1);
 });
+
+test('retired Super Red duplicate cannot replace a tracked live card or generate a false price alert',async()=>{
+  await reset();
+  const other={id:2,...SOURCE_DEFS[2]};
+  await db.query('INSERT INTO sources(id,slug,name,url) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING',[other.id,other.slug,other.name,other.url]);
+  const red=(price='669')=>card({name:'Super Red 10',data:'10 GB',price,extra:'+ 15 GB Özgür Pass'});
+  const retired=card({name:'Super Red 10',data:'10 GB + 15 GB Özgür Pass',price:'2109',extra:'Bu tarife sonlanmıştır',cta:''});
+  const run=html=>scanSource(other,{db,fetchPage:async()=>({ok:true,status:200,text:async()=>page(html)}),captureEvidence});
+  assert.equal((await run(red()+second())).ok,true);
+  const recovery=await run(red()+second()+retired);
+  assert.equal(recovery.ok,true);assert.equal(recovery.changes,0);
+  const changed=await run(red('699')+second()+retired);
+  assert.equal(changed.ok,true);assert.equal(changed.changes,1);
+  const before=await catalogueState();
+  assert.equal(before.products.filter(row=>row.current_name==='Super Red 10').length,1);
+  const missing=await run(second()+retired);
+  assert.equal(missing.ok,false);assert.match(missing.error,/Super Red 10/);
+  const withoutPurchaseControl=await run(red('699').replace('Hemen Başvur','')+second()+retired);
+  assert.equal(withoutPurchaseControl.ok,false);assert.match(withoutPurchaseControl.error,/Super Red 10/);
+  const ambiguous=await run(red('699')+red('759')+second()+retired);
+  assert.equal(ambiguous.ok,false);assert.match(ambiguous.error,/Super Red 10/);
+  assert.deepEqual(await catalogueState(),before);
+});
