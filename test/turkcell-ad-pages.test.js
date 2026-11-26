@@ -26,13 +26,13 @@ test('GNÇ is a distinct social advertiser while Turkcell home shares one captur
   assert.ok(!verified.some(source=>source.brand==='Turkcell Ev İnterneti'));
 });
 
-test('new Turkcell pages register once beside eight existing pages, then join daily scans without duplicate aliases or provider spend',async()=>{
+test('new Turkcell pages register once beside seven monitored pages, then join daily scans without duplicate aliases or provider spend',async()=>{
   const db=new PGlite(),verified=verifiedCloudSources(HOME_INTERNET_SOURCES);
   try{
     await db.exec(SCHEMA_SQL);
     await db.query("UPDATE ad_cloud_control SET lease_owner='turkcell-page-test',lease_until=NOW()+INTERVAL '10 minutes' WHERE id=1");
-    const existing=verified.filter(source=>!Object.values(ids).includes(source.page_id));
-    assert.equal(existing.length,8);
+    const existing=verified.filter(source=>!Object.values(ids).includes(source.page_id)&&source.brand!=='Xrealnet');
+    assert.equal(existing.length,7);
     for(const source of existing)await db.query('INSERT INTO ad_cloud_jobs(batch_key,brand,source_json) VALUES($1,$2,$3::jsonb)',
       ['source-'+source.page_id,source.brand,JSON.stringify(source)]);
     for(const brand of ['KKTCELL','Turkcell Ev İnterneti'])await db.query("INSERT INTO ad_cloud_jobs(batch_key,brand,source_json,status,note) VALUES('historical-keyword',$1,$2::jsonb,'unverified','Historical unverified result')",
@@ -42,21 +42,36 @@ test('new Turkcell pages register once beside eight existing pages, then join da
     assert.deepEqual(await queueNewCloudSources(db,HOME_INTERNET_SOURCES,'turkcell-page-test'),[]);
     assert.deepEqual(await queueProviderHandoff(db,HOME_INTERNET_SOURCES,'turkcell-page-test',{env}),{recovered:0,queued:0,brands:[]});
     const queued=(await db.query("SELECT brand,source_json->>'page_id' page_id FROM ad_cloud_jobs WHERE status='queued'")).rows;
-    assert.equal(queued.length,10);
-    assert.equal(new Set(queued.map(source=>source.page_id)).size,10);
+    assert.equal(queued.length,9);
+    assert.equal(new Set(queued.map(source=>source.page_id)).size,9);
     assert.equal(queued.filter(source=>source.page_id===ids.turkcell).length,1);
     assert.deepEqual((await db.query("SELECT * FROM ad_cloud_jobs WHERE batch_key='historical-keyword' ORDER BY id")).rows,history);
     assert.equal((await queueCloudReview(db,HOME_INTERNET_SOURCES,{env,now:new Date('2030-07-01T09:00:00Z')})).queued,0);
     await db.query("UPDATE ad_cloud_jobs SET status='no_ads',finished_at=NOW() WHERE status='queued'");
     const daily=await queueCloudReview(db,HOME_INTERNET_SOURCES,{env,now:new Date('2030-07-02T09:00:00Z')});
-    assert.equal(daily.queued,10);
+    assert.equal(daily.queued,9);
     const next=(await db.query("SELECT brand,source_json->>'page_id' page_id FROM ad_cloud_jobs WHERE batch_key=$1",[daily.batch_key])).rows;
-    assert.equal(new Set(next.map(source=>source.page_id)).size,10);
+    assert.equal(new Set(next.map(source=>source.page_id)).size,9);
     for(const id of Object.values(ids))assert.equal(next.filter(source=>source.page_id===id).length,1);
     assert.equal((await queueCloudReview(db,HOME_INTERNET_SOURCES,{env,now:new Date('2030-07-02T10:00:00Z')})).queued,0);
-    assert.equal((await getCloudStatus(db,{env,sources:HOME_INTERNET_SOURCES})).schedule.verified_pages_count,10);
+    assert.equal((await getCloudStatus(db,{env,sources:HOME_INTERNET_SOURCES})).schedule.verified_pages_count,9);
     assert.equal((await db.query('SELECT count(*)::int n FROM ad_provider_runs')).rows[0].n,0);
     assert.equal((await db.query('SELECT count(*)::int n FROM ad_provider_budget')).rows[0].n,0);
+  }finally{await db.close()}
+});
+
+test('Xrealnet ad policy survives a restart and can be re-enabled independently of its ISP catalog',async()=>{
+  const db=new PGlite();
+  try{
+    await db.exec(SCHEMA_SQL);
+    assert.ok(HOME_INTERNET_SOURCES.some(source=>source.provider==='Xrealnet'));
+    const daily=now=>queueCloudReview(db,HOME_INTERNET_SOURCES,{env,now:new Date(now)});
+    assert.equal((await daily('2030-07-01T09:00:00Z')).queued,9);
+    assert.equal((await db.query("SELECT COUNT(*)::int n FROM ad_cloud_jobs WHERE brand='Xrealnet'")).rows[0].n,0);
+    await db.query("UPDATE ad_scan_source_policy SET scan_enabled=TRUE WHERE page_id='391015854865659'");
+    await db.exec(SCHEMA_SQL);
+    assert.equal((await daily('2030-07-02T09:00:00Z')).queued,1);
+    assert.equal((await db.query("SELECT brand FROM ad_cloud_jobs WHERE batch_key='daily-2030-07-02'")).rows[0].brand,'Xrealnet');
   }finally{await db.close()}
 });
 

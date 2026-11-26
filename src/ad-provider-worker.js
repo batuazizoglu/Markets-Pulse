@@ -99,7 +99,7 @@ export async function runProviderTick(pool,sources,{env=process.env,owner,assert
     });
   };
 
-  const active=(await pool.query(`SELECT r.*,j.brand,j.source_json FROM ad_provider_runs r JOIN ad_cloud_jobs j ON j.id=r.job_id
+  const active=(await pool.query(`SELECT r.*,j.brand,j.source_json FROM ad_provider_runs r JOIN monitored_ad_cloud_jobs j ON j.id=r.job_id
     WHERE r.state=ANY($1::text[]) ORDER BY r.updated_at,r.job_id`,[ACTIVE])).rows;
   let run=active.find(r=>r.state==='creating' || readExpired(r) || +new Date(r.next_poll_at)<=+stamp());
   const waiting=()=>({status:'waiting_provider',job_id:active[0].job_id,retry_at:new Date(Math.min(...active.map(r=>+new Date(r.next_poll_at)))).toISOString()});
@@ -107,7 +107,7 @@ export async function runProviderTick(pool,sources,{env=process.env,owner,assert
     // At most one extra supplier run can progress while another source honors its wait period.
     if(active.length>=2)return waiting();
     if(!active.length){
-      const unknown=(await pool.query(`SELECT r.*,j.source_json FROM ad_provider_runs r JOIN ad_cloud_jobs j ON j.id=r.job_id
+      const unknown=(await pool.query(`SELECT r.*,j.source_json FROM ad_provider_runs r JOIN monitored_ad_cloud_jobs j ON j.id=r.job_id
         WHERE r.state='start_unknown' AND r.run_id IS NULL AND r.next_poll_at<=$1 ORDER BY r.next_poll_at,r.job_id LIMIT 1`,[stamp()])).rows[0];
       if(unknown){
         // Reserve the read before networking; failed/missing/ambiguous matches
@@ -137,7 +137,7 @@ export async function runProviderTick(pool,sources,{env=process.env,owner,assert
       }
     }
     const directory=socialDirectory(sources);
-    const eligible=(await pool.query(`SELECT j.* FROM ad_cloud_jobs j LEFT JOIN ad_provider_runs r ON r.job_id=j.id
+    const eligible=(await pool.query(`SELECT j.* FROM monitored_ad_cloud_jobs j LEFT JOIN ad_provider_runs r ON r.job_id=j.id
       WHERE r.job_id IS NULL AND j.status IN ('queued','retry') AND j.available_at<=$1 AND j.attempts<3
       AND NOT EXISTS(SELECT 1 FROM ad_provider_runs old JOIN ad_cloud_jobs prior ON prior.id=old.job_id
         WHERE prior.source_json->>'page_id'=j.source_json->>'page_id' AND old.state IN ('creating','start_unknown','running','importing','downloading')) ORDER BY j.id`,[stamp()])).rows;
@@ -283,7 +283,7 @@ export async function getProviderStatus(pool,{env=process.env,now=new Date()}={}
       COUNT(*) FILTER(WHERE a.status IN ('pending','retry'))::int pending,
       COUNT(*) FILTER(WHERE a.status='missing')::int missing,
       COUNT(*) FILTER(WHERE a.status='error')::int errors
-      FROM ad_provider_runs r JOIN ad_cloud_jobs j ON j.id=r.job_id LEFT JOIN ad_provider_assets a ON a.job_id=r.job_id
+      FROM ad_provider_runs r JOIN monitored_ad_cloud_jobs j ON j.id=r.job_id LEFT JOIN ad_provider_assets a ON a.job_id=r.job_id
       GROUP BY r.job_id,j.brand,j.source_json ORDER BY j.brand,r.created_at DESC,r.job_id DESC`)
   ]);
   return {provider:'apify',enabled,configured:enabled && config.configured,code:config.code,

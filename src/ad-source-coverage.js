@@ -1,5 +1,11 @@
 import {adLibraryUrl} from './ad-library-url.js';
 
+export async function getMonitoredAdSources(db,sources){
+  const {rows}=await db.query('SELECT page_id,brand FROM ad_scan_source_policy WHERE NOT scan_enabled');
+  const pages=new Set(rows.map(row=>row.page_id)),brands=new Set(rows.map(row=>row.brand));
+  return sources.filter(source=>!pages.has(source.page_id)&&!brands.has(source.brand));
+}
+
 // Source checks are independent of AI publication: unchanged creatives and
 // empty successful scans may not publish another analysis feed at all.
 export async function getCloudSourceCoverage(pool,{end=new Date()}={}){
@@ -8,7 +14,7 @@ export async function getCloudSourceCoverage(pool,{end=new Date()}={}){
     j.brand,j.source_json,j.status,j.created_at,j.started_at,j.finished_at,j.note,
     p.state provider_state,p.created_at provider_started_at,p.finished_at provider_finished_at,
     p.coverage_complete,p.expected_ads
-    FROM ad_cloud_jobs j LEFT JOIN ad_provider_runs p ON p.job_id=j.id
+    FROM monitored_ad_cloud_jobs j LEFT JOIN ad_provider_runs p ON p.job_id=j.id
     WHERE j.status<>'imported' AND j.created_at<$1
     ORDER BY j.brand,j.created_at DESC,j.id DESC`,[cutoff]);
   if(!rows.length)return null;

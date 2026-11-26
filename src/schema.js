@@ -367,6 +367,18 @@ CREATE TABLE IF NOT EXISTS ad_cloud_jobs (
 CREATE INDEX IF NOT EXISTS idx_ad_cloud_jobs_queue ON ad_cloud_jobs(status,available_at);
 ALTER TABLE ad_cloud_jobs ADD COLUMN IF NOT EXISTS proxy_key TEXT;
 ALTER TABLE ad_cloud_jobs ADD COLUMN IF NOT EXISTS proxy_attempts INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE IF NOT EXISTS ad_scan_source_policy (
+  page_id TEXT PRIMARY KEY,
+  brand TEXT NOT NULL UNIQUE,
+  scan_enabled BOOLEAN NOT NULL DEFAULT TRUE
+);
+INSERT INTO ad_scan_source_policy(page_id,brand,scan_enabled)
+  VALUES('391015854865659','Xrealnet',FALSE) ON CONFLICT DO NOTHING;
+CREATE OR REPLACE VIEW monitored_ad_cloud_jobs AS
+  SELECT j.* FROM ad_cloud_jobs j WHERE NOT EXISTS (
+    SELECT 1 FROM ad_scan_source_policy p WHERE NOT p.scan_enabled
+      AND (p.page_id=j.source_json->>'page_id' OR p.brand=j.brand)
+  );
 CREATE TABLE IF NOT EXISTS ad_cloud_proxy_health (
   proxy_key TEXT PRIMARY KEY,
   consecutive_failures INTEGER NOT NULL DEFAULT 0,
