@@ -11,6 +11,7 @@ import {adLibrarySource,pageState,markAdCards,captureRetryDelay} from '../src/ad
 import {normalizeVision,analyzeCloudImage} from '../src/ad-cloud-vision.js';
 const jpeg=Buffer.from([255,216,255,224,0,0,255,217]),hash=createHash('sha256').update(jpeg).digest('hex');
 const env={OPENAI_API_KEY:'synthetic-test-only',AD_VISION_DAILY_LIMIT:'1'};
+const monitoredPageCount=verifiedCloudSources(HOME_INTERNET_SOURCES).filter(x=>x.brand!=='Xrealnet').length;
 async function dbFixture(){const db=new PGlite();await db.exec(SCHEMA_SQL);return db}
 function observation(source){const at=new Date().toISOString();return {brand:source.brand,page_id:source.page_id,ad_id:'99999999',variant_id:'1',source_url:adLibrarySource(source),ad_status:'active',started_on:null,observed_at:at,ad_text:'Numaranızı taşıyın 25 GB 799 TL',has_video:false,evidence:[{sha256:hash,bytes:jpeg,captured_at:at}]}}
 function vision(){return {category:'mnp',category_evidence:'Numaranızı taşıyın',title:'Numara taşıma 25 GB',visible_text:'25 GB 799 TL',visual_summary:'Kırmızı fiyat kutusu',conditions:[],uncertainties:[],offer:{price_try:799,previous_price_try:null,data_gb:25,bonus_data_gb:null,minutes:null,speed_mbps:null,commitment_months:null,billing_period:'unknown'},field_evidence:{price_try:'799 TL',previous_price_try:'',data_gb:'25 GB',bonus_data_gb:'',minutes:'',speed_mbps:'',commitment_months:'',billing_period:''}}}
@@ -37,7 +38,7 @@ test('missing evidence cannot poison the queue or consume a paid model call',asy
 test('cloud scheduling persists daily deduplication, covers every verified page and throttles manual scans',async()=>{
   assert.deepEqual(localCloudTime(new Date('2026-09-18T03:00:00Z')),{day:'2026-09-18',hour:6});
   assert.equal(localCloudTime(new Date('2026-12-18T04:00:00Z')).hour,6);
-  const db=await dbFixture(),total=verifiedCloudSources(HOME_INTERNET_SOURCES).length;
+  const db=await dbFixture(),total=monitoredPageCount;
   try{
     assert.equal((await queueCloudReview(db,HOME_INTERNET_SOURCES,{now:new Date('2026-09-18T02:00:00Z')})).queued,0);
     const first=await queueCloudReview(db,HOME_INTERNET_SOURCES,{now:new Date('2026-09-18T03:00:00Z')});assert.equal(first.queued,total);
@@ -47,7 +48,7 @@ test('cloud scheduling persists daily deduplication, covers every verified page 
   }finally{await db.close()}
 });
 test('unverified brands never displace verified ISP pages from the next daily or manual batch',async()=>{
-  const db=await dbFixture(),env={AD_CAPTURE_PROVIDER:'apify'},total=verifiedCloudSources(HOME_INTERNET_SOURCES).length;
+  const db=await dbFixture(),env={AD_CAPTURE_PROVIDER:'apify'},total=monitoredPageCount;
   try{
     await queueCloudReview(db,HOME_INTERNET_SOURCES,{env,now:new Date('2026-09-18T03:00:00Z')});
     await db.query("UPDATE ad_cloud_jobs SET status='blocked',finished_at=NOW(),note='HTTP 403'");
@@ -168,10 +169,10 @@ test('newly verified pages enter the queue even after daily scheduling and do no
     await db.query("UPDATE ad_cloud_jobs SET status='unverified',source_json=source_json-'page_id' WHERE brand NOT IN ('Telsim','Cypking')");
     await db.query("UPDATE ad_cloud_control SET lease_owner='registration-test',lease_until=NOW()+INTERVAL '10 minutes'");
     const added=await queueNewCloudSources(db,HOME_INTERNET_SOURCES,'registration-test');
-    assert.equal(added.length,verifiedCloudSources(HOME_INTERNET_SOURCES).length-2);
+    assert.equal(added.length,monitoredPageCount-2);
     assert.equal((await queueCloudReview(db,HOME_INTERNET_SOURCES,{now:new Date('2026-09-19T05:00:00Z')})).queued,0);
     const registered=(await db.query("SELECT source_json FROM ad_cloud_jobs WHERE batch_key LIKE 'source-%'")).rows;
-    assert.equal(registered.length,verifiedCloudSources(HOME_INTERNET_SOURCES).length-2);
+    assert.equal(registered.length,monitoredPageCount-2);
     for(const {source_json:source} of registered){
       const url=new URL(adLibrarySource(source));
       assert.equal(url.searchParams.get('country'),'CY');assert.equal(url.searchParams.get('view_all_page_id'),source.page_id);

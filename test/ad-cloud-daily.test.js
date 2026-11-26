@@ -25,7 +25,7 @@ async function fixture(run){
     assert.equal(verified.length,new Set(socialDirectory(sources).filter(adLibrarySource).map(source=>source.page_id)).size);
     assert.equal(verified[0].brand,'Telsim');
     assert.ok(!verified.some(source=>source.brand===aliasBrand||source.brand==='ZZ Scheduler Test Alias'||source.brand==='Scheduler Unverified'));
-    await run({db,sources,verified});
+    await run({db,sources,verified:verified.filter(source=>source.brand!=='Xrealnet')});
   }finally{
     for(const [brand,value] of prior){if(value===undefined)delete ISP_SOCIALS[brand];else ISP_SOCIALS[brand]=value;}
     await db.close();
@@ -106,6 +106,7 @@ test('database policy changes the daily scan hour without a deployment',async()=
 test('a failed database batch with no current ads is recovered before the normal scan hour',async()=>fixture(async({db,sources,verified})=>{
   for(const source of verified)await db.query(`INSERT INTO ad_cloud_jobs(batch_key,brand,source_json,status,finished_at)
     VALUES('failed-prior',$1,$2::jsonb,'error',$3)`,[source.brand,JSON.stringify(source),new Date('2030-07-01T02:30:00Z')]);
+  await db.query("INSERT INTO ad_live_status(page_id,ad_id,ad_status,checked_at) VALUES('391015854865659','123456','active','2030-07-01T02:30:00Z')");
   const run=await queueCloudReview(db,sources,{env:{},now:new Date('2030-07-01T02:45:00Z')});
   assert.equal(run.recovery,true);assert.equal(run.queued,verified.length);
   assert.equal(run.batch_key,'daily-2030-07-01');

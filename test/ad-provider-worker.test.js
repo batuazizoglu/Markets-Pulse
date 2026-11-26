@@ -39,6 +39,29 @@ async function fixture(overrides={}) {
 async function toImport(f) {assert.equal((await f.tick()).status,'running');f.advance(15000);assert.equal((await f.tick()).status,'importing');}
 async function toDownload(f) {await toImport(f);assert.equal((await f.tick()).status,'downloading');}
 
+test('excluded Xrealnet jobs stay in history without reconciliation, capture or a spend reservation',async()=>{
+  let reconciles=0;
+  const f=await fixture({findProviderRun:async()=>{reconciles++;return null}});
+  try{
+    const source={brand:'Xrealnet',page_id:'391015854865659'};
+    const insert=async(batch,status)=>(await f.db.query(
+      'INSERT INTO ad_cloud_jobs(batch_key,brand,source_json,status) VALUES($1,$2,$3,$4) RETURNING id',
+      [batch,source.brand,source,status])).rows[0].id;
+    const id=await insert('old-ambiguous','blocked');
+    await f.db.query("INSERT INTO ad_provider_runs(job_id,state,max_run_usd,next_poll_at) VALUES($1,'start_unknown',0.10,NOW()-INTERVAL '1 day')",[id]);
+    await insert('old-queued','queued');
+    await f.db.query("UPDATE ad_cloud_jobs SET status='error' WHERE brand='Telsim'");
+    assert.equal((await f.tick()).status,'idle');
+    assert.equal(reconciles,0);
+    assert.equal(f.stats().starts,0);
+    const status=await getProviderStatus(f.db,{env});
+    assert.equal(status.starts_today,0);
+    assert.ok(!status.runs.some(run=>run.brand==='Xrealnet'));
+    assert.equal((await f.run()).state,'start_unknown');
+    assert.equal((await f.db.query("SELECT COUNT(*)::int n FROM ad_cloud_jobs WHERE brand='Xrealnet'")).rows[0].n,2);
+  }finally{await f.db.close()}
+});
+
 test('only a complete active-ad provider result retires ads absent from its result',async()=>{
   for(const complete of [true,false]){
     const f=await fixture({getProviderItems:async()=>({items:[{pageID:'164143610515',totalCount:0,isResultComplete:complete}],total:1,offset:0,count:1})});

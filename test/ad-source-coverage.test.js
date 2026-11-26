@@ -17,8 +17,10 @@ test('reports use completed source checks even without a new AI analysis, and re
   try{
     assert.equal(await getCloudSourceCoverage(db,{end}),null);
     await db.query("UPDATE ad_visual_sync SET status='partial',checked_at=$1,coverage_json=$2 WHERE id=1",[start,JSON.stringify([{brand:'Telsim',status:'partial',checked_at:start}])]);
+    await job(db,{brand:'Xrealnet',page:'391015854865659',state:'start_unknown',expected:null});
     await job(db);
     let report=await getAdReport(db,start,end);
+    assert.deepEqual(report.coverage.map(row=>row.brand),['Telsim']);
     assert.equal(report.status,'ok');assert.equal(report.coverage[0].status,'ok');assert.equal(report.coverage[0].reviewed_ads,2);
     assert.equal(+new Date(report.checked_at),+new Date(at));assert.equal(report.rows.length,0);
     const dashboard=await getAdVisuals(db,{now:new Date(end)});assert.equal(dashboard.monitoring.status,'ok');assert.equal(dashboard.monitoring.coverage[0].status,'ok');

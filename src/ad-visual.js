@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto';
-import {getCloudSourceCoverage} from './ad-source-coverage.js';
+import {getCloudSourceCoverage,getMonitoredAdSources} from './ad-source-coverage.js';
 import {getAdLifecyclePolicy,liveAdWindow,liveAdSql,recordAdStatus} from './ad-live.js';
 import {isDeepStrictEqual} from 'node:util';
 import {socialDirectory,verifiedFixedIspPageId} from './isp-registry.js';
@@ -258,6 +258,7 @@ export async function getAdVisuals(pool,{now=new Date(),...options}={}){
     pool.query('SELECT a.brand,a.category,count(*)::int count FROM ad_visual_lifecycle a WHERE '+visibility+' GROUP BY a.brand,a.category',liveAdWindow(now,policy)),pendingMediaCounts(pool,now,policy),getCloudSourceCoverage(pool,{end:now})
   ]);
   const status={...sync.rows[0],...(sourceCoverage?{checked_at:sourceCoverage.checked_at,status:sourceCoverage.status,last_error:sourceCoverage.last_error,coverage_json:sourceCoverage.coverage}:{})};
+  if(!sourceCoverage)status.coverage_json=await getMonitoredAdSources(pool,status.coverage_json||[]);
   const stale=t=>!t||+now-+new Date(t)>policy.active_max_age_hours*3600000;
   const hasMore=data.rows.length>limit,page=data.rows.slice(0,limit),last=page.at(-1);
   const groups=Object.fromEntries(Object.keys(categories).map(k=>[k,0])),brandGroups=Object.create(null);let total=0;
@@ -280,7 +281,8 @@ export async function getAdReport(pool,start,end,{category}={}){
   const r=await pool.query("SELECT event_type,analysis_json,observed_at FROM ad_visual_versions WHERE observed_at >= $1 AND observed_at < $2 AND event_type IN ('first_seen','changed') "+(category?"AND analysis_json->>'category'=$3 ":'')+"ORDER BY observed_at DESC,id DESC",params);
   const current=await pool.query('SELECT checked_at,status,last_error,coverage_json FROM ad_visual_sync WHERE id=1');
   const [live,policy,categories]=await Promise.all([getCloudSourceCoverage(pool,{end}),getAdLifecyclePolicy(pool),getAdCategories(pool)]);
-  return {rows:r.rows,categories,checked_at:current.rows[0]?.checked_at||null,status:current.rows[0]?.status||'pending',last_error:current.rows[0]?.last_error||null,coverage:current.rows[0]?.coverage_json||[],visibility:{max_observation_age_hours:policy.active_max_age_hours,policy_updated_at:policy.updated_at},...live};
+  const coverage=live?.coverage??await getMonitoredAdSources(pool,current.rows[0]?.coverage_json||[]);
+  return {rows:r.rows,categories,checked_at:current.rows[0]?.checked_at||null,status:current.rows[0]?.status||'pending',last_error:current.rows[0]?.last_error||null,coverage,visibility:{max_observation_age_hours:policy.active_max_age_hours,policy_updated_at:policy.updated_at},...live};
 }
 export function registerAdVisualRoutes(app,pool,sources,{sync=syncAdVisuals,now=Date.now,cloudStatus=null}={}){
   let lastManualSync=-Infinity;
@@ -299,7 +301,7 @@ export function registerAdVisualRoutes(app,pool,sources,{sync=syncAdVisuals,now=
   app.get('/api/ad-visuals',async(req,res,next)=>{try{
     const data=await getAdVisuals(pool,{limit:req.query.limit,brand:req.query.brand,category:req.query.category,view:req.query.view,cursor:req.query.cursor});
     // Source identity is independent of successful capture or AI publication.
-    data.source_directory=socialDirectory(sources).map(({brand,page_id,capture_brand,ad_library_url,ad_library_type,facebook,instagram,additional_social_links,research_note,research_checked_at})=>({brand,page_id:page_id||null,capture_brand,ad_library_url,ad_library_type,country:'CY',facebook,instagram,additional_social_links,research_note,research_checked_at}));
+    data.source_directory=(await getMonitoredAdSources(pool,socialDirectory(sources))).map(({brand,page_id,capture_brand,ad_library_url,ad_library_type,facebook,instagram,additional_social_links,research_note,research_checked_at})=>({brand,page_id:page_id||null,capture_brand,ad_library_url,ad_library_type,country:'CY',facebook,instagram,additional_social_links,research_note,research_checked_at}));
     if(cloudStatus){data.cloud=await cloudStatus();data.monitoring.schedule=data.cloud.schedule}
     res.json(req.appUser?.role==='admin'?data:standardAdVisuals(data));
   }catch(e){if(e.status===400)return res.status(400).json({error:e.message});next(e)}});

@@ -9,7 +9,7 @@ import {queueProviderHandoff,createCloudWorker,localCloudTime,verifiedCloudSourc
 
 const env={AD_CAPTURE_PROVIDER:'apify',APIFY_TOKEN:'synthetic-token',APIFY_MAX_RUN_USD:'0.10',APIFY_DAILY_BUDGET_USD:'1.00'};
 const directory=socialDirectory(HOME_INTERNET_SOURCES).filter(adLibrarySource);
-const verified=verifiedCloudSources(HOME_INTERNET_SOURCES);
+const verified=verifiedCloudSources(HOME_INTERNET_SOURCES).filter(x=>x.brand!=='Xrealnet');
 async function fixture(){
   const db=new PGlite();await db.exec(SCHEMA_SQL);
   for(const source of directory)await db.query("INSERT INTO ad_cloud_jobs(batch_key,brand,source_json,status,attempts,note) VALUES('old-browser',$1,$2::jsonb,'error',3,'Eski proxy hatası')",[source.brand,JSON.stringify(source)]);

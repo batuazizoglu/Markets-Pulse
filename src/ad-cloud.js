@@ -1,5 +1,5 @@
 import {randomUUID,createHash} from 'node:crypto';
-import {getCloudSourceCoverage} from './ad-source-coverage.js';
+import {getCloudSourceCoverage,getMonitoredAdSources} from './ad-source-coverage.js';
 import {AD_LIFECYCLE_DEFAULTS,getAdLifecyclePolicy,liveAdWindow,recordAdStatus,retireMissingAds} from './ad-live.js';
 import {socialDirectory,verifiedFixedIspPageId} from './isp-registry.js';
 import {captureCloudAds,adLibrarySource} from './ad-cloud-capture.js';
@@ -43,7 +43,7 @@ async function assertLease(db,owner){
   if(r.rows[0]?.lease_owner!==owner||+new Date(r.rows[0]?.lease_until)<=Date.now())throw new Error('CLOUD_LEASE_LOST');
 }
 export async function queueNewCloudSources(pool,sources,owner){
-  const directory=socialDirectory(sources),verified=verifiedCloudSources(sources);
+  const directory=socialDirectory(sources);
   return transaction(pool,async db=>{
     await assertLease(db,owner);
     // Refresh old keyword shortcuts without changing brand identities, evidence,
@@ -56,6 +56,7 @@ export async function queueNewCloudSources(pool,sources,owner){
       [source.brand,JSON.stringify(patch),source.ad_library_url,source.ad_library_search_name]);
     }
     const added=[];
+    const verified=await getMonitoredAdSources(db,verifiedCloudSources(sources));
     for(const source of verified){
       // Historical unverified jobs do not mean this numeric page has been scanned.
       const seen=await db.query("SELECT id FROM ad_cloud_jobs WHERE source_json->>'page_id'=$1 AND status<>'imported' LIMIT 1",[source.page_id]);
@@ -68,9 +69,10 @@ export async function queueNewCloudSources(pool,sources,owner){
 }
 export async function queueProviderHandoff(pool,sources,owner,{env=process.env,now=new Date()}={}){
   if(providerConfig(env).mode!=='apify')return {recovered:0,queued:0,brands:[]};
-  const verified=verifiedCloudSources(sources),day=localCloudTime(now).day;
+  const day=localCloudTime(now).day;
   return transaction(pool,async db=>{
     await assertLease(db,owner);
+    const verified=await getMonitoredAdSources(db,verifiedCloudSources(sources));
     // The acquired worker lease proves these unowned browser captures were interrupted.
     // Provider creation fences, accepted runs, captured evidence and spend reservations stay intact.
     const recovered=await db.query(`UPDATE ad_cloud_jobs SET status=CASE WHEN attempts>=3 THEN 'error' ELSE 'retry' END,
@@ -110,17 +112,18 @@ export async function queueCloudReview(pool,sources,{manual=false,now=new Date()
     const policy=await getAdLifecyclePolicy(db),local=localCloudTime(now,policy.timezone);
     const control=(await db.query('SELECT * FROM ad_cloud_control WHERE id=1 FOR UPDATE')).rows[0];
     if(!manual&&control.scheduled_day===local.day)return {queued:0};
+    const directory=await getMonitoredAdSources(db,verifiedCloudSources(sources));
     let recovery=false;
     if(!manual&&local.hour<policy.daily_scan_hour){
-      const directory=verifiedCloudSources(sources),cutoff=liveAdWindow(now,policy)[0];
+      const cutoff=liveAdWindow(now,policy)[0],pageIds=directory.map(source=>source.page_id);
       const [active,successful,failed]=await Promise.all([
-        db.query("SELECT COUNT(*)::int count FROM ad_live_status WHERE ad_status='active' AND checked_at>=$1 AND checked_at<=$2",[cutoff,new Date(+now+300000)]),
+        db.query("SELECT COUNT(*)::int count FROM ad_live_status WHERE ad_status='active' AND checked_at>=$1 AND checked_at<=$2 AND page_id=ANY($3::text[])",[cutoff,new Date(+now+300000),pageIds]),
         db.query(`SELECT COUNT(DISTINCT source_json->>'page_id')::int count FROM ad_cloud_jobs
           WHERE finished_at>=$1 AND status IN ('partial','complete','no_ads')
-          AND source_json->>'page_id'=ANY($2::text[])`,[cutoff,directory.map(source=>source.page_id)]),
+          AND source_json->>'page_id'=ANY($2::text[])`,[cutoff,pageIds]),
         db.query(`SELECT COUNT(DISTINCT source_json->>'page_id')::int count FROM ad_cloud_jobs
           WHERE finished_at>=$1 AND status IN ('error','blocked','start_unknown')
-          AND source_json->>'page_id'=ANY($2::text[])`,[cutoff,directory.map(source=>source.page_id)])
+          AND source_json->>'page_id'=ANY($2::text[])`,[cutoff,pageIds])
       ]);
       recovery=active.rows[0].count===0&&failed.rows[0].count>0&&successful.rows[0].count<directory.length;
       if(!recovery)return {queued:0};
@@ -128,14 +131,12 @@ export async function queueCloudReview(pool,sources,{manual=false,now=new Date()
     if(manual&&control.manual_after&&+new Date(control.manual_after)>+now)return {queued:0,rate_limited:true};
     if(manual){
       await db.query('UPDATE ad_cloud_control SET manual_after=$1 WHERE id=1',[new Date(+now+5*60000)]);
-      const active=await db.query("SELECT id FROM ad_cloud_jobs WHERE status IN ('queued','running','retry') LIMIT 1");
+      const active=await db.query("SELECT id FROM monitored_ad_cloud_jobs WHERE status IN ('queued','running','retry') LIMIT 1");
       if(active.rows.length)return {queued:0,already_queued:true};
     }
     const prior=await db.query('SELECT brand,MAX(created_at) last_at FROM ad_cloud_jobs GROUP BY brand');
     const dates=new Map(prior.rows.map(r=>[r.brand,+new Date(r.last_at)]));
-    // Unverified keyword searches cannot be captured. Every advertiser with a
-    // verified numeric page ID receives a daily check.
-    const directory=verifiedCloudSources(sources);
+    // Queue each enabled advertiser once per local day.
     const selected=[...directory.filter(x=>x.brand==='Telsim'),...directory.filter(x=>x.brand!=='Telsim').sort((a,b)=>(dates.get(a.brand)||0)-(dates.get(b.brand)||0)||Number(Boolean(b.page_id))-Number(Boolean(a.page_id)))];
     const batch=manual?'manual-'+randomUUID():'daily-'+local.day;let queued=0;
     for(const source of selected){
@@ -330,17 +331,17 @@ export async function analyzeNextCloudCandidate(pool,sources,owner,{env=process.
 }
 export async function getCloudStatus(pool,{env=process.env,sources=[]}={}){
   const config=visionConfig(env);
-  const [control,jobs,counts,errors,transport,provider,policy]=await Promise.all([
+  const [control,jobs,counts,errors,transport,provider,policy,verified]=await Promise.all([
     pool.query('SELECT heartbeat_at,vision_day,vision_calls,capture_after,scheduled_day FROM ad_cloud_control WHERE id=1'),
     pool.query(`SELECT DISTINCT ON (j.brand) j.brand,j.source_json->>'page_id' page_id,j.status,j.captured,j.note,j.created_at,j.finished_at,j.available_at,
       COALESCE(live.active_count,0) active_count,live.last_checked_at
-      FROM ad_cloud_jobs j LEFT JOIN ad_source_live_counts live ON live.page_id=j.source_json->>'page_id'
+      FROM monitored_ad_cloud_jobs j LEFT JOIN ad_source_live_counts live ON live.page_id=j.source_json->>'page_id'
       WHERE j.status<>'imported' ORDER BY j.brand,j.created_at DESC,j.id DESC`),
     pool.query('SELECT status,count(*)::int count,MAX(analyzed_at) last_analyzed_at FROM ad_cloud_candidates GROUP BY status'),
     pool.query("SELECT last_error,count(*)::int count FROM ad_cloud_candidates WHERE last_error IS NOT NULL AND status IN ('error','retry') GROUP BY last_error ORDER BY count DESC,last_error"),
-    getProxyPoolStatus(pool,{env}),getProviderStatus(pool,{env}),getAdLifecyclePolicy(pool)]);
+    getProxyPoolStatus(pool,{env}),getProviderStatus(pool,{env}),getAdLifecyclePolicy(pool),getMonitoredAdSources(pool,verifiedCloudSources(sources))]);
   const row=control.rows[0]||{},heartbeat=row.heartbeat_at;
-  return {mode:'cloud',schedule:{...cloudSchedule(policy),last_scheduled_day:row.scheduled_day||null,verified_pages_count:verifiedCloudSources(sources).length},capture_transport:transport,capture_provider:provider,vision_configured:config.configured,
+  return {mode:'cloud',schedule:{...cloudSchedule(policy),last_scheduled_day:row.scheduled_day||null,verified_pages_count:verified.length},capture_transport:transport,capture_provider:provider,vision_configured:config.configured,
     analysis_status:config.configured?'configured':'waiting_config',
     message:!config.configured?'Bulut taraması etkin. Görsel analiz için sunucu API bağlantısı eksik; kaydedilen görseller kuyrukta bekler.':errors.rows.length?'Son görsel analizi tamamlanamadı. Kayıtlar kuyrukta korunuyor; servis bağlantısı ve kota kontrol edilmeli.':'Görseller sunucuda analiz edilir.',
     worker_heartbeat:heartbeat||null,worker_online:Boolean(heartbeat&&Date.now()-+new Date(heartbeat)<180000),
@@ -378,18 +379,18 @@ export function createCloudWorker(pool,sources,{capture=captureCloudAds,analyze=
       // Upgrade old HTTP 429 outcomes to bounded retries; hard access/challenge blocks stay blocked.
       const recovered=await pool.query(`UPDATE ad_cloud_jobs SET status='retry',available_at=GREATEST(NOW(),finished_at+INTERVAL '15 minutes')
         WHERE status='blocked' AND note LIKE '%HTTP 429%' AND attempts<3 AND created_at>NOW()-INTERVAL '2 days'
-        AND id IN (SELECT MAX(id) FROM ad_cloud_jobs WHERE status<>'imported' GROUP BY brand) RETURNING available_at`);
+        AND id IN (SELECT MAX(id) FROM monitored_ad_cloud_jobs WHERE status<>'imported' GROUP BY brand) RETURNING available_at`);
       if(recovered.rows.length){
         const after=new Date(Math.max(...recovered.rows.map(x=>+new Date(x.available_at))));
         await pool.query('UPDATE ad_cloud_control SET capture_after=GREATEST(capture_after,$1) WHERE id=1',[after]);
       }
       // An interrupted capture resumes from persisted candidates and remains bounded to three tries.
-      await pool.query("UPDATE ad_cloud_jobs SET status=CASE WHEN attempts>=3 THEN 'error' ELSE 'retry' END,available_at=NOW(),note='Sunucu yeniden başladı; tamamlanan görseller korundu.' WHERE status='running' AND NOT EXISTS (SELECT 1 FROM ad_provider_runs p WHERE p.job_id=ad_cloud_jobs.id)");
-      await pool.query("UPDATE ad_cloud_jobs SET status='error' WHERE status='retry' AND attempts>=3 AND NOT EXISTS (SELECT 1 FROM ad_provider_runs p WHERE p.job_id=ad_cloud_jobs.id)");
+      await pool.query("UPDATE ad_cloud_jobs SET status=CASE WHEN attempts>=3 THEN 'error' ELSE 'retry' END,available_at=NOW(),note='Sunucu yeniden başladı; tamamlanan görseller korundu.' WHERE status='running' AND id IN (SELECT id FROM monitored_ad_cloud_jobs) AND NOT EXISTS (SELECT 1 FROM ad_provider_runs p WHERE p.job_id=ad_cloud_jobs.id)");
+      await pool.query("UPDATE ad_cloud_jobs SET status='error' WHERE status='retry' AND attempts>=3 AND id IN (SELECT id FROM monitored_ad_cloud_jobs) AND NOT EXISTS (SELECT 1 FROM ad_provider_runs p WHERE p.job_id=ad_cloud_jobs.id)");
       for(let n=0;transport.configured&&n<7;n++){
         const cooling=await pool.query('SELECT id FROM ad_cloud_control WHERE id=1 AND capture_after>NOW()');
         if(cooling.rows.length)break;
-        const next=(await pool.query("SELECT * FROM ad_cloud_jobs WHERE status IN ('queued','retry') AND attempts<3 AND available_at<=NOW() AND NOT EXISTS (SELECT 1 FROM ad_provider_runs p WHERE p.job_id=ad_cloud_jobs.id) ORDER BY id LIMIT 1")).rows[0];
+        const next=(await pool.query("SELECT j.* FROM monitored_ad_cloud_jobs j WHERE j.status IN ('queued','retry') AND j.attempts<3 AND j.available_at<=NOW() AND NOT EXISTS (SELECT 1 FROM ad_provider_runs p WHERE p.job_id=j.id) ORDER BY id LIMIT 1")).rows[0];
         if(!next)break;
         let selected=null;
         if(transport.mode==='proxy'&&adLibrarySource(next.source_json)){
