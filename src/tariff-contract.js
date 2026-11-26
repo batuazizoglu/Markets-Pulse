@@ -73,7 +73,7 @@ function supportedShape(name, quota, text, sourceSlug, hasPurchaseControl) {
   return null;
 }
 
-export function parseValidatedTariffPage(html, source) {
+export function parseValidatedTariffPage(html, source, {includeCardIndexes = false} = {}) {
   const expected = sourceContract(source);
   if (typeof html !== 'string' || !/<\/body\s*>/i.test(html) || !/<\/html\s*>/i.test(html)) {
     reject('Kaynak HTML yanıtı tamamlanmamış');
@@ -92,7 +92,7 @@ export function parseValidatedTariffPage(html, source) {
     reject('Kart sayısı ile fiyat, kota veya detay alanı sayısı uyuşmuyor');
   }
 
-  const cards = [], excluded = [], purchasableRedCards = new Map();
+  const cards = [], cardIndexes = [], excluded = [], purchasableRedCards = new Map();
   for (const [index, node] of shells.entries()) {
     const shell = $(node), sections = shell.children();
     if (shell.find(shellSelector).length || sections.length !== 2 || !sections.first().hasClass('rounded-t')) {
@@ -132,6 +132,7 @@ export function parseValidatedTariffPage(html, source) {
       hashes.add(card.product_hash);
       purchasableRedCards.set(name, hashes);
     }
+    if (includeCardIndexes) cardIndexes.push(index);
     cards.push({...card, position: cards.length});
   }
   if (!cards.length) reject('Desteklenen ve doğrulanan tarife kartı bulunamadı');
@@ -146,6 +147,7 @@ export function parseValidatedTariffPage(html, source) {
   return {
     cards,
     relevantText,
+    ...(includeCardIndexes ? {cardIndexes} : {}),
     validation: {contract_version: TARIFF_CONTRACT_VERSION, scope: 'supported-gsm-card-shapes',
       candidate_count: shells.length, validated_count: cards.length,
       excluded: excluded.map(item => {

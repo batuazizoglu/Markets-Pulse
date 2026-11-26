@@ -88,3 +88,6 @@ with representative cases for supported and excluded shapes. Replay all three
 sources, compare observation hashes, and test that genuine simultaneous changes
 survive any evidence-based baseline repair. Never clear validation failures by
 editing production history or by bypassing the publication gate.
+
+The offline scoped-identity prototype, its evidence requirements and staging SQL
+are described in [the tariff identity design](tariff-scoped-identity.md).
